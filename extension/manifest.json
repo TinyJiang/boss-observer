@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "BOSS Observer",
+  "version": "0.1.0",
+  "description": "Collects factual recruiting workflow logs on BOSS Zhipin pages.",
+  "action": {
+    "default_title": "BOSS Observer Debug"
+  },
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://www.zhipin.com/*"],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.zhipin.com/*"],
+      "js": ["src/content/content-runtime.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/*.js", "src/shared/*.js"],
+      "matches": ["https://www.zhipin.com/*"]
+    }
+  ]
+}

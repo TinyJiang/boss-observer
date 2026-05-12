@@ -65,7 +65,7 @@ Chrome 插件只负责观察、记录、上传。
 
 ### 3.2 对接成熟日志系统
 
-第一阶段优先对接成熟日志系统。
+第一阶段优先对接腾讯云 CLS 作为成熟日志系统。
 
 Chrome 插件负责生成事实日志并上报，日志系统负责接收、保存、查询和导出。
 
@@ -110,6 +110,7 @@ Chrome 插件观察页面行为
 - [本地队列与上传模块](modules/08-local-queue-upload.md)
 - [插件运行监控与告警模块](modules/11-runtime-monitoring-alert.md)
 - [日志系统对接模块](modules/09-log-system-integration.md)
+- [日志规范与后端分析契约](modules/12-log-specification.md)
 - [后续分析消费模块](modules/10-analysis-consumer.md)
 
 ### 5.1 Chrome 插件模块
@@ -126,7 +127,6 @@ Chrome 插件是日志采集端，只在 BOSS 直聘相关页面运行。
 - 进入 BOSS 页面日志
 - 离开 BOSS 页面日志
 - 页面切换日志
-- 页面可见状态变化日志
 - 页面停留日志
 - 插件异常日志
 
