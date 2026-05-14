@@ -12,6 +12,7 @@ const PAGE_RULES = [
   {
     type: "candidate_detail",
     matches: ({ pathname, search }) =>
+      pathname.startsWith("/web/frame/c-resume") ||
       pathname.includes("/geek/detail") ||
       pathname.includes("/resume/detail") ||
       search.includes("geekId=")

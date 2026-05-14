@@ -17,6 +17,36 @@
       "matches": ["https://www.zhipin.com/*"],
       "js": ["src/content/content-runtime.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.zhipin.com/*"],
+      "js": ["src/content/network-debug-hook.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.zhipin.com/*"],
+      "js": ["src/content/canvas-text-capture-hook.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.zhipin.com/*"],
+      "js": ["src/content/canvas-text-capture-runtime.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    },
+    {
+      "matches": ["https://www.zhipin.com/*"],
+      "js": ["src/content/network-debug-runtime.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
     }
   ],
   "web_accessible_resources": [

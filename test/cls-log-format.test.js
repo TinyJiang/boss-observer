@@ -33,6 +33,10 @@ test("maps a plugin event into cls log contents", () => {
           pageUrl: "https://www.zhipin.com/web/chat/recommend",
           pageTitle: "BOSS直聘",
           isBossPage: true,
+          jobContext: {
+            jobId: "job-1",
+            jobStatus: "0"
+          },
           startedAt: "2026-05-11T16:03:35.997+08:00"
         },
         payload: {
@@ -59,6 +63,8 @@ test("maps a plugin event into cls log contents", () => {
     page_url: "https://www.zhipin.com/web/chat/recommend",
     page_title: "BOSS直聘",
     is_boss_page: "true",
+    job_id: "job-1",
+    job_status: "0",
     source_tab_id: "100",
     source_window_id: "200",
     source_tab_url: "https://www.zhipin.com/web/chat/recommend",
@@ -69,6 +75,10 @@ test("maps a plugin event into cls log contents", () => {
       pageUrl: "https://www.zhipin.com/web/chat/recommend",
       pageTitle: "BOSS直聘",
       isBossPage: true,
+      jobContext: {
+        jobId: "job-1",
+        jobStatus: "0"
+      },
       startedAt: "2026-05-11T16:03:35.997+08:00"
     })
   });

@@ -24,13 +24,13 @@ export class PageSessionProbe {
 
     this.started = true;
     this.collector.collect(EVENT_TYPES.PLUGIN_STARTED, {
-      href: location.href
+      source: "content_script"
     });
 
     if (this.sessionContext.page.isBossPage) {
-      this.collector.collect(EVENT_TYPES.BOSS_PAGE_ENTERED, {
-        page: this.sessionContext.page
-      });
+      this.collector.collect(EVENT_TYPES.BOSS_PAGE_ENTERED, buildBossPageEnteredPayload({
+        source: "start"
+      }));
     }
 
     this.patchHistory();
@@ -87,35 +87,35 @@ export class PageSessionProbe {
     }
 
     this.recordDwell(`route:${source}`);
-    const { previous, current, previousTitle: oldTitle, currentTitle: newTitle } =
-      this.sessionContext.updatePage(currentUrl, currentTitle);
+    const { previous, current } = this.sessionContext.updatePage(currentUrl, currentTitle);
     this.currentPage = current;
     this.currentPageStartedAt = Date.now();
 
-    this.collector.collect(EVENT_TYPES.PAGE_CHANGED, {
+    this.collector.collect(EVENT_TYPES.PAGE_CHANGED, buildPageChangedPayload({
       source,
       previous,
-      current,
-      previousTitle: oldTitle,
-      currentTitle: newTitle
-    });
+      current
+    }));
 
     if (!previous.isBossPage && current.isBossPage) {
-      this.collector.collect(EVENT_TYPES.BOSS_PAGE_ENTERED, { page: current, source });
+      this.collector.collect(EVENT_TYPES.BOSS_PAGE_ENTERED, buildBossPageEnteredPayload({ source }));
     }
 
     if (previous.isBossPage && !current.isBossPage) {
-      this.collector.collect(EVENT_TYPES.BOSS_PAGE_LEFT, { page: previous, source });
+      this.collector.collect(EVENT_TYPES.BOSS_PAGE_LEFT, buildBossPageLeftPayload({
+        page: previous,
+        source
+      }));
     }
   }
 
   onPageLeaving(source) {
     this.recordDwell(source);
     if (this.sessionContext.page.isBossPage) {
-      this.collector.collect(EVENT_TYPES.BOSS_PAGE_LEFT, {
+      this.collector.collect(EVENT_TYPES.BOSS_PAGE_LEFT, buildBossPageLeftPayload({
         page: this.sessionContext.page,
         source
-      });
+      }));
     }
   }
 
@@ -126,7 +126,6 @@ export class PageSessionProbe {
     }
 
     this.collector.collect(EVENT_TYPES.PAGE_DWELL_RECORDED, {
-      page: this.currentPage,
       dwellMs,
       reason
     });
@@ -138,8 +137,7 @@ export class PageSessionProbe {
     } catch (error) {
       this.collector.collect(EVENT_TYPES.PLUGIN_EXCEPTION, {
         source,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined
+        message: error instanceof Error ? error.message : String(error)
       });
     }
   }
@@ -157,4 +155,36 @@ export class PageSessionProbe {
       this.pollHandle = null;
     }
   }
+}
+
+function buildPageChangedPayload({ source = "", previous = {}, current = {} } = {}) {
+  return compactPageSessionPayload({
+    source,
+    previousPageType: previous.pageType,
+    previousUrl: previous.url,
+    currentPageType: current.pageType,
+    currentUrl: current.url
+  });
+}
+
+function buildBossPageEnteredPayload({ source = "" } = {}) {
+  return compactPageSessionPayload({ source });
+}
+
+function buildBossPageLeftPayload({ page = {}, source = "" } = {}) {
+  return compactPageSessionPayload({
+    source,
+    leftPageType: page.pageType,
+    leftPageUrl: page.url
+  });
+}
+
+function compactPageSessionPayload(value = {}) {
+  const result = {};
+  Object.entries(value || {}).forEach(([key, current]) => {
+    if (current !== null && current !== undefined && current !== "") {
+      result[key] = current;
+    }
+  });
+  return result;
 }

@@ -8,6 +8,7 @@ export class SessionContext {
     this.page = classifyPage(location.href);
     this.title = document.title;
     this.startedAt = nowLocalIsoString();
+    this.jobContext = null;
   }
 
   updatePage(url = location.href, title = document.title) {
@@ -24,6 +25,12 @@ export class SessionContext {
     return { previous, current: this.title };
   }
 
+  updateJobContext(jobContext) {
+    const previous = this.jobContext;
+    this.jobContext = jobContext || null;
+    return { previous, current: this.jobContext };
+  }
+
   snapshot() {
     return {
       sessionId: this.sessionId,
@@ -31,6 +38,7 @@ export class SessionContext {
       pageUrl: this.page.url,
       pageTitle: this.title,
       isBossPage: this.page.isBossPage,
+      jobContext: this.jobContext,
       startedAt: this.startedAt
     };
   }

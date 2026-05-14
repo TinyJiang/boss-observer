@@ -10,6 +10,11 @@ import {
   readDebugState
 } from "../shared/debug-state.js";
 import { EVENT_TYPES } from "../shared/event-types.js";
+import {
+  appendNetworkDebugRequest,
+  clearNetworkDebugRequests,
+  setNetworkDebugEnabled
+} from "../shared/network-debug.js";
 import { createSequentialTaskRunner } from "../shared/sequential-task-runner.js";
 import { QUEUE_KEY, StorageQueue } from "../shared/storage-queue.js";
 import { nowLocalIsoString } from "../shared/time.js";
@@ -34,15 +39,47 @@ chrome.action.onClicked.addListener(async () => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || message.kind !== "bossObserver.event") {
+  if (!message?.kind) {
     return false;
   }
 
-  eventHandlingRunner.run(() => handleEvent(message.event, _sender))
-    .then(() => sendResponse({ ok: true }))
-    .catch((error) => sendResponse({ ok: false, error: String(error) }));
+  if (message.kind === "bossObserver.event") {
+    eventHandlingRunner.run(() => handleEvent(message.event, _sender))
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
 
-  return true;
+    return true;
+  }
+
+  if (message.kind === "bossObserver.networkDebug.request") {
+    eventHandlingRunner.run(() => handleNetworkDebugRequest(message.request))
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+
+    return true;
+  }
+
+  if (message.kind === "bossObserver.networkDebug.ready") {
+    readDebugState()
+      .then((state) => sendResponse({
+        ok: true,
+        enabled: state.networkDebug.enabled,
+        maxPreviewChars: state.networkDebug.maxPreviewChars
+      }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+
+    return true;
+  }
+
+  if (message.kind === "bossObserver.networkDebug.command") {
+    handleNetworkDebugCommand(message.command)
+      .then((state) => sendResponse({ ok: true, networkDebug: state.networkDebug }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+
+    return true;
+  }
+
+  return false;
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -83,6 +120,57 @@ async function handleEvent(event, sender) {
       await flushQueue();
     }
   }
+}
+
+async function handleNetworkDebugRequest(request) {
+  await updateDebugState(async (current) => ({
+    ...current,
+    updatedAt: nowLocalIsoString(),
+    networkDebug: appendNetworkDebugRequest(current.networkDebug, request)
+  }));
+}
+
+async function handleNetworkDebugCommand(command) {
+  let nextState = null;
+  await updateDebugState(async (current) => {
+    let networkDebug = current.networkDebug;
+    if (command === "start") {
+      networkDebug = setNetworkDebugEnabled(networkDebug, true);
+    } else if (command === "stop") {
+      networkDebug = setNetworkDebugEnabled(networkDebug, false);
+    } else if (command === "clear") {
+      networkDebug = clearNetworkDebugRequests(networkDebug);
+    } else {
+      throw new Error(`Unknown network debug command: ${command}`);
+    }
+
+    nextState = {
+      ...current,
+      updatedAt: nowLocalIsoString(),
+      networkDebug
+    };
+    return nextState;
+  });
+
+  if (command === "start" || command === "stop") {
+    await broadcastNetworkDebugControl(nextState.networkDebug);
+  }
+
+  return nextState;
+}
+
+async function broadcastNetworkDebugControl(networkDebug) {
+  const tabs = await chrome.tabs.query({ url: "https://www.zhipin.com/*" });
+  await Promise.all(tabs.map((tab) => new Promise((resolve) => {
+    chrome.tabs.sendMessage(tab.id, {
+      kind: "bossObserver.networkDebug.control",
+      enabled: networkDebug.enabled,
+      maxPreviewChars: networkDebug.maxPreviewChars
+    }, () => {
+      void chrome.runtime.lastError;
+      resolve();
+    });
+  })));
 }
 
 async function flushQueue() {

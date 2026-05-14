@@ -21,11 +21,15 @@
 
 用于确认后续候选人行为属于哪个岗位。
 
+当前事件类型为 `job_context.detected`。
+
 ### 3.2 职位切换日志
 
 记录招聘专员从一个职位切换到另一个职位。
 
 用于分析招聘专员在不同岗位之间的工作分布。
+
+当前事件类型为 `job_context.changed`。
 
 ### 3.3 职位页面曝光日志
 
@@ -46,6 +50,14 @@
 - 招聘专员点击职位选择器并完成切换时记录职位切换日志。
 - 进入职位相关页面时记录职位页面曝光日志。
 
+当前实现：
+
+- content script 会扫描顶层页面和同源 iframe。
+- 第一版只从 URL 查询参数和 DOM dataset 中提取稳定职位 ID，例如 `jobid`、`jobId`、`encryptJobId`、`positionId`。
+- 如果同一上下文中能读到 `status` / `jobStatus`，会作为 `jobStatus` 一并记录。
+- 识别到职位后会更新 `SessionContext`，后续事件的 `context.jobContext` 会带上当前职位上下文。
+- 当前不会从页面正文猜测职位名称，也不会采集职位描述正文。
+
 ## 5. 输出给其他模块的上下文
 
 职位模块需要为其他模块提供：
@@ -58,6 +70,14 @@
 
 具体字段和稳定标识方式在真机验证后确定。
 
+当前第一版字段：
+
+- `jobId`: 当前职位 ID。
+- `jobIdSource`: ID 来源，例如 `url.jobid`、`url.jobId`、`dataset.jobId`。
+- `jobStatus`: URL 或 dataset 中可见的职位状态参数，识别不到时省略。
+- `jobStatusSource`: 状态来源，识别不到时省略。
+- `sourceUrl`、`confidence`、`updatedAt` 仅用于内部识别过程，不进入 `context.jobContext` 或 `job_context.detected` / `job_context.changed` 的正式 payload。
+
 ## 6. MVP 范围
 
 MVP 需要完成：
@@ -66,6 +86,8 @@ MVP 需要完成：
 - 能记录职位切换。
 - 能把职位上下文附加到候选人列表曝光、候选人详情打开、打招呼日志中。
 - 职位识别失败时能记录异常或空上下文。
+
+当前第一版已完成 URL / dataset 职位 ID 识别、职位识别/切换事件、以及 `context.jobContext` 附加。职位名称、职位页面曝光和职位选择器点击行为仍待真机验证后实现。
 
 ## 7. 真机验证点
 

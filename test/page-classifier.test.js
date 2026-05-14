@@ -85,6 +85,13 @@ test("recognizes candidate detail query before generic chat pages", () => {
   assert.equal(page.pageType, "candidate_detail");
 });
 
+test("recognizes BOSS c-resume iframe as candidate detail", () => {
+  const page = classifyPage("https://www.zhipin.com/web/frame/c-resume/?source=recommend");
+
+  assert.equal(page.isBossPage, true);
+  assert.equal(page.pageType, "candidate_detail");
+});
+
 test("recognizes non-BOSS pages", () => {
   const page = classifyPage("https://example.com/");
 

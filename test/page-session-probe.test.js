@@ -37,8 +37,12 @@ test("page session probe emits a single page_changed when title updates after ur
 
     assert.equal(pageChangedEvents.length, 1);
     assert.equal(sessionContext.title, "Chat - Ready");
-    assert.equal(pageChangedEvents[0].payload.previous.url, initialUrl);
-    assert.equal(pageChangedEvents[0].payload.current.url, nextUrl);
+    assert.equal(pageChangedEvents[0].payload.previousUrl, initialUrl);
+    assert.equal(pageChangedEvents[0].payload.currentUrl, nextUrl);
+    assert.equal(Object.hasOwn(pageChangedEvents[0].payload, "previous"), false);
+    assert.equal(Object.hasOwn(pageChangedEvents[0].payload, "current"), false);
+    assert.equal(Object.hasOwn(pageChangedEvents[0].payload, "previousTitle"), false);
+    assert.equal(Object.hasOwn(pageChangedEvents[0].payload, "currentTitle"), false);
   } finally {
     restore();
   }

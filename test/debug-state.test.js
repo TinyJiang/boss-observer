@@ -13,6 +13,8 @@ test("debug state starts empty", () => {
   assert.equal(state.recentEvents.length, 0);
   assert.equal(state.lastEvent, null);
   assert.equal(state.lastUploadResult, null);
+  assert.equal(state.networkDebug.enabled, false);
+  assert.deepEqual(state.networkDebug.recentRequests, []);
 });
 
 test("debug state initialization clears previous runtime state", () => {
@@ -33,6 +35,7 @@ test("debug state initialization clears previous runtime state", () => {
   assert.equal(nextState.lastUploadError, null);
   assert.equal(nextState.lastEvent, null);
   assert.deepEqual(nextState.recentEvents, []);
+  assert.equal(nextState.networkDebug.enabled, false);
   assert.deepEqual(nextState.config, {
     clsRegion: "ap-shanghai",
     clsTopicId: "5407c0a7-3e37-4c45-a204-bf5d40f157a1"

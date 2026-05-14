@@ -71,6 +71,7 @@
 - `pageUrl`: 当前页面 URL。
 - `pageTitle`: 当前页面标题。
 - `isBossPage`: 是否属于 BOSS 直聘页面。
+- `jobContext`: 当前识别到的职位上下文；尚未识别到时为 `null`。
 - `startedAt`: 会话开始时间，ISO 8601 字符串，使用本地时区偏移格式。
 
 说明：
@@ -78,6 +79,7 @@
 - `context` 表示“采集当下”的页面快照，不保证和 `payload` 内的历史页对象一致。
 - `context.pageUrl` / `context.pageType` 适合做分析维度。
 - `context.pageTitle` 只作为辅助信息，不建议作为主键。
+- `context.jobContext` 会随候选人曝光、详情、打招呼等后续事件进入上下文，适合做岗位维度关联；第一版只包含 `jobId`、`jobIdSource`、`jobStatus`、`jobStatusSource`，不包含职位描述正文、识别来源 URL 或更新时间。
 
 ## 5. 页面类型枚举
 
@@ -91,7 +93,7 @@
 | `candidate_intention` | 有意向候选人页 | `/web/chat/intention` |
 | `candidate_interaction` | 候选人互动页 | `/web/chat/interaction` |
 | `candidate_manage` | 牛人管理页 | `/web/chat/geek/manage*`，或路径包含 `/geek/manage` |
-| `candidate_detail` | 候选人详情页 | `/geek/detail`、`/resume/detail`，或查询串包含 `geekId=` |
+| `candidate_detail` | 候选人详情页 | `/geek/detail`、`/resume/detail`、`/web/frame/c-resume`，或查询串包含 `geekId=` |
 | `recruiting_data` | 招聘数据页 | `/web/chat/data-recruit` |
 | `job_manage` | 职位管理页 | `/web/chat/job/list`、`/job` 或 `/position` |
 | `business_mall` | 道具/权益商城页 | `/web/chat/business/mall` |
@@ -120,6 +122,18 @@
 | `page_session.page_changed` | 页面切换 |
 | `page_session.page_dwell_recorded` | 页面停留记录 |
 | `page_session.plugin_exception` | 插件异常 |
+| `job_context.detected` | 识别到当前职位上下文 |
+| `job_context.changed` | 当前职位上下文变化 |
+| `candidate_filter.panel_opened` | 候选人筛选面板打开 |
+| `candidate_filter.applied` | 候选人筛选条件确认/应用 |
+| `candidate_list.list_viewed` | 候选人列表曝光 |
+| `candidate_list.card_exposed` | 候选人卡片曝光 |
+| `candidate_detail.opened` | 候选人详情打开 |
+| `candidate_detail.boss_analysis_viewed` | 候选人详情牛人分析模块曝光 |
+| `candidate_detail.closed` | 候选人详情关闭 |
+| `candidate_greeting.clicked` | 打招呼按钮点击 |
+| `candidate_greeting.succeeded` | 打招呼成功 |
+| `candidate_greeting.failed` | 打招呼失败 |
 | `queue.write_failed` | 本地队列写入失败 |
 | `upload.started` | 开始上传 |
 | `upload.succeeded` | 上传成功 |
@@ -139,39 +153,47 @@
 ```json
 {
   "source": "pushState",
-  "previous": {},
-  "current": {},
-  "previousTitle": "BOSS直聘",
-  "currentTitle": "BOSS直聘"
+  "previousPageType": "candidate_recommend",
+  "previousUrl": "https://www.zhipin.com/web/chat/recommend",
+  "currentPageType": "chat",
+  "currentUrl": "https://www.zhipin.com/web/chat/index"
 }
 ```
 
 - `source`: 触发来源，常见值为 `pushState`、`replaceState`、`popstate`、`hashchange`、`poll`。
-- `previous` / `current`: 切换前后的页面分类对象，结构来自 `classifyPage(url)`。
+- `previousPageType` / `previousUrl`: 切换前页面，用于还原路由跳转来源。
+- `currentPageType` / `currentUrl`: 切换后页面；也会出现在事件根部 `context` 中。
 
 ### 7.2 `page_session.boss_page_entered` / `page_session.boss_page_left`
 
 ```json
 {
-  "page": {},
   "source": "poll"
 }
 ```
 
-- `page`: 进入或离开时的页面分类对象。
+`boss_page_left` 会额外带上离开的 BOSS 页面：
+
+```json
+{
+  "source": "pagehide",
+  "leftPageType": "candidate_recommend",
+  "leftPageUrl": "https://www.zhipin.com/web/chat/recommend"
+}
+```
+
 - `source`: 触发来源。
+- `leftPageType` / `leftPageUrl`: 只在离开事件里出现，用于在根部 `context` 已经变成非 BOSS 页面时保留离开前页面。
 
 ### 7.3 `page_session.page_dwell_recorded`
 
 ```json
 {
-  "page": {},
   "dwellMs": 11999,
   "reason": "route:poll"
 }
 ```
 
-- `page`: 停留发生时对应的页面对象。
 - `dwellMs`: 停留时长，毫秒。
 - `reason`: 触发原因。
 
@@ -180,10 +202,317 @@
 ```json
 {
   "source": "poll",
-  "message": "boom",
-  "stack": "..."
+  "message": "boom"
 }
 ```
+
+### 7.6 `job_context.detected` / `job_context.changed`
+
+```json
+{
+  "source": "poll",
+  "previous": {
+    "jobId": "old-job",
+    "jobIdSource": "url.jobid",
+    "jobStatus": "0",
+    "jobStatusSource": "url.status"
+  },
+  "current": {
+    "jobId": "80ddfe02037b9e230nd-3d27FlRT",
+    "jobIdSource": "url.jobid",
+    "jobStatus": "0",
+    "jobStatusSource": "url.status"
+  }
+}
+```
+
+- `job_context.detected`: 首次识别到当前职位上下文时发出，`previous` 为 `null`。
+- `job_context.changed`: 当前职位 ID 或状态参数变化时发出。
+- `jobId`: 当前职位 ID。第一版优先来自 URL 查询参数或 DOM dataset，例如 `jobid`、`jobId`、`encryptJobId`、`positionId`。
+- `jobIdSource`: 职位 ID 来源，例如 `url.jobid` 或 `dataset.jobId`。
+- `jobStatus`: URL 或 dataset 中可见的职位状态参数，识别不到时省略。
+- `jobStatusSource`: 职位状态来源，识别不到时省略。
+- `sourceUrl`、`confidence`、`updatedAt` 等识别诊断字段不进入正式 payload；岗位分析优先使用 `jobId` 和根部 `context.jobContext.jobId`。
+
+识别成功后，后续事件的 `context.jobContext` 会携带同样结构。当前第一版不会从页面正文猜测职位名称，也不会采集职位描述正文。
+
+### 7.7 `candidate_filter.panel_opened`
+
+```json
+{
+  "source": "click",
+  "listUrl": "https://www.zhipin.com/web/chat/recommend",
+  "listPageType": "candidate_recommend",
+  "filter": {
+    "conditionCount": 0
+  }
+}
+```
+
+- `source`: 当前为 `click`。
+- `listUrl` / `listPageType`: 筛选动作所在的候选人列表顶层页面。
+- `filter.conditionCount`: 当前可见筛选摘要数量。只点击入口、面板尚未渲染时可能为 `0`。
+- `filter.conditions`: 如果打开时已经能读到面板中的短条件，会输出最多 12 条短摘要；没有有效条件时省略。
+
+当前第一版只在候选人列表页及其同源 iframe 中监听“筛选 / 更多筛选 / 高级筛选 / 过滤”等短文本入口。事件不包含 `page`、`sourceUrl`、`actionText` 或完整面板文本。
+
+### 7.8 `candidate_filter.applied`
+
+```json
+{
+  "source": "click",
+  "listUrl": "https://www.zhipin.com/web/chat/recommend",
+  "listPageType": "candidate_recommend",
+  "openedEventId": "evt_filter_opened",
+  "filter": {
+    "conditionCount": 4,
+    "conditions": [
+      "近三天活跃",
+      "本科",
+      "年龄 20-35岁",
+      "关键词: 已填写"
+    ]
+  }
+}
+```
+
+- `openedEventId`: 10 分钟内同一列表页最近一次 `candidate_filter.panel_opened` 事件 ID；没有可关联打开事件时省略。
+- `filter.conditionCount`: 当前确认动作可读到的有效短筛选摘要数量。
+- `filter.conditions`: 筛选面板可见的短条件摘要，最多 12 条，单条最长 48 个字符。
+
+`candidate_filter.applied` 只在“确定 / 确认 / 应用 / 完成 / 搜索 / 查看结果”等动作出现在可识别筛选面板上下文里时发出，避免把普通搜索或其他确认动作误记为筛选。`关键词`、`关键字`、`搜索关键词`、`姓名`、`手机`、`电话`、`微信`、`联系方式` 等自由输入或敏感字段只记录为“已填写”，不保存原始值；手机号、邮箱会做脱敏兜底。
+
+当前第一版会在探针内保留最近一次确认的筛选摘要，但尚未把筛选上下文写入候选人列表、详情或打招呼事件；后续待真机确认字段稳定后再接入跨事件上下文。
+
+### 7.9 `candidate_list.list_viewed`
+
+```json
+{
+  "source": "poll",
+  "listUrl": "https://www.zhipin.com/web/chat/recommend",
+  "listPageType": "candidate_recommend"
+}
+```
+
+- `source`: 触发来源，当前常见值为 `start` 或 `poll`。
+- `listUrl`: 候选人列表对应的顶层页面 URL。
+- `listPageType`: 列表页面类型，当前第一版覆盖推荐、搜索、意向沟通和互动候选人页面。
+
+### 7.10 `candidate_list.card_exposed`
+
+```json
+{
+  "source": "poll",
+  "listUrl": "https://www.zhipin.com/web/chat/recommend",
+  "listPageType": "candidate_recommend",
+  "candidate": {
+    "stableId": "abc123",
+    "stableIdSource": "url.geekId",
+    "candidateId": "bo_candidate_url_geekid_abc123_k8s2p1",
+    "exposureKey": "candidate_recommend:https://www.zhipin.com/web/chat/recommend:url.geekId:abc123",
+    "detailUrl": "https://www.zhipin.com/web/chat/index?geekId=abc123",
+    "profile": {
+      "displayName": "吴先生",
+      "salary": "7-8K",
+      "age": 28,
+      "experience": "7年",
+      "education": "高中",
+      "jobSeekingStatus": "离职-随时到岗",
+      "activeStatus": "刚刚活跃",
+      "expectedLocation": "杭州",
+      "expectedPosition": "直播运营",
+      "tags": ["经纪人+模特", "4年经纪经验"]
+    }
+  },
+  "exposure": {
+    "cardIndex": 0
+  }
+}
+```
+
+- `candidate.stableId`: 候选人可关联标识。优先来自 dataset 或详情链接；如果页面未暴露稳定 ID，则使用本地短指纹。
+- `candidate.stableIdSource`: 标识来源，例如 `dataset.geekId`、`url.geekId` 或 `text_fingerprint`。
+- `candidate.candidateId`: 由候选人稳定身份派生的确定性 ID，不使用本地递增序号；同一候选人跨扩展重载仍应生成同一个值。若页面没有暴露稳定候选人 ID，该值会退化为文本指纹派生 ID，不能当作跨页面永久身份。
+- `candidate.exposureKey`: 由列表类型、列表 URL、候选人 ID 来源和值组成的曝光关联键，用于区分同一候选人在不同列表/页面里的曝光事实。
+- `candidate.exposedEventId`: 后续详情/打招呼事件会从内存注册表继承已回写的卡片曝光事件 ID；卡片曝光事件自身不输出空值。
+- `candidate.detailUrl`: 卡片内可识别的详情链接；没有时省略。
+- `candidate.profile`: 从候选人卡片可见文本解析出的核心快照。当前包含姓名/称呼、薪资、年龄、经验、学历、求职状态、活跃状态、期望城市、期望岗位和少量短标签；识别不到的字段会省略。
+- `exposure.cardIndex`: 本次扫描中的卡片顺序；无法识别时整个 `exposure` 可省略。
+- `page`、`exposure.visibleRatio`、`exposure.textLength`、`exposure.matchedSignals` 等页面快照和诊断字段不进入正式 payload。
+
+当前第一版不会把完整候选人卡片文本、完整优势描述、完整工作/教育经历正文写入 payload。后端应把 `stableId + stableIdSource + listUrl/sessionId` 作为曝光事实的关联线索，不要把短指纹解释为跨页面稳定身份。
+
+### 7.11 `candidate_detail.opened`
+
+```json
+{
+  "source": "poll",
+  "detailUrl": "https://www.zhipin.com/web/chat/index?geekId=abc123",
+  "detectedBy": "c_resume_frame",
+  "candidate": {
+    "candidateId": "bo_candidate_url_geekid_abc123_k8s2p1",
+    "stableId": "abc123",
+    "stableIdSource": "url.geekId",
+    "exposureKey": "candidate_recommend:https://www.zhipin.com/web/chat/recommend:url.geekId:abc123",
+    "exposedEventId": "evt_card_exposed",
+    "detailUrl": "https://www.zhipin.com/web/chat/index?geekId=abc123",
+    "profile": {
+      "displayName": "吴先生",
+      "salary": "7-8K",
+      "age": 28,
+      "experience": "7年",
+      "education": "高中",
+      "jobSeekingStatus": "离职-随时到岗",
+      "activeStatus": "刚刚活跃",
+      "expectedLocation": "杭州",
+      "expectedPosition": "直播运营"
+    },
+    "detailProfile": {
+      "topSummary": {
+        "items": [
+          "具备工作能力：普通话标准，善于与人沟通，工作经验丰富",
+          "性格优点：吃苦耐劳，有坚持不懈的精神"
+        ]
+      },
+      "bossAnalysis": {
+        "title": "牛人分析器",
+        "items": [
+          "牛人 10小时前 更新过简历，其通常活跃时间为 2-6pm。求职意愿 较强",
+          "受欢迎程度 较高，被沟通次数超过 55% 的同类牛人"
+        ],
+        "actionText": "查看全部8项分析"
+      },
+      "sectionKeys": ["jobExpectation", "advantage", "workExperience", "educationExperience"],
+      "sections": {
+        "jobExpectation": {
+          "items": ["杭州 直播运营"]
+        },
+        "advantage": {
+          "items": ["熟悉客户开发和私域运营"]
+        },
+        "workExperience": {
+          "items": ["杭州某科技有限公司 网络销售 2021-2024"]
+        },
+        "educationExperience": {
+          "items": ["浙江某大学 市场营销 本科"]
+        }
+      }
+    }
+  }
+}
+```
+
+- `detailUrl`: 当前识别到的详情 URL。弹窗/抽屉场景无法识别时可能为空字符串。
+- `detectedBy`: 当前常见值为 `detail_url`、`detail_dom`、`c_resume_frame`、`c_resume_selected_card`、`c_resume_recent_card`、`c_resume_matched_card`、`c_resume_canvas` 或 `c_resume_canvas_matched_card`。
+- `candidate`: 与候选人卡片曝光共用候选人身份和 `profile` 快照结构。
+- 当详情来自最近点击或当前选中的已曝光卡片时，`candidate` 会继承卡片曝光事件中的 `candidateId`、`exposureKey` 和 `exposedEventId`。这三个字段优先用于后端计算曝光点击率，详情 DOM/Canvas 解析失败不应阻断漏斗关联。
+- 如果详情候选人与最近曝光卡片的核心 profile 冲突，插件会先按当前候选人的 `stableIdSource + stableId` 回连同一列表页里的精确曝光；仍无法命中时才不继承旧 `exposureKey/exposedEventId`，避免错连两个候选人。
+- `candidate.profile`: 只写入识别到的核心候选人字段，空字符串、`null` 和空数组会被省略。
+- `candidate.detailProfile`: 从详情页可见文本提取的受限结构化摘要。没有有效详情摘要时整个字段省略；普通 section 只保留有摘要条目的 `jobExpectation`、`advantage`、`workExperience`、`educationExperience`、`projectExperience`、`certificates` 等键。
+- `page`、`detailPageType`、`detail.textSources`、`detail.matchedSignals` 等重复或诊断字段不进入正式事件 payload；页面上下文看事件根部 `context`。
+
+当前第一版会把 `/web/frame/c-resume` 作为 BOSS 详情 iframe 的强识别信号；普通候选人列表文本不会仅凭多个卡片内容触发详情事件。详情页 DOM/辅助文本不可读时，插件会使用同一详情 frame 中短期捕获的 Canvas 可见渲染文字作为解析输入，但不会把完整 Canvas 文本或完整简历正文写入 payload。事件不会把完整简历正文、完整工作/教育经历正文、聊天内容、手机号或微信号写入 payload；详情摘要会过滤包含微信、手机号、电话、联系方式等关键词的行，并对手机号、邮箱做脱敏兜底。
+
+### 7.12 `candidate_detail.boss_analysis_viewed`
+
+```json
+{
+  "source": "poll",
+  "detailUrl": "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
+  "detectedBy": "detail_dom",
+  "candidate": {},
+  "openedEventId": "evt_abc",
+  "analysis": {
+    "module": "boss_analysis"
+  }
+}
+```
+
+- `openedEventId`: 对应的 `candidate_detail.opened` 事件 ID。
+- `analysis.module`: 当前固定为 `boss_analysis`。
+- 事件类型本身表示模块被看见，不表示插件端认可 BOSS 的分析结论。
+
+### 7.13 `candidate_detail.closed`
+
+```json
+{
+  "source": "poll",
+  "reason": "detail_disappeared",
+  "detailUrl": "https://www.zhipin.com/web/chat/index?geekId=abc123",
+  "candidate": {},
+  "durationMs": 2500,
+  "openedEventId": "evt_abc"
+}
+```
+
+- `reason`: 关闭原因，当前常见值为 `detail_disappeared`、`candidate_switched` 或 `probe_stopped`。
+- `durationMs`: 本次详情打开到关闭的毫秒时长，由 content script 本地计时，仅表示页面可观察到的打开时长。
+- `openedEventId`: 对应 `candidate_detail.opened` 事件 ID；如果测试或异常环境无法返回事件 ID，可能为空字符串。
+
+### 7.14 `candidate_greeting.clicked`
+
+```json
+{
+  "source": "click",
+  "entry": "candidate_list",
+  "candidate": {
+    "stableId": "abc123",
+    "stableIdSource": "url.geekId",
+    "detailUrl": "https://www.zhipin.com/web/chat/index?geekId=abc123"
+  }
+}
+```
+
+- `entry`: 当前识别到的打招呼入口，常见值为 `candidate_list`、`candidate_detail`、`chat` 或 `unknown`。
+- `candidate`: 与候选人列表曝光/详情打开共用候选人身份和 `profile` 快照结构。
+- 如果点击目标能关联到已曝光卡片，`candidate` 会携带同一组 `candidateId`、`exposureKey` 和 `exposedEventId`；结果事件会沿用 clicked 事件里的 `candidate`。
+- `page`、`sourceUrl`、`greeting.actionLabel`、`greeting.targetKey`、`greeting.matchedSignals` 不进入正式 payload；点击和结果通过事件根部 ID 与结果事件的 `clickedEventId` 关联。
+
+当前第一版监听顶层页面和同源 iframe 中的“打招呼”按钮/链接点击，不采集打招呼话术、聊天正文、完整简历正文、手机号或微信号。
+
+### 7.15 `candidate_greeting.succeeded`
+
+```json
+{
+  "source": "poll",
+  "entry": "candidate_list",
+  "clickedEventId": "evt_abc",
+  "elapsedMs": 800,
+  "candidate": {},
+  "greeting": {
+    "status": "succeeded",
+    "detectedBy": "page_message"
+  }
+}
+```
+
+- `clickedEventId`: 对应 `candidate_greeting.clicked` 事件 ID。
+- `elapsedMs`: 点击到观察到结果之间的毫秒数。
+- `greeting.status`: 固定为 `succeeded`。
+- `greeting.detectedBy`: 当前常见值为 `action_state` 或 `page_message`。
+
+该事件只表示插件在页面上观察到成功提示或按钮状态变化，不在插件端判断触达质量、话术质量或后续转化。
+
+### 7.16 `candidate_greeting.failed`
+
+```json
+{
+  "source": "poll",
+  "entry": "candidate_list",
+  "clickedEventId": "evt_abc",
+  "elapsedMs": 800,
+  "candidate": {},
+  "greeting": {
+    "status": "failed",
+    "detectedBy": "page_message"
+  }
+}
+```
+
+- `greeting.status`: 固定为 `failed`。
+- `greeting.detectedBy`: 当前常见值为 `action_state` 或 `page_message`。
+
+点击后短时间内如果没有观察到成功或失败提示，当前实现只丢弃 pending 状态，不会把“未观察到确认”写成失败事实。
 
 ## 8. 后端查询建议
 
@@ -192,6 +521,7 @@
 - 日期
 - `sessionId`
 - `pageType`
+- `context.jobContext.jobId`
 - `event.type`
 - `pluginVersion`
 - `sourceTabId`
@@ -252,6 +582,8 @@ https://{region}.cls.tencentcs.com/tracklog?topic_id={topic_id}
 | `page_url` | `context.pageUrl` |
 | `page_title` | `context.pageTitle` |
 | `is_boss_page` | `context.isBossPage` |
+| `job_id` | `context.jobContext.jobId` |
+| `job_status` | `context.jobContext.jobStatus` |
 | `source_tab_id` | `sourceTabId` |
 | `source_window_id` | `sourceWindowId` |
 | `source_tab_url` | `sourceTabUrl` |
@@ -260,7 +592,7 @@ https://{region}.cls.tencentcs.com/tracklog?topic_id={topic_id}
 
 建议：
 
-- `event_type`、`page_type`、`session_id`、`plugin_version`、`source_tab_id`、`source_window_id` 作为主要索引字段。
+- `event_type`、`page_type`、`session_id`、`job_id`、`plugin_version`、`source_tab_id`、`source_window_id` 作为主要索引字段。
 - `payload_json` 和 `context_json` 作为原始备份，不作为主要查询字段。
 - 如果需要按事件附加字段检索，优先把该字段提到扁平列，不要依赖嵌套 JSON。
 - 匿名直传要求 CLS 日志主题开启匿名上传；如果后续数据污染风险不可接受，再切回自建接收服务代理写入 CLS。
