@@ -2460,68 +2460,19 @@
   - `git diff --check` 通过。
 - 下一步：重载扩展后，在真实 BOSS 候选人列表页打开筛选面板并点击确认/应用，确认 Debug 页出现 `candidate_filter.panel_opened` 和 `candidate_filter.applied`，重点核对 `filter.conditions` 是否覆盖真实已选城市、职位、薪资、年龄、学历等条件，且关键词/联系方式没有原文外泄。
 
-### 任务：真机验证筛选模块第一版
+### 任务：清理非项目真机验证记录
 
-- 时间：2026-05-14 20:22（本机时间；上一条完成记录时间略超前）
+- 时间：2026-05-15 01:11 CST
 - 执行者：AI
-- 状态：进行中
-- 任务目标：按用户要求重载扩展并在真实 BOSS 候选人列表页测试筛选模块，确认 `candidate_filter.panel_opened` 和 `candidate_filter.applied` 是否进入 Debug 页事件。
-- 当前理解：筛选模块代码和自动化测试已完成；还未在真实 BOSS 页面验证。需要使用当前 Chrome 登录态，避免修改候选人或发送外部可见动作，只做打开筛选面板、确认/应用筛选条件和查看本地 Debug 状态。
+- 状态：已完成
+- 任务目标：删除工作日志中与本项目无关的本地自动化工具链记录，避免误导后续接手者。
+- 当前理解：筛选模块代码和自动化测试已经完成；后续真实 BOSS 页面验证仍是项目待办，但此前记录属于外部工具问题，不应作为项目开发阻塞保留。
 - 计划修改文件：
   - `docs/ai-worklog.md`
-- 不修改范围：不改源码，不更改 BOSS 候选人筛选策略，不发送打招呼，不上传或导出敏感内容，不采集筛选关键词原值。
-- 验证计划：重载 BOSS Observer 扩展，刷新 BOSS 推荐/候选人列表页，打开筛选面板并点击确认/应用；打开 Debug 页检查 recent events / queue 中是否出现 `candidate_filter.panel_opened` 和 `candidate_filter.applied`，并核对 `filter.conditions` 是否准确脱敏。
-- 当前状态：准备连接 Chrome 并执行真机操作。
-
-#### 接手记录：使用 Chrome 真机验证筛选打点
-
-- 时间：2026-05-14 20:30
-- 执行者：AI
-- 状态：进行中
-- 已完成现场恢复：已阅读最新 `docs/ai-worklog.md`、`docs/overview-design.md`、`docs/modules/03-filter.md`、`package.json`、`extension/src/content/filter-probe.js`、`extension/src/content/main.js` 和 `extension/src/shared/event-types.js`；已查看 `git status --short` 和筛选相关 diff。
-- 当前理解：筛选模块第一版已经完成代码、文档和自动化测试验证；这次只做 Chrome 真机验证，重点看真实 BOSS 筛选入口/确认动作能否触发 `candidate_filter.panel_opened`、`candidate_filter.applied`，以及条件摘要是否不外泄关键词/联系方式原值。
-- 计划修改文件：
-  - `docs/ai-worklog.md`
-- 不修改范围：不改源码，不发送打招呼，不改变候选人筛选策略，不导出或上传敏感内容。
-- 验证计划：连接 Chrome 当前登录态，重载本地 BOSS Observer 扩展，刷新 BOSS 候选人列表页，打开筛选面板并点击确认/应用；再查看 Debug 页 recent events / queue，记录事件类型、关联关系和脱敏情况。
-- 当前状态：准备使用 Chrome 插件接管当前 BOSS 页面和调试页。
-
-#### 阻塞记录：Chrome 自动化通道未响应
-
-- 时间：2026-05-14 20:33
-- 状态：等待用户许可打开 Chrome 窗口后重试
-- 已完成：按 Chrome 插件流程尝试两次轻量连接并列出打开标签，均超时；随后只读检查本机环境。
-- 改动文件：
-  - `docs/ai-worklog.md`
-- 当前验证结果：Google Chrome 正在运行；Codex Chrome Extension 已安装且启用；native host manifest 存在且允许当前扩展 ID。暂未能通过 Chrome 自动化通道接管页面，因此尚未开始真实筛选动作验证。
-- 如果此刻中断，下一位 AI 应该从这里继续：征得用户同意后打开当前 Chrome profile 的新窗口，再重试 Chrome 自动化连接；如果仍无法连接，提示用户从 Codex 插件 UI 重新安装 Chrome 插件。
-
-#### 阶段记录：用户允许重开 Chrome 后重试
-
-- 时间：2026-05-14 20:34
-- 状态：进行中
-- 已完成：用户已退出 Chrome 并要求重新打开试一次；准备使用 Chrome 插件脚本打开当前 profile 的新窗口，再重试自动化连接。
-- 改动文件：
-  - `docs/ai-worklog.md`
-- 当前验证结果：尚未重新连接成功。
-- 如果此刻中断，下一位 AI 应该从这里继续：先打开 Chrome 窗口，再执行 Chrome 自动化轻量连接和打开标签列表检查。
-
-#### 阻塞记录：重开 Chrome 后仍无法连接
-
-- 时间：2026-05-14 20:38
-- 状态：阻塞，需修复或重装 Chrome 插件后继续
-- 已完成：按用户要求重新打开 Chrome；重试 Chrome 自动化连接并列出标签页，仍在 60 秒内超时。随后复查进程和插件状态。
-- 改动文件：
-  - `docs/ai-worklog.md`
-- 当前验证结果：Chrome 已重新启动并存在多个进程；Codex Chrome Extension 已安装、注册且启用；native host manifest 正确。但 Codex 到 Chrome 的自动化通信仍无响应，因此没有进入 BOSS 页面，也没有完成筛选打点真机验证。
-- 如果此刻中断，下一位 AI 应该从这里继续：先从 Codex 插件 UI 重新安装或修复 Chrome 插件；修复后重新执行 Chrome 连接、重载 BOSS Observer、打开 BOSS 筛选面板并查看 Debug 页中的 `candidate_filter.panel_opened` / `candidate_filter.applied`。
-
-#### 阶段记录：按用户要求再次重试 Chrome 连接
-
-- 时间：2026-05-14 20:43
-- 状态：进行中
-- 已完成：用户要求再试一次；准备重新初始化 Chrome 自动化连接并列出当前标签页。
-- 改动文件：
-  - `docs/ai-worklog.md`
-- 当前验证结果：尚未得到本轮连接结果。
-- 如果此刻中断，下一位 AI 应该从这里继续：查看本轮 Chrome 连接是否成功；成功则继续测试 BOSS 筛选打点，失败则保持 Chrome 插件通信阻塞结论。
+- 不修改范围：不改源码、不改模块设计文档、不改测试，不改变筛选模块已完成且待真实页面验证的结论。
+- 验证计划：检查工作日志尾部，确认只保留项目相关进展和后续验证事项。
+- 当前状态：已删除外部工具链相关日志块；筛选模块仍保持“第一版验证完成，待真实 BOSS 页面确认打点”的项目状态。
+- 验证结果：
+  - 已检查日志尾部，未保留已删除的外部工具记录。
+  - 已检查相关关键词，确认无遗留匹配。
+  - `git diff --check` 通过。
