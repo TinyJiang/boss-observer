@@ -19,6 +19,7 @@ const MAX_PANEL_TEXT_LENGTH = 5000;
 const MAX_CONDITIONS = 12;
 const MAX_CONDITION_TEXT_LENGTH = 48;
 const MAX_PANEL_CANDIDATES = 80;
+const MAX_PANEL_TEXT_ELEMENTS = 400;
 
 const PANEL_SELECTOR = [
   "[role='dialog']",
@@ -34,9 +35,40 @@ const PANEL_SELECTOR = [
   "[class*='Dialog']"
 ].join(",");
 
+const SELECTED_FILTER_OPTION_SELECTOR = [
+  "[aria-selected='true']",
+  "[aria-checked='true']",
+  "[aria-pressed='true']",
+  "input:checked",
+  "option:checked",
+  ".active",
+  ".checked",
+  ".cur",
+  ".current",
+  ".selected",
+  ".is-active",
+  ".is-checked",
+  ".is-current",
+  ".is-selected",
+  "[class*='Active']",
+  "[class*='Checked']",
+  "[class*='Current']",
+  "[class*='Selected']",
+  "[class*='active']",
+  "[class*='checked']",
+  "[class*='current']",
+  "[class*='selected']"
+].join(",");
+
 const FILTER_FIELD_LABELS = [
   "活跃状态",
+  "活跃度",
   "活跃",
+  "近期没有看过",
+  "近期没有",
+  "看过",
+  "是否与同事交换简历",
+  "换简历",
   "求职状态",
   "求职意向",
   "求职",
@@ -56,6 +88,11 @@ const FILTER_FIELD_LABELS = [
   "城市",
   "地区",
   "性别",
+  "薪资待遇",
+  "学历要求",
+  "经验要求",
+  "跳槽频率",
+  "牛人关键词",
   "院校",
   "专业",
   "关键词",
@@ -67,6 +104,42 @@ const FILTER_FIELD_LABELS = [
   "更新时间",
   "公司规模",
   "公司",
+  "行业"
+];
+
+const FILTER_ROW_LABELS = [
+  "年龄",
+  "年龄范围",
+  "活跃度[单选]",
+  "活跃度",
+  "活跃状态",
+  "近期没有看过",
+  "近期没有",
+  "性别",
+  "是否与同事交换简历",
+  "换简历",
+  "牛人关键词",
+  "院校",
+  "专业",
+  "跳槽频率[单选]",
+  "跳槽频率",
+  "求职意向",
+  "薪资待遇[单选]",
+  "薪资待遇",
+  "薪资范围",
+  "学历要求",
+  "学历",
+  "经验要求",
+  "工作经验",
+  "经验",
+  "期望职位",
+  "期望城市",
+  "职位",
+  "城市",
+  "地区",
+  "到岗时间",
+  "更新时间",
+  "公司规模",
   "行业"
 ];
 
@@ -113,12 +186,14 @@ const DEFAULT_FILTER_PATTERNS = [
 ];
 
 const FILTER_VALUE_PATTERNS = [
+  /^.+:.+$/,
   /\d{2}\s*-\s*\d{2}岁/,
   /\d{2}岁(?:以下|以上)?/,
   /(?:博士|硕士|本科|大专|中专\/中技|中专|中技|高中|初中)/,
   /(?:\d+年以内|\d+\s*-\s*\d+年|\d+年以上|\d+年|应届生|经验不限)/,
   /(?:\d+\s*-\s*\d+K|\d+K|面议)/i,
   /(?:刚刚|今日|本周|本月|近\d+天|近三天|近七天|近一周|近两周).{0,4}活跃/,
+  /(?:近\d+天|近一个月|近一月|近两周|近三十天).{0,4}没有/,
   /(?:离职|在职|在校|应届生)-(?:随时到岗|考虑机会|暂不考虑|月内到岗)/,
   /^(?:男|女)$/
 ];
@@ -286,14 +361,13 @@ export function buildFilterPanelOpenedPayload({
   source = "click",
   page = null,
   listUrl = "",
-  listPageType = "",
-  filterText = ""
+  listPageType = ""
 } = {}) {
   return compactPayloadObject({
     source,
     listUrl: listUrl || page?.url,
     listPageType: listPageType || page?.pageType,
-    filter: buildFilterSnapshotFromText(filterText)
+    filter: buildFilterSnapshotFromConditions([])
   });
 }
 
@@ -303,6 +377,7 @@ export function buildFilterAppliedPayload({
   listUrl = "",
   listPageType = "",
   filterText = "",
+  filterConditions = null,
   openedEventId = ""
 } = {}) {
   return compactPayloadObject({
@@ -310,16 +385,53 @@ export function buildFilterAppliedPayload({
     listUrl: listUrl || page?.url,
     listPageType: listPageType || page?.pageType,
     openedEventId,
-    filter: buildFilterSnapshotFromText(filterText)
+    filter: buildFilterSnapshot({
+      filterConditions,
+      filterText
+    })
   });
 }
 
 export function buildFilterSnapshotFromText(text = "") {
-  const conditions = extractFilterConditionsFromText(text);
+  return buildFilterSnapshot({ filterText: text });
+}
+
+function buildFilterSnapshot({
+  filterConditions = null,
+  filterText = ""
+} = {}) {
+  const conditions = Array.isArray(filterConditions)
+    ? normalizeFilterConditions(filterConditions)
+    : extractFilterConditionsFromText(filterText);
   return compactPayloadObject({
     conditionCount: conditions.length,
     conditions
   });
+}
+
+function buildFilterSnapshotFromConditions(filterConditions = []) {
+  const conditions = normalizeFilterConditions(filterConditions);
+  return compactPayloadObject({
+    conditionCount: conditions.length,
+    conditions
+  });
+}
+
+function normalizeFilterConditions(filterConditions = []) {
+  const conditions = [];
+  const seen = new Set();
+
+  filterConditions.forEach((conditionText) => {
+    const condition = sanitizeFilterCondition(conditionText);
+    if (!condition || seen.has(condition)) {
+      return;
+    }
+
+    seen.add(condition);
+    conditions.push(condition);
+  });
+
+  return conditions.slice(0, MAX_CONDITIONS);
 }
 
 export function extractFilterConditionsFromText(text = "") {
@@ -339,6 +451,438 @@ export function extractFilterConditionsFromText(text = "") {
   });
 
   return conditions.slice(0, MAX_CONDITIONS);
+}
+
+export function extractSelectedFilterConditionsFromElement(panelElement) {
+  const conditions = [];
+  const seen = new Set();
+  const textElements = collectFilterTextElements(panelElement);
+
+  Array.from(panelElement?.querySelectorAll?.(SELECTED_FILTER_OPTION_SELECTOR) || [])
+    .slice(0, MAX_PANEL_CANDIDATES)
+    .forEach((element) => {
+      appendFilterCondition(conditions, seen, buildSelectedFilterConditionText({
+        element,
+        panelElement,
+        textElements
+      }));
+    });
+
+  extractRangeFilterConditionTexts(panelElement, textElements)
+    .forEach((conditionText) => {
+      appendFilterCondition(conditions, seen, conditionText);
+    });
+
+  extractVisualSelectedFilterConditionTexts(panelElement, textElements)
+    .forEach((conditionText) => {
+      appendFilterCondition(conditions, seen, conditionText);
+    });
+
+  return conditions.slice(0, MAX_CONDITIONS);
+}
+
+function appendFilterCondition(conditions, seen, conditionText) {
+  const condition = sanitizeFilterCondition(conditionText);
+  if (!condition || seen.has(condition)) {
+    return;
+  }
+
+  seen.add(condition);
+  conditions.push(condition);
+}
+
+function buildSelectedFilterConditionText({
+  element,
+  panelElement,
+  textElements
+}) {
+  const valueText = readSelectedFilterElementText(element);
+  return buildLabeledFilterConditionText({
+    valueText,
+    labelText: findNearestFilterFieldLabelText(element, panelElement, textElements)
+  });
+}
+
+function readSelectedFilterElementText(element) {
+  if (isFormControlElement(element)) {
+    return readSelectedFormControlConditionText(element);
+  }
+
+  return readActionText(element);
+}
+
+function isFormControlElement(element) {
+  const tagName = String(element?.tagName || "").toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select" || tagName === "option";
+}
+
+function readSelectedFormControlConditionText(element) {
+  const labelText = readInputLabelText(element);
+  const value = normalizeText(element?.value);
+  const text = normalizeText(labelText || readActionText(element));
+
+  if (value && isSensitiveFilterText(text || value)) {
+    const label = SENSITIVE_FILTER_LABELS.find((current) => (text || value).includes(current)) || "关键词";
+    return `${label}: 已填写`;
+  }
+
+  return text || value;
+}
+
+function readInputLabelText(element) {
+  const ariaLabel = normalizeText(element?.getAttribute?.("aria-label"));
+  if (ariaLabel) {
+    return ariaLabel;
+  }
+
+  const title = normalizeText(element?.getAttribute?.("title"));
+  if (title) {
+    return title;
+  }
+
+  return normalizeText(element?.parentElement?.innerText || "");
+}
+
+function isSensitiveFilterText(text = "") {
+  return SENSITIVE_FILTER_LABELS.some((label) => text.includes(label));
+}
+
+function collectFilterTextElements(panelElement) {
+  return collectPanelCandidateElements(panelElement)
+    .filter((element) => isVisibleShortTextElement(element))
+    .map((element, index) => ({
+      element,
+      index,
+      text: readSingleElementText(element)
+    }));
+}
+
+function collectPanelCandidateElements(panelElement) {
+  return Array.from(panelElement?.querySelectorAll?.("*") || [])
+    .slice(0, MAX_PANEL_TEXT_ELEMENTS);
+}
+
+function isVisibleShortTextElement(element) {
+  const text = readSingleElementText(element);
+  if (
+    !text ||
+    text.length > MAX_CONDITION_TEXT_LENGTH ||
+    hasTextChildElement(element) ||
+    !isElementVisible(element)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function readSingleElementText(element) {
+  return normalizeText(
+    element?.innerText ||
+      element?.textContent ||
+      element?.value ||
+      element?.getAttribute?.("aria-label") ||
+      element?.getAttribute?.("title") ||
+      ""
+  );
+}
+
+function hasTextChildElement(element) {
+  return Array.from(element?.children || [])
+    .some((child) => normalizeText(child?.innerText || child?.textContent || ""));
+}
+
+function extractVisualSelectedFilterConditionTexts(panelElement, textElements) {
+  return textElements
+    .filter(({ element, text }) => !shouldIgnoreFilterConditionText(text) &&
+      isVisuallySelectedFilterOptionElement(element, panelElement))
+    .map(({ element, text }) => buildLabeledFilterConditionText({
+      valueText: text,
+      labelText: findNearestFilterFieldLabelText(element, panelElement, textElements)
+    }));
+}
+
+function buildLabeledFilterConditionText({ valueText, labelText }) {
+  const value = normalizeText(valueText);
+  if (!value || shouldIgnoreFilterConditionText(value)) {
+    return "";
+  }
+
+  const label = normalizeFilterFieldLabel(labelText);
+  if (!label || value.includes(":") || isFilterLabelLikeText(value)) {
+    return value;
+  }
+
+  return `${label}: ${value}`;
+}
+
+function findNearestFilterFieldLabelText(element, panelElement, textElements) {
+  const elementIndex = textElements.find((entry) => entry.element === element)?.index ?? -1;
+  if (elementIndex < 0) {
+    return "";
+  }
+
+  for (let index = elementIndex - 1; index >= 0; index -= 1) {
+    const candidate = textElements[index];
+    if (!isLikelySameFilterPanelRegion(element, candidate.element, panelElement)) {
+      continue;
+    }
+    if (isFilterLabelLikeText(candidate.text)) {
+      return candidate.text;
+    }
+  }
+
+  return "";
+}
+
+function isLikelySameFilterPanelRegion(element, candidateElement, panelElement) {
+  if (!panelElement || candidateElement === panelElement) {
+    return false;
+  }
+
+  const elementRect = element?.getBoundingClientRect?.();
+  const candidateRect = candidateElement?.getBoundingClientRect?.();
+  const panelRect = panelElement?.getBoundingClientRect?.();
+  if (!elementRect || !candidateRect || !panelRect) {
+    return true;
+  }
+
+  return candidateRect.top >= panelRect.top - 2 &&
+    candidateRect.top <= elementRect.bottom + 6;
+}
+
+function isFilterLabelLikeText(text = "") {
+  const normalizedText = normalizeFilterFieldLabel(text);
+  return FILTER_ROW_LABELS.some((label) => normalizedText === normalizeFilterFieldLabel(label));
+}
+
+function normalizeFilterFieldLabel(text = "") {
+  return normalizeText(text)
+    .replace(/：/g, ":")
+    .replace(/\s*\[[^\]]+\]\s*/g, "")
+    .replace(/:$/, "");
+}
+
+function isVisuallySelectedFilterOptionElement(element, panelElement) {
+  const carrier = findVisualSelectionCarrier(element, panelElement);
+  if (!carrier) {
+    return false;
+  }
+
+  return isSelectedVisualStyle(readComputedStyle(carrier));
+}
+
+function findVisualSelectionCarrier(element, panelElement) {
+  const text = readSingleElementText(element);
+  let current = element;
+
+  for (let steps = 0; current && current !== panelElement && steps < 4; steps += 1) {
+    if (
+      normalizeText(current.innerText || current.textContent || "") === text &&
+      isSelectedVisualStyle(readComputedStyle(current))
+    ) {
+      return current;
+    }
+
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function readComputedStyle(element, pseudoElement = null) {
+  const view = element?.ownerDocument?.defaultView || globalThis;
+  try {
+    return view?.getComputedStyle?.(element, pseudoElement) || element?.style || {};
+  } catch {
+    return element?.style || {};
+  }
+}
+
+function isSelectedVisualStyle(style = {}) {
+  const backgroundColor = parseCssColor(style.backgroundColor || style.background || "");
+  if (!backgroundColor || backgroundColor.alpha < 0.4 || isNeutralFilterBackground(backgroundColor)) {
+    return false;
+  }
+
+  const textColor = parseCssColor(style.color || "");
+  if (textColor && isLightColor(textColor) && !isLightColor(backgroundColor)) {
+    return true;
+  }
+
+  return colorSaturation(backgroundColor) >= 70;
+}
+
+function parseCssColor(value = "") {
+  const match = String(value).match(/rgba?\(([^)]+)\)/i);
+  if (!match) {
+    return null;
+  }
+
+  const parts = match[1].split(",").map((part) => part.trim());
+  const red = Number.parseFloat(parts[0]);
+  const green = Number.parseFloat(parts[1]);
+  const blue = Number.parseFloat(parts[2]);
+  const alpha = parts.length >= 4 ? Number.parseFloat(parts[3]) : 1;
+
+  if ([red, green, blue, alpha].some((part) => Number.isNaN(part))) {
+    return null;
+  }
+
+  return {
+    red,
+    green,
+    blue,
+    alpha
+  };
+}
+
+function isNeutralFilterBackground(color) {
+  return color.alpha < 0.4 ||
+    (color.red >= 235 && color.green >= 235 && color.blue >= 235) ||
+    colorSaturation(color) < 30;
+}
+
+function isLightColor(color) {
+  return color.red * 0.299 + color.green * 0.587 + color.blue * 0.114 >= 210;
+}
+
+function colorSaturation(color) {
+  return Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue);
+}
+
+function extractRangeFilterConditionTexts(panelElement, textElements) {
+  const ageRangeCondition = extractAgeRangeFilterConditionText(panelElement, textElements);
+  return ageRangeCondition ? [ageRangeCondition] : [];
+}
+
+function extractAgeRangeFilterConditionText(panelElement, textElements) {
+  const ageLabelIndex = textElements.findIndex(({ text }) => isAgeFilterLabelText(text));
+  if (ageLabelIndex < 0) {
+    return "";
+  }
+
+  const allElements = collectPanelCandidateElements(panelElement);
+  const ageElementIndex = allElements.indexOf(textElements[ageLabelIndex].element);
+  const nextLabelEntry = textElements
+    .slice(ageLabelIndex + 1)
+    .find(({ text }) => isFilterLabelLikeText(text));
+  const nextLabelElementIndex = nextLabelEntry
+    ? allElements.indexOf(nextLabelEntry.element)
+    : -1;
+  const sliderValues = collectAgeSliderValues({
+    allElements,
+    ageElementIndex,
+    nextLabelElementIndex
+  });
+  if (sliderValues.length >= 2) {
+    return formatAgeRangeCondition(sliderValues[0], sliderValues[1]);
+  }
+
+  const values = [];
+  for (let index = ageLabelIndex + 1; index < textElements.length; index += 1) {
+    const text = textElements[index].text;
+    if (isFilterLabelLikeText(text)) {
+      break;
+    }
+    if (/^\d{1,2}$/.test(text)) {
+      values.push(Number.parseInt(text, 10));
+    }
+  }
+
+  if (values.length < 2) {
+    return "";
+  }
+
+  return formatAgeRangeCondition(values[0], values[1]);
+}
+
+function isAgeFilterLabelText(text = "") {
+  const normalizedText = normalizeFilterFieldLabel(text);
+  return normalizedText === "年龄" || normalizedText === "年龄范围";
+}
+
+function collectAgeSliderValues({
+  allElements = [],
+  ageElementIndex = -1,
+  nextLabelElementIndex = -1
+} = {}) {
+  const values = [];
+  const seen = new Set();
+
+  allElements.forEach((element, index) => {
+    if (!isElementInAgeFilterRegion(index, ageElementIndex, nextLabelElementIndex)) {
+      return;
+    }
+
+    readAgeSliderElementValues(element).forEach((value) => {
+      if (!Number.isInteger(value) || value < 16 || value > 80 || seen.has(value)) {
+        return;
+      }
+
+      seen.add(value);
+      values.push(value);
+    });
+  });
+
+  return values.slice(0, 2);
+}
+
+function isElementInAgeFilterRegion(elementIndex, ageElementIndex, nextLabelElementIndex) {
+  if (ageElementIndex < 0 || elementIndex <= ageElementIndex) {
+    return false;
+  }
+
+  return nextLabelElementIndex < 0 || elementIndex < nextLabelElementIndex;
+}
+
+function readAgeSliderElementValues(element) {
+  return collectAgeValueSources(element)
+    .flatMap((source) => parseAgeNumbersFromText(source));
+}
+
+function collectAgeValueSources(element) {
+  return [
+    element?.getAttribute?.("aria-valuenow"),
+    element?.getAttribute?.("aria-valuetext"),
+    element?.getAttribute?.("aria-label"),
+    element?.getAttribute?.("title"),
+    element?.getAttribute?.("data-value"),
+    element?.getAttribute?.("data-min"),
+    element?.getAttribute?.("data-max"),
+    element?.getAttribute?.("data-age"),
+    element?.getAttribute?.("data-from"),
+    element?.getAttribute?.("data-to"),
+    element?.value,
+    ...Object.values(element?.dataset || {}),
+    readCssPseudoContent(element, "::before"),
+    readCssPseudoContent(element, "::after")
+  ];
+}
+
+function readCssPseudoContent(element, pseudoElement) {
+  const content = readComputedStyle(element, pseudoElement)?.content;
+  if (!content || content === "none" || content === "normal") {
+    return "";
+  }
+
+  return String(content).replace(/^["']|["']$/g, "");
+}
+
+function parseAgeNumbersFromText(text = "") {
+  return Array.from(String(text).matchAll(/(?:^|[^\d])(\d{1,2})(?:\s*岁)?(?:$|[^\d])/g))
+    .map((match) => Number.parseInt(match[1], 10))
+    .filter((value) => Number.isInteger(value));
+}
+
+function formatAgeRangeCondition(leftValue, rightValue) {
+  const minValue = Math.min(leftValue, rightValue);
+  const maxValue = Math.max(leftValue, rightValue);
+  if (minValue <= 16 && maxValue >= 60) {
+    return "";
+  }
+
+  return `年龄: ${minValue}-${maxValue}岁`;
 }
 
 export function isFilterPanelOpenActionText(text = "") {
@@ -408,6 +952,7 @@ export function findFilterActionElement(target) {
 export function buildFilterClickTargetFromElement({ actionElement, currentDocument, page }) {
   const contextElement = resolveFilterContextElement(actionElement, currentDocument);
   const filterText = readElementText(contextElement);
+  const hasFilterPanelContext = Boolean(contextElement && isLikelyFilterPanelText(filterText));
 
   return {
     source: "click",
@@ -416,7 +961,10 @@ export function buildFilterClickTargetFromElement({ actionElement, currentDocume
     sourceUrl: currentDocument?.location?.href || globalThis.location?.href || "",
     actionText: readActionText(actionElement),
     filterText,
-    hasFilterPanelContext: Boolean(contextElement && isLikelyFilterPanelText(filterText))
+    filterConditions: hasFilterPanelContext
+      ? extractSelectedFilterConditionsFromElement(contextElement)
+      : null,
+    hasFilterPanelContext
   };
 }
 

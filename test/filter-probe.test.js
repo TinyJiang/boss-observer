@@ -74,12 +74,14 @@ test("filter payloads include list context and omit raw source details", () => {
     openedEventId: "evt_opened",
     sourceUrl: "https://www.zhipin.com/web/frame/recommend/?jobid=job1",
     actionText: "确定",
-    filterText: "筛选\n学历\n本科\n确定"
+    filterText: "筛选\n学历\n本科\n确定",
+    filterConditions: ["本科"]
   });
 
   assert.equal(opened.source, "click");
   assert.equal(opened.listPageType, "candidate_recommend");
-  assert.equal(opened.filter.conditionCount, 1);
+  assert.equal(opened.filter.conditionCount, 0);
+  assert.equal(Object.hasOwn(opened.filter, "conditions"), false);
   assert.equal(applied.openedEventId, "evt_opened");
   assert.deepEqual(applied.filter.conditions, ["本科"]);
   assert.equal(Object.hasOwn(applied, "page"), false);
@@ -89,15 +91,34 @@ test("filter payloads include list context and omit raw source details", () => {
 
 test("filter click target reads summary from surrounding filter panel", () => {
   const applyButton = createElement({ tagName: "BUTTON", text: "确定" });
+  const activeOption = createElement({
+    text: "今日活跃",
+    attributes: {
+      class: "selected"
+    }
+  });
+  const selectedOption = createElement({
+    text: "本科",
+    attributes: {
+      "aria-selected": "true"
+    }
+  });
+  const defaultOption = createElement({
+    text: "不限",
+    attributes: {
+      class: "selected"
+    }
+  });
   const panel = createElement({
     text: [
       "筛选",
       "活跃状态",
+      "不限",
       "今日活跃",
       "学历",
       "本科"
     ].join("\n"),
-    children: [applyButton],
+    children: [activeOption, selectedOption, defaultOption, applyButton],
     attributes: {
       role: "dialog"
     }
@@ -114,7 +135,119 @@ test("filter click target reads summary from surrounding filter panel", () => {
   });
 
   assert.equal(target.hasFilterPanelContext, true);
-  assert.deepEqual(buildFilterSnapshotFromText(target.filterText).conditions, ["今日活跃", "本科"]);
+  assert.deepEqual(target.filterConditions, ["今日活跃", "本科"]);
+});
+
+test("filter click target reads visual selected chips and age range", () => {
+  const applyButton = createElement({
+    tagName: "BUTTON",
+    text: "确定",
+    style: selectedStyle()
+  });
+  const panel = createElement({
+    children: [
+      createElement({ text: "筛选条件" }),
+      createElement({ text: "年龄" }),
+      createElement({ text: "18" }),
+      createElement({ text: "35" }),
+      createElement({ text: "活跃度[单选]" }),
+      createElement({ text: "不限" }),
+      createElement({ text: "刚刚活跃", style: selectedStyle("orange") }),
+      createElement({ text: "今日活跃" }),
+      createElement({ text: "性别" }),
+      createElement({ text: "不限" }),
+      createElement({ text: "男" }),
+      createElement({ text: "女", style: selectedStyle("orange") }),
+      createElement({ text: "近期没有看过" }),
+      createElement({ text: "不限" }),
+      createElement({ text: "近14天没有", style: selectedStyle("orange") }),
+      createElement({ text: "是否与同事交换简历" }),
+      createElement({ text: "不限" }),
+      createElement({ text: "近一个月没有", style: selectedStyle("orange") }),
+      createElement({ text: "求职意向" }),
+      createElement({ text: "不限" }),
+      createElement({ text: "离职-随时到岗", style: selectedStyle("cyan") }),
+      createElement({ text: "在职-考虑机会", style: selectedStyle("cyan") }),
+      createElement({ text: "薪资待遇[单选]" }),
+      createElement({ text: "不限", style: selectedStyle("cyan") }),
+      createElement({ text: "3-5K" }),
+      applyButton
+    ],
+    attributes: {
+      role: "dialog"
+    }
+  });
+  const document = createDocument({
+    body: panel,
+    href: "https://www.zhipin.com/web/frame/recommend/?jobid=job1"
+  });
+
+  const target = buildFilterClickTargetFromElement({
+    actionElement: applyButton,
+    currentDocument: document,
+    page: classifyPage("https://www.zhipin.com/web/chat/recommend")
+  });
+
+  assert.equal(target.hasFilterPanelContext, true);
+  assert.deepEqual(target.filterConditions, [
+    "年龄: 18-35岁",
+    "活跃度: 刚刚活跃",
+    "性别: 女",
+    "近期没有看过: 近14天没有",
+    "是否与同事交换简历: 近一个月没有",
+    "求职意向: 离职-随时到岗",
+    "求职意向: 在职-考虑机会"
+  ]);
+});
+
+test("filter click target reads age range from slider pseudo content", () => {
+  const applyButton = createElement({ tagName: "BUTTON", text: "确定" });
+  const panel = createElement({
+    children: [
+      createElement({ text: "筛选条件" }),
+      createElement({ text: "年龄" }),
+      createElement({
+        children: [
+          createElement({
+            pseudoStyles: {
+              "::after": {
+                content: "\"18\""
+              }
+            }
+          }),
+          createElement({
+            pseudoStyles: {
+              "::after": {
+                content: "\"35\""
+              }
+            }
+          })
+        ]
+      }),
+      createElement({ text: "活跃度[单选]" }),
+      createElement({ text: "刚刚活跃", style: selectedStyle("orange") }),
+      applyButton
+    ],
+    attributes: {
+      role: "dialog"
+    }
+  });
+  const document = createDocument({
+    body: panel,
+    href: "https://www.zhipin.com/web/frame/recommend/?jobid=job1"
+  });
+
+  const target = buildFilterClickTargetFromElement({
+    actionElement: applyButton,
+    currentDocument: document,
+    page: classifyPage("https://www.zhipin.com/web/chat/recommend")
+  });
+
+  assert.equal(target.hasFilterPanelContext, true);
+  assert.deepEqual(target.filterConditions, [
+    "年龄: 18-35岁",
+    "活跃度: 刚刚活跃"
+  ]);
 });
 
 test("filter probe emits panel opened and applied with opened event correlation", () => {
@@ -122,15 +255,29 @@ test("filter probe emits panel opened and applied with opened event correlation"
   const collector = createCollector();
   const openButton = createElement({ tagName: "BUTTON", text: "筛选" });
   const applyButton = createElement({ tagName: "BUTTON", text: "确定" });
+  const ageOption = createElement({
+    text: "20-35岁",
+    attributes: {
+      class: "active"
+    }
+  });
+  const educationOption = createElement({
+    text: "本科",
+    attributes: {
+      class: "selected"
+    }
+  });
   const panel = createElement({
     text: [
       "筛选",
       "年龄",
+      "不限",
       "20-35岁",
       "学历",
+      "不限",
       "本科"
     ].join("\n"),
-    children: [applyButton],
+    children: [ageOption, educationOption, applyButton],
     attributes: {
       role: "dialog"
     }
@@ -159,6 +306,7 @@ test("filter probe emits panel opened and applied with opened event correlation"
     ]
   );
   assert.equal(collector.events[1].payload.openedEventId, "evt_1");
+  assert.equal(collector.events[0].payload.filter.conditionCount, 0);
   assert.deepEqual(collector.events[1].payload.filter.conditions, ["20-35岁", "本科"]);
   assert.equal(probe.currentFilterContext.conditionCount, 2);
 });
@@ -210,7 +358,13 @@ function createDocument({ body, href, panels = [] }) {
     },
     defaultView: {
       innerHeight: 900,
-      innerWidth: 1440
+      innerWidth: 1440,
+      getComputedStyle(element, pseudoElement = null) {
+        if (pseudoElement) {
+          return element.pseudoStyles?.[pseudoElement] || {};
+        }
+        return element.style || {};
+      }
     },
     addEventListener() {},
     removeEventListener() {},
@@ -233,12 +387,20 @@ function createElement({
   text = "",
   parentElement = null,
   children = [],
-  attributes = {}
+  attributes = {},
+  style = {},
+  pseudoStyles = {},
+  dataset = {},
+  value = ""
 } = {}) {
   const element = {
     tagName,
     parentElement,
     children,
+    style,
+    pseudoStyles,
+    dataset,
+    value,
     get innerText() {
       return text || this.children.map((child) => child.innerText).filter(Boolean).join("\n");
     },
@@ -258,8 +420,8 @@ function createElement({
         height: 200
       };
     },
-    querySelectorAll() {
-      return [];
+    querySelectorAll(selector) {
+      return findMatchingDescendants(this, selector);
     }
   };
 
@@ -276,4 +438,58 @@ function assignOwnerDocument(element, document) {
 
   element.ownerDocument = document;
   element.children.forEach((child) => assignOwnerDocument(child, document));
+}
+
+function findMatchingDescendants(element, selector) {
+  const results = [];
+
+  (element.children || []).forEach((current) => {
+    if (matchesSelectorForTest(current, selector)) {
+      results.push(current);
+    }
+    results.push(...findMatchingDescendants(current, selector));
+  });
+
+  return results;
+}
+
+function matchesSelectorForTest(element, selector = "") {
+  if (selector === "*") {
+    return true;
+  }
+
+  const className = element?.getAttribute?.("class") || "";
+  const ariaSelected = element?.getAttribute?.("aria-selected") || "";
+  const ariaChecked = element?.getAttribute?.("aria-checked") || "";
+  const ariaPressed = element?.getAttribute?.("aria-pressed") || "";
+
+  return (
+    selector.includes("selected") && className.includes("selected")
+  ) || (
+    selector.includes("active") && className.includes("active")
+  ) || (
+    selector.includes("checked") && className.includes("checked")
+  ) || (
+    selector.includes("cur") && className.includes("cur")
+  ) || (
+    selector.includes("aria-selected") && ariaSelected === "true"
+  ) || (
+    selector.includes("aria-checked") && ariaChecked === "true"
+  ) || (
+    selector.includes("aria-pressed") && ariaPressed === "true"
+  );
+}
+
+function selectedStyle(kind = "cyan") {
+  if (kind === "orange") {
+    return {
+      backgroundColor: "rgb(224, 150, 100)",
+      color: "rgb(255, 255, 255)"
+    };
+  }
+
+  return {
+    backgroundColor: "rgb(20, 190, 190)",
+    color: "rgb(255, 255, 255)"
+  };
 }

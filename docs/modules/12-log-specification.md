@@ -134,6 +134,11 @@
 | `candidate_greeting.clicked` | 打招呼按钮点击 |
 | `candidate_greeting.succeeded` | 打招呼成功 |
 | `candidate_greeting.failed` | 打招呼失败 |
+| `candidate_chat.opened` | 候选人聊天窗口打开 |
+| `candidate_chat.snapshot_captured` | 候选人聊天文本快照已采集 |
+| `candidate_chat.wechat_captured` | 已换微信候选人的微信信息已采集 |
+| `candidate_chat.report_required` | 聊天列表已提示需要打开补采 |
+| `candidate_chat.capture_failed` | 聊天采集异常 |
 | `queue.write_failed` | 本地队列写入失败 |
 | `upload.started` | 开始上传 |
 | `upload.succeeded` | 上传成功 |
@@ -251,8 +256,8 @@
 
 - `source`: 当前为 `click`。
 - `listUrl` / `listPageType`: 筛选动作所在的候选人列表顶层页面。
-- `filter.conditionCount`: 当前可见筛选摘要数量。只点击入口、面板尚未渲染时可能为 `0`。
-- `filter.conditions`: 如果打开时已经能读到面板中的短条件，会输出最多 12 条短摘要；没有有效条件时省略。
+- `filter.conditionCount`: 当前固定为 `0`。
+- `filter.conditions`: 当前不在打开事件中输出。筛选摘要只在确认/应用事件中记录。
 
 当前第一版只在候选人列表页及其同源 iframe 中监听“筛选 / 更多筛选 / 高级筛选 / 过滤”等短文本入口。事件不包含 `page`、`sourceUrl`、`actionText` 或完整面板文本。
 
@@ -265,22 +270,25 @@
   "listPageType": "candidate_recommend",
   "openedEventId": "evt_filter_opened",
   "filter": {
-    "conditionCount": 4,
+    "conditionCount": 7,
     "conditions": [
-      "近三天活跃",
-      "本科",
-      "年龄 20-35岁",
-      "关键词: 已填写"
+      "年龄: 18-35岁",
+      "活跃度: 刚刚活跃",
+      "性别: 女",
+      "近期没有看过: 近14天没有",
+      "是否与同事交换简历: 近一个月没有",
+      "求职意向: 离职-随时到岗",
+      "求职意向: 在职-考虑机会"
     ]
   }
 }
 ```
 
 - `openedEventId`: 10 分钟内同一列表页最近一次 `candidate_filter.panel_opened` 事件 ID；没有可关联打开事件时省略。
-- `filter.conditionCount`: 当前确认动作可读到的有效短筛选摘要数量。
-- `filter.conditions`: 筛选面板可见的短条件摘要，最多 12 条，单条最长 48 个字符。
+- `filter.conditionCount`: 当前确认动作可读到的有效短筛选摘要数量；没有可识别选中态时为 `0`。
+- `filter.conditions`: 筛选面板中可识别为已选中的短条件摘要，最多 12 条，单条最长 48 个字符。
 
-`candidate_filter.applied` 只在“确定 / 确认 / 应用 / 完成 / 搜索 / 查看结果”等动作出现在可识别筛选面板上下文里时发出，避免把普通搜索或其他确认动作误记为筛选。`关键词`、`关键字`、`搜索关键词`、`姓名`、`手机`、`电话`、`微信`、`联系方式` 等自由输入或敏感字段只记录为“已填写”，不保存原始值；手机号、邮箱会做脱敏兜底。
+`candidate_filter.applied` 只在“确定 / 确认 / 应用 / 完成 / 搜索 / 查看结果”等动作出现在可识别筛选面板上下文里时发出，避免把普通搜索或其他确认动作误记为筛选。摘要优先来自 `aria-selected`、`aria-checked`、`aria-pressed`、`input:checked` 或常见 `selected/active/checked/current` 样式标记的控件；真实 BOSS 面板中只通过 chip 背景色标记已选项时，会按筛选字段行读取有明显选中背景的短选项，并补充可读到的年龄滑块范围。年龄滑块除普通文本和 `aria` / `data` / `value` 属性外，也会读取年龄行内滑块元素的 `::before` / `::after` 文本内容，因为真实页面可能用 CSS 伪元素渲染数值。如果真实页面没有可识别选中态，宁可输出 `conditionCount: 0`，也不把面板所有可见候选项当作已选条件。`关键词`、`关键字`、`搜索关键词`、`姓名`、`手机`、`电话`、`微信`、`联系方式` 等自由输入或敏感字段只记录为“已填写”，不保存原始值；手机号、邮箱会做脱敏兜底。
 
 当前第一版会在探针内保留最近一次确认的筛选摘要，但尚未把筛选上下文写入候选人列表、详情或打招呼事件；后续待真机确认字段稳定后再接入跨事件上下文。
 
@@ -513,6 +521,127 @@
 - `greeting.detectedBy`: 当前常见值为 `action_state` 或 `page_message`。
 
 点击后短时间内如果没有观察到成功或失败提示，当前实现只丢弃 pending 状态，不会把“未观察到确认”写成失败事实。
+
+### 7.17 `candidate_chat.opened`
+
+```json
+{
+  "source": "poll",
+  "chatPageUrl": "https://www.zhipin.com/web/chat/index",
+  "candidate": {
+    "candidateId": "bo_candidate_url_geekid_abc123_k8s2p1",
+    "stableId": "abc123",
+    "stableIdSource": "url.geekId",
+    "identityConfidence": "high",
+    "profile": {
+      "displayName": "桂儿"
+    }
+  },
+  "chat": {
+    "conversationKey": "bo_candidate_url_geekid_abc123_k8s2p1"
+  }
+}
+```
+
+- 事件表示招聘专员打开了某个候选人的聊天窗口，不表示已经成功上传聊天快照。
+- `candidate` 复用候选人列表、详情和打招呼模块的身份结构；聊天页只读到姓名时会使用低置信短指纹，并输出 `identityConfidence: "low"`。
+- `chat.conversationKey` 是插件本地识别当前聊天窗口的键，优先使用 `candidateId`。重复打开同一候选人仍可再次产生打开事实。
+
+### 7.18 `candidate_chat.snapshot_captured`
+
+```json
+{
+  "source": "poll",
+  "chatPageUrl": "https://www.zhipin.com/web/chat/index",
+  "candidate": {},
+  "chat": {
+    "messageCount": 3,
+    "firstMessageAt": "2026-05-12T12:54:00.000+08:00",
+    "lastMessageAt": "2026-05-15T09:54:00.000+08:00",
+    "lastMessageFingerprint": "msg_abc",
+    "snapshotCompleteness": "visible_dom",
+    "mayBeIncomplete": true,
+    "mediaSummary": {
+      "imageNodeCount": 2
+    },
+    "messages": [
+      {
+        "messageIndex": 0,
+        "messageAt": "2026-05-12T12:54:00.000+08:00",
+        "direction": "candidate",
+        "text": "BOSS好，我对这份工作很感兴趣",
+        "fingerprint": "msg_1"
+      },
+      {
+        "messageIndex": 1,
+        "messageAt": "2026-05-12T13:39:00.000+08:00",
+        "direction": "recruiter",
+        "status": "已读",
+        "text": "你好，可以聊一聊啊",
+        "fingerprint": "msg_2"
+      }
+    ]
+  }
+}
+```
+
+- 事件在打开或切换聊天窗口时尝试生成。插件端以本地成功上报水位判断是否提交：无水位、或本次快照 `chat.lastMessageAt` 晚于 `lastReportedMessageAt` 时进入上传流程；已经成功覆盖到最新消息时不重复提交。只有服务器返回成功后，background 才推进本地聊天上报水位。
+- `chat.messages` 只包含当前聊天窗口已渲染、可读取的文本消息。图片、语音、附件 URL 和二进制内容不进入 payload。
+- `chat.snapshotCompleteness` 当前固定为 `visible_dom`；`mayBeIncomplete: true` 表示插件没有自动滚动加载历史，不承诺完整覆盖所有历史消息。
+- `chat.mediaSummary` 只记录媒体节点数量，不记录媒体地址。
+
+### 7.19 `candidate_chat.wechat_captured`
+
+```json
+{
+  "source": "snapshot",
+  "chatPageUrl": "https://www.zhipin.com/web/chat/index",
+  "candidate": {},
+  "wechat": {
+    "accounts": ["wxid_example"],
+    "source": "chat_text",
+    "detectedAtMessageAt": "2026-05-15T09:54:00.000+08:00",
+    "detectedAtMessageFingerprint": "msg_abc"
+  }
+}
+```
+
+- 只在明确微信上下文中采集，例如页面显示已交换微信字段，或聊天文本包含“微信 / 微信号 / wx / wechat / vx / 加我微信”等上下文并带账号。
+- 普通“换微信”按钮不触发该事件。
+- 图片中的微信号不采集，除非 BOSS 页面已经转写成可见文本。
+
+### 7.20 `candidate_chat.report_required`
+
+```json
+{
+  "source": "chat_list",
+  "chatPageUrl": "https://www.zhipin.com/web/chat/index",
+  "candidate": {},
+  "listItem": {
+    "lastMessageAt": "2026-05-15T09:54:00.000+08:00",
+    "lastMessageTimeText": "09:54",
+    "lastReportedMessageAt": "2026-05-15T09:20:00.000+08:00"
+  }
+}
+```
+
+- 事件表示插件已经在聊天列表项上显示“今日聊天未上报，请点开补采”之类提示。
+- 插件不会自动打开该会话，不会阻止员工操作。
+- 列表只检查明显今天的时间文本，例如 `HH:mm`、`今天 HH:mm`、`刚刚`、`N分钟前`；`昨天`、旧日期和不确定文本会忽略。
+
+### 7.21 `candidate_chat.capture_failed`
+
+```json
+{
+  "source": "poll",
+  "chatPageUrl": "https://www.zhipin.com/web/chat/index",
+  "reason": "active_chat_not_found",
+  "message": "No active chat panel detected"
+}
+```
+
+- 记录聊天页面识别、候选人身份构造或快照读取异常。
+- 该事件只用于排查采集链路，不代表员工操作失败。
 
 ## 8. 后端查询建议
 

@@ -212,6 +212,12 @@ npm test
 
 如果新增逻辑依赖浏览器环境，应尽量把核心判断抽到可用 Node 测试覆盖的纯函数中。浏览器交互部分可以保留最薄的适配层。
 
+真机验证约束：
+
+- 必须保留真机浏览器验证路径。可以使用 Computer Use 操作普通 Chrome 页面，也可以使用 Codex Chrome 插件读取网页内容或辅助真机验证。
+- 禁止使用 Chrome DevTools Protocol、远程调试端口、`chrome.debugger`、CDP 版 Playwright/Puppeteer，或任何会把 CDP/DevTools 调试能力附加到 BOSS 直聘页面的方式；BOSS 直聘会探测调试能力并可能强制刷新页面，导致页面状态被污染。
+- 如需排查 DOM 或页面结构，优先使用非 CDP 的页面读取方式、插件自身 Debug 页、事件队列、用户贴出的事件 JSON、截图或手动记录。无法确认某个工具是否走 CDP 时，先不要用于 BOSS 页面。
+
 ## 12. 文档同步
 
 修改模块行为时，判断是否需要更新对应设计文档：

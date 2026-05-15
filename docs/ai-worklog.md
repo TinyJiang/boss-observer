@@ -2476,3 +2476,441 @@
   - 已检查日志尾部，未保留已删除的外部工具记录。
   - 已检查相关关键词，确认无遗留匹配。
   - `git diff --check` 通过。
+
+### 任务：补充 BOSS 真机测试约束
+
+- 时间：2026-05-15 11:23 CST
+- 执行者：AI
+- 状态：已完成
+- 目标：把“不得用 CDP/DevTools 调试能力连接 BOSS 页面做真机验证”的约束写入项目测试规范。
+- 当前理解：BOSS 直聘会探测 CDP / DevTools 调试能力，连接后可能强制刷新页面，影响真实页面状态和验证结论。但真机浏览器操作仍然必须保留：可以用 Computer Use 操作普通浏览器，也可以用 Codex Chrome 插件读取网页内容或辅助验证，只要不是把 CDP/DevTools 调试能力附加到 BOSS 页面。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `AGENTS.md`
+- 不修改范围：不改插件源码、不改测试代码、不改 manifest、不使用 CDP 相关能力连接 BOSS 页面。
+- 验证计划：检查 `AGENTS.md` 中测试规范新增约束；运行 `git diff --check`。
+- 下一步：更新 `AGENTS.md` 测试规范并记录完成状态。
+
+#### 阶段记录：修正真机测试约束表述
+
+- 时间：2026-05-15 11:26 CST
+- 状态：待验证
+- 已完成：根据用户纠正，把约束从“禁止浏览器自动化/Chrome 插件”修正为“禁止 CDP/DevTools 调试链路”。明确允许 Computer Use 操作普通 Chrome 页面，也允许 Codex Chrome 插件读取网页内容或辅助真机验证；不确定是否走 CDP 的工具不能用于 BOSS 页面。
+- 改动文件：
+  - `AGENTS.md`
+  - `docs/ai-worklog.md`
+- 验证结果：尚未运行。
+- 风险/阻塞：需要确认后续 AI 能区分非 CDP 的页面读取/操作和 CDP 调试能力。
+- 中断续写入口：运行 `git diff --check`，检查 `AGENTS.md` 测试规范表述是否准确。
+
+#### 完成记录：真机测试约束已更新
+
+- 时间：2026-05-15 11:27 CST
+- 状态：已完成
+- 已完成：`AGENTS.md` 测试规范已写入正确边界：真机验证可以操作浏览器、可以使用 Computer Use、可以使用 Codex Chrome 插件读取网页内容；禁止的是 CDP / DevTools 调试链路附加到 BOSS 页面。
+- 改动文件：
+  - `AGENTS.md`
+  - `docs/ai-worklog.md`
+- 验证结果：`git diff --check` 通过。
+- 风险/阻塞：无代码行为变更；后续真机验证仍需避开 CDP 相关工具。
+- 中断续写入口：继续筛选模块真实页面验证时，可以使用非 CDP 的浏览器操作/读取方式。
+
+### 任务：继续筛选模块真实页面验证（非 CDP）
+
+- 时间：2026-05-15 11:32 CST
+- 执行者：AI
+- 状态：进行中
+- 目标：继续筛选模块第一版的真实 BOSS 页面验证，确认 `candidate_filter.panel_opened` / `candidate_filter.applied` 是否按预期产生，且筛选摘要不泄露关键词或联系方式原文。
+- 当前理解：筛选模块自动化测试已通过，待真实页面确认；真机验证必须避开 CDP / DevTools 调试链路，但可以通过 Computer Use 操作普通 Chrome 页面，也可以通过非 CDP 页面读取方式和插件自身 Debug 页观察事件。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 如发现真实页面问题，可能修改 `extension/src/content/filter-probe.js`、`test/filter-probe.test.js` 和相关文档
+- 不修改范围：不使用 CDP / DevTools / 远程调试端口连接 BOSS 页面；不采集敏感自由文本原文；不改上传链路或候选人曝光/详情/打招呼结构。
+- 验证计划：优先用非 CDP 的真机浏览器操作打开/确认筛选面板，再通过插件 Debug 页或事件 JSON 判断打点；如需要改代码，补单测并运行相关测试、`npm test` 和 `git diff --check`。
+- 当前状态：准备加载 Computer Use 能力并观察当前浏览器状态。
+
+#### 阶段记录：真实页面筛选事件验证并修正摘要策略
+
+- 时间：2026-05-15 11:37 CST
+- 状态：待全量验证
+- 已完成：使用 Computer Use 在真实 BOSS 推荐页打开筛选面板并点击“确定”，Debug 页确认出现 `candidate_filter.panel_opened` 和 `candidate_filter.applied`。同时发现第一版摘要策略有两个问题：打开事件误把候选人列表文本写进 `filter.conditions`；确认事件把面板内未选择的候选项也当成条件。已修正为：打开事件只记录打开事实并输出 `conditionCount: 0`；确认事件优先读取面板内可识别为已选中的控件，读不到选中态时保守输出 `conditionCount: 0`，不再把整面板可见文本当作已选条件。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/03-filter.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/filter-probe.js`
+  - `test/filter-probe.test.js`
+- 当前验证结果：
+  - `node --check extension/src/content/filter-probe.js` 通过。
+  - `node --check test/filter-probe.test.js` 通过。
+  - `node --test test/filter-probe.test.js` 通过，7 个筛选探针测试全部通过。
+- 风险/阻塞：修复后的真实页面效果需要重载扩展后再复测；如果 BOSS 选中态 class 不包含常见 `selected/active/checked/current` 或 ARIA 标记，确认事件会保守输出空摘要。
+- 中断续写入口：运行 `npm test`、`git diff --check`；重载扩展后用非 CDP 路径复测筛选打开/确认，重点看 `panel_opened.filter.conditionCount === 0`，`applied.filter.conditions` 不应再包含候选人卡片文本或所有未选项。
+
+#### 完成记录：筛选模块真实页面复测完成（非 CDP）
+
+- 时间：2026-05-15 11:47 CST
+- 状态：已完成
+- 已完成：重载本地扩展后，使用 Computer Use 在真实 BOSS 推荐牛人页刷新页面、打开筛选面板并点击“确定”，全程未使用 CDP / DevTools / 远程调试链路。插件 Debug 页确认出现新版事件：`candidate_filter.panel_opened` 于 `2026-05-15T11:45:46.320+08:00` 产生，payload 为 `filter.conditionCount: 0`；`candidate_filter.applied` 于 `2026-05-15T11:45:56.097+08:00` 产生，payload 为 `filter.conditionCount: 0` 且带 `openedEventId` 关联打开事件。两条事件均未再包含候选人卡片文本、未选筛选项全集、关键词原文或联系方式原文。
+- 改动文件：
+  - `AGENTS.md`
+  - `docs/ai-worklog.md`
+  - `docs/modules/03-filter.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/filter-probe.js`
+  - `test/filter-probe.test.js`
+- 验证结果：
+  - 非 CDP 真机复测通过，Debug 页和扩展本地存储中的最新筛选事件 payload 符合预期。
+  - `node --check extension/src/content/filter-probe.js` 通过。
+  - `node --check test/filter-probe.test.js` 通过。
+  - `node --test test/filter-probe.test.js` 通过，7 个筛选探针测试全部通过。
+  - `npm test` 通过，122 个测试全部通过。
+  - `git diff --check` 通过。
+- 注意事项：真实页面当前默认筛选态没有暴露可被第一版识别的稳定选中标记，因此确认事件保守输出 `conditionCount: 0`。后续如果需要记录具体已选条件，应基于新的真机样本补充已选态识别规则，仍需保持“读不到就不猜”的策略。
+
+### 任务：补齐筛选确认事件真实参数
+
+- 时间：2026-05-15 11:53 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：修复 `candidate_filter.applied` 在真实 BOSS 筛选面板中缺少已选参数的问题，尤其是截图中靠视觉背景色表示选中的筛选项和年龄范围。
+- 当前理解：上一轮为了避免误记，把确认事件改成只读 ARIA/class 选中态；但真实 BOSS 面板的选中项主要通过 chip 背景色体现，Computer Use/Debug 复测因此得到 `conditionCount: 0`。需要在不回退到“整面板文本全量记录”的前提下，按筛选字段行解析已选项，并允许通过稳定的视觉选中态识别参数。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/filter-probe.js`
+  - `test/filter-probe.test.js`
+  - 可能同步更新 `docs/modules/03-filter.md`、`docs/modules/12-log-specification.md`
+- 不修改范围：不使用 CDP / DevTools / 远程调试连接 BOSS 页面；不把未选项全集写入日志；不采集敏感自由输入原文；不改上传链路或其他候选人事件结构。
+- 验证计划：补充视觉选中态和年龄范围的单元测试；运行 `node --check extension/src/content/filter-probe.js`、`node --check test/filter-probe.test.js`、`node --test test/filter-probe.test.js`、`npm test` 和 `git diff --check`；如需要真机复测，仅使用 Computer Use / 插件 Debug 页等非 CDP 路径。
+- 当前状态：准备检查筛选探针现有解析函数并实现补参逻辑。
+
+#### 阶段记录：补充视觉选中态和年龄范围解析
+
+- 时间：2026-05-15 12:03 CST
+- 状态：待全量验证
+- 已完成：在 `FilterProbe` 的确认事件解析中增加三类条件来源：原有显式选中态、真实 BOSS chip 的视觉选中背景、年龄滑块范围。视觉选中项会按最近的筛选字段行补标签，例如 `活跃度: 刚刚活跃`、`性别: 女`、`求职意向: 离职-随时到岗`；`不限`、确认/清除动作和未选项仍会被过滤。已补充单元测试覆盖用户截图中的关键参数形态。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/03-filter.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/filter-probe.js`
+  - `test/filter-probe.test.js`
+- 当前验证结果：
+  - `node --check extension/src/content/filter-probe.js` 通过。
+  - `node --check test/filter-probe.test.js` 通过。
+  - `node --test test/filter-probe.test.js` 通过，8 个筛选探针测试全部通过。
+- 中断续写入口：继续运行 `npm test` 和 `git diff --check`；如果需要真机复测，先重载扩展，再用 Computer Use 操作 BOSS 筛选面板并通过插件 Debug 页确认 `candidate_filter.applied.filter.conditions` 包含截图中的已选参数。
+
+#### 完成记录：确认事件参数补齐并真机复测通过
+
+- 时间：2026-05-15 12:47 CST
+- 状态：已完成
+- 已完成：重载本地扩展后，使用 Computer Use 在真实 BOSS 推荐牛人页打开筛选面板，选择 `刚刚活跃`、`女`、`近14天没有`、`近一个月没有`、`离职-随时到岗`、`在职-考虑机会` 并点击“确定”，全程未使用 CDP / DevTools / 远程调试链路。插件 Debug 页和扩展本地存储确认 `candidate_filter.applied` 于 `2026-05-15T12:38:15.387+08:00` 产生，payload 为 `filter.conditionCount: 6`，`filter.conditions` 包含 `活跃度: 刚刚活跃`、`近期没有看过: 近14天没有`、`性别: 女`、`是否与同事交换简历: 近一个月没有`、`求职意向: 离职-随时到岗`、`求职意向: 在职-考虑机会`。本次真机筛选没有调整年龄范围，因此真实事件不包含年龄；截图中的 `年龄: 18-35岁` 已通过单元测试覆盖。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/03-filter.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/filter-probe.js`
+  - `test/filter-probe.test.js`
+- 验证结果：
+  - 非 CDP 真机复测通过，确认事件已记录真实已选参数，不再是 `conditionCount: 0`。
+  - `node --check extension/src/content/filter-probe.js` 通过。
+  - `node --check test/filter-probe.test.js` 通过。
+  - `node --test test/filter-probe.test.js` 通过，8 个筛选探针测试全部通过。
+  - `npm test` 通过，123 个测试全部通过。
+  - `git diff --check` 通过。
+- 注意事项：视觉选中态基于浏览器计算后的 chip 背景色识别，仍保持“读不到就不猜”的策略；默认 `不限`、确认/清除按钮和敏感关键词自由输入不会被当作普通条件写入。
+- 中断续写入口：本任务已完成。若后续发现新筛选控件样式或字段名，优先在 `test/filter-probe.test.js` 增加真机样本，再扩展 `extension/src/content/filter-probe.js` 的字段标签或视觉选中规则。
+
+### 任务：复查年龄筛选参数缺失
+
+- 时间：2026-05-15 12:54 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：根据用户反馈复查真实 BOSS 筛选面板中的年龄限制是否被 `candidate_filter.applied` 正确记录，确认当前实现是否只在单测里覆盖、真机仍缺失。
+- 当前理解：上一轮真机复测没有调整年龄范围，因此无法证明真实年龄控件可被采集。当前实现从 `aria-valuenow`、表单 `value` 或“年龄”行后的短数字文本推断范围，但真实 BOSS 年龄滑块可能只通过画布/样式/无文本 DOM 展示，导致确认事件缺少 `年龄: x-y岁`。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 如确认缺陷，可能修改 `extension/src/content/filter-probe.js`
+  - 如确认缺陷，补充或调整 `test/filter-probe.test.js`
+  - 如行为说明变化，可能同步 `docs/modules/03-filter.md`、`docs/modules/12-log-specification.md`
+- 不修改范围：不使用 CDP / DevTools / 远程调试连接 BOSS 页面；不把全部未选项写入条件；不采集敏感自由输入原文；不触碰候选人曝光、详情、打招呼和上传链路。
+- 验证计划：先用 Computer Use 真机打开筛选面板并观察年龄控件；必要时通过插件 Debug 页和扩展本地存储确认最新 applied payload；修复后运行 `node --check extension/src/content/filter-probe.js`、`node --check test/filter-probe.test.js`、`node --test test/filter-probe.test.js`、`npm test`、`git diff --check`，并用非 CDP 真机复测年龄范围。
+- 当前状态：准备打开真实筛选面板，专门调整年龄范围并观察事件。
+
+#### 阶段记录：确认年龄数值缺失原因并补伪元素解析
+
+- 时间：2026-05-15 13:04 CST
+- 状态：待真机复测
+- 已完成：使用 Computer Use 打开真实 BOSS 筛选面板，观察到年龄行视觉显示 `18` / `35`，但 Chrome 无障碍树只暴露“年龄”标签，没有暴露两个数值。扩展 Debug 页和本地存储确认 `2026-05-15T13:02:23.220+08:00` 的 `candidate_filter.applied` 仍然缺少年龄条件。已将年龄范围解析改为只在“年龄/年龄范围”行内读取滑块元素的普通文本、`aria` / `data` / `value` 属性，以及 `::before` / `::after` CSS 伪元素 `content`，并补充单元测试覆盖真实页面疑似用伪元素渲染年龄数字的场景。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/03-filter.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/filter-probe.js`
+  - `test/filter-probe.test.js`
+- 当前验证结果：
+  - `node --check extension/src/content/filter-probe.js` 通过。
+  - `node --check test/filter-probe.test.js` 通过。
+  - `node --test test/filter-probe.test.js` 通过，9 个筛选探针测试全部通过。
+- 中断续写入口：重载本地扩展后，用非 CDP 真机路径再次打开真实 BOSS 筛选面板并点击“确定”，确认最新 `candidate_filter.applied.filter.conditions` 包含 `年龄: 18-35岁`；随后运行 `npm test` 和 `git diff --check`。
+
+#### 接手记录：继续复查年龄真机事件
+
+- 时间：2026-05-15 13:19 CST
+- 状态：进行中
+- 已完成：已按续写要求重新阅读最新 worklog、查看 `git status --short` 和相关 diff，确认当前任务停在“伪元素解析已实现、待真机复测事件确认”阶段。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：尚未读取刚刚真机点击“确定”后的最新 `candidate_filter.applied` 事件。
+- 中断续写入口：从扩展本地存储或插件 Debug 页读取最新筛选确认事件，核对 `filter.conditions` 是否包含年龄范围；如仍缺失，继续补充年龄行识别逻辑并复测。
+
+#### 完成记录：年龄筛选真机复测通过
+
+- 时间：2026-05-15 13:20 CST
+- 状态：已完成
+- 已完成：读取扩展本地存储中的最新真实事件，确认重载扩展并在真实 BOSS 页面拖动年龄右侧滑块后，`2026-05-15T13:16:08.936+08:00` 的 `candidate_filter.applied` 已输出 `filter.conditionCount: 1`，`filter.conditions: ["年龄: 16-35岁"]`。本次验证仅使用普通浏览器操作、扩展本地存储和插件自身事件记录，没有使用 CDP / DevTools / 远程调试链路。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/03-filter.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/filter-probe.js`
+  - `test/filter-probe.test.js`
+- 验证结果：
+  - 非 CDP 真机复测通过，最新确认事件已包含年龄范围。
+  - `node --check extension/src/content/filter-probe.js` 通过。
+  - `node --check test/filter-probe.test.js` 通过。
+  - `node --test test/filter-probe.test.js` 通过，9 个筛选探针测试全部通过。
+  - `npm test` 通过，124 个测试全部通过。
+  - `git diff --check` 通过。
+- 注意事项：本次真机年龄样本为默认左侧 `16`、右侧拖动到 `35`，因此事件值是 `年龄: 16-35岁`；用户截图中的 `18-35岁` 已由单元测试覆盖伪元素读取路径。后续如 BOSS 调整滑块 DOM 或样式，仍应保持“只在年龄行内读取，不从候选人列表年龄反推”的策略。
+- 中断续写入口：本任务已完成。如继续完善筛选摘要，可基于新的真实控件样本补充单测后再扩展解析规则。
+
+### 任务：聊天记录机制真机可行性验证
+
+- 时间：2026-05-15 13:46 CST
+- 执行者：AI
+- 状态：已完成
+- 任务目标：使用普通 Chrome 界面进入 BOSS 沟通页，观察真实聊天列表和聊天窗口结构，验证“打开聊天窗口全量上报、本地成功上报水位、聊天列表今日新消息强提示、不自动代操作”的设计是否可行。
+- 当前理解：用户已确认有效上报以服务器成功返回为准；候选人稳定标识需要通过真实页面观察后确定；图片和语音不直接上报，仅上报可转文字内容；每天只检查列表里最后一条聊天时间明显是今天的会话；插件只强提示，不阻止、不点击、不代替员工操作。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：不改源码、不改设计文档、不写实现；不使用 CDP / DevTools / 远程调试连接 BOSS 页面；不发送消息、不打招呼、不操作候选人；不采集或转存图片、语音、联系方式原文。
+- 验证计划：通过 Computer Use 操作普通 Chrome 进入 `/web/chat/index` 沟通页；观察聊天列表可见字段、今日时间表达、候选人标识线索；安全打开一个会话窗口观察聊天消息 DOM/无障碍树是否暴露文本、时间、方向、媒体占位以及历史加载方式；最后输出可行性结论和实现建议。
+- 当前状态：准备进入 BOSS 沟通页做只读观察。
+
+#### 完成记录：沟通页真实样本验证完成
+
+- 时间：2026-05-15 13:48 CST
+- 状态：已完成
+- 已完成：使用普通 Chrome 界面从推荐页进入 `/web/chat/index` 沟通页，打开一个今天有新消息的会话和一个昨天已读会话样本；全程未使用 CDP / DevTools / 远程调试链路，未发送消息，未点击“求简历/换电话/换微信/约面试/不合适”等业务动作。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - 聊天列表项可见文本包含最近消息时间、候选人名称、沟通职位、已读/送达状态和最后一条消息预览；今天样本以 `09:54` 这种纯时间展示，昨天样本明确显示 `昨天`。
+  - 打开聊天窗口后，右侧聊天区可见候选人基础信息、沟通职位、期望信息、消息日期/时间、消息文本、已读状态和图片节点；文本消息在页面树中可读，图片只表现为图片节点或图片 URL。
+  - 当前两个样本没有看到明显“继续加载历史”的入口；短会话打开后从历史日期到今天消息都在同一窗口可见。但长会话是否会懒加载更早历史仍需实现时保守检测，不能假设所有会话都一次性完整渲染。
+  - 仅从可见文本和无障碍树看，聊天页没有暴露稳定候选人 ID；候选人稳定标识实现必须优先读取 DOM dataset、可用链接或继承已曝光/详情关联，无法命中时只能使用低置信文本指纹，且应在 payload 中标注置信度。
+  - “每天只检查明显今天更新的聊天列表项”可行：纯 `HH:mm`、`今天 HH:mm`、`刚刚`、`几分钟前` 可按当天处理，`昨天` 和具体旧日期应忽略。
+  - “强提示不代操作”可行：列表项是稳定可定位的可见容器，可以由 content script 插入本地提示标记；插件无需自动打开聊天、无需阻止员工操作。
+- 风险/阻塞：打开未读会话会让 BOSS 页面本身消除未读计数，这是人工点击的正常副作用；正式插件不应自动点击未读会话。聊天候选人 ID 需要下一阶段通过源码实现和真机 DOM 属性验证继续确认。
+- 中断续写入口：用户若说“开始编写”，先设计 `ChatRecordProbe`、聊天本地水位存储和后台上传成功后推进水位机制；实现前优先补纯函数测试覆盖聊天列表时间解析、候选人 ID 选择优先级、消息快照去重和媒体跳过。
+
+### 任务：实现聊天快照上报与今日补采提示
+
+- 时间：2026-05-15 14:02 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：先更新聊天记录模块详细设计，再实现打开聊天窗口触发聊天文本快照、本地有效上报水位、聊天列表今日新消息强提示，以及已交换微信候选人的微信信息上报。
+- 当前理解：有效上报必须以服务器返回成功为准；聊天列表只检查明显今天更新的会话；插件只做强提示，不自动打开、不阻止、不代替员工操作；图片和语音不直接上报，只有页面可见或已转成文字的内容才作为文本上报；已换微信的候选人需要上报微信信息便于后续追踪。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/shared/event-types.js`
+  - `extension/src/shared/chat-report-state.js`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/content/main.js`
+  - `test/chat-record-probe.test.js`
+  - `test/chat-report-state.test.js`
+- 不修改范围：不改筛选模块既有未提交改动；不使用 CDP / DevTools / 远程调试连接 BOSS 页面；不自动点击聊天列表项；不采集图片/语音/附件二进制或 URL；不在插件端做聊天质量判断、候选人质量评分或员工绩效结论。
+- 验证计划：补充纯函数和状态存储单元测试；运行 `node --check` 相关新增/修改文件、相关 `node --test`、`npm test` 和 `git diff --check`。
+- 当前状态：准备更新聊天记录详细设计，然后实现最小可验证版本。
+
+#### 阶段记录：聊天设计文档已更新
+
+- 时间：2026-05-15 14:02 CST
+- 状态：进行中
+- 已完成：重写聊天记录模块详细设计，明确打开聊天窗口触发文本快照、上传成功推进本地水位、聊天列表只对明显今天更新的会话做补采提示、媒体不上传、微信仅在明确换微信或可见微信账号时上报。同步在日志规范中加入 `candidate_chat.opened`、`candidate_chat.snapshot_captured`、`candidate_chat.wechat_captured`、`candidate_chat.report_required`、`candidate_chat.capture_failed` 的 payload 契约。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+- 验证结果：尚未运行测试；下一步进入代码实现。
+- 风险/阻塞：聊天候选人稳定 ID 仍需在实现后继续用真实 DOM 属性验证，低置信姓名指纹只作为兜底。
+- 中断续写入口：继续新增聊天探针、聊天上报状态存储和后台上传成功后水位推进逻辑。
+
+#### 阶段记录：聊天机制实现并验证通过
+
+- 时间：2026-05-15 14:02 CST
+- 状态：已完成
+- 已完成：新增 `ChatRecordProbe`，在聊天页扫描可见列表项和当前打开聊天窗口；列表项只对明显今天的 `HH:mm`、`今天 HH:mm`、`刚刚`、`N分钟前` 做补采判断，并插入“今日聊天未上报，请点开补采”提示；打开聊天窗口后生成 `candidate_chat.opened` 和 `candidate_chat.snapshot_captured`，采集已渲染文本消息、时间、状态和媒体节点计数，不上传图片/语音/附件 URL；明确微信上下文中的账号会生成 `candidate_chat.wechat_captured`。新增 `chat-report-state`，background 在上传批次成功后推进候选人水位，并让聊天快照/微信事件触发即时 flush。概要设计已同步避免继续描述“定时上报”。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/overview-design.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/content/main.js`
+  - `extension/src/shared/chat-report-state.js`
+  - `extension/src/shared/event-types.js`
+  - `test/chat-record-probe.test.js`
+  - `test/chat-report-state.test.js`
+- 验证结果：
+  - `node --check extension/src/content/chat-record-probe.js` 通过。
+  - `node --check extension/src/shared/chat-report-state.js` 通过。
+  - `node --check extension/src/background/service-worker.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，7 个测试全部通过。
+  - `node --test test/chat-report-state.test.js` 通过，4 个测试全部通过。
+  - `npm test` 通过，135 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：当前聊天候选人稳定 ID 在无 DOM ID 时会退回姓名短指纹，已标注低置信；长历史会话仍不自动滚动加载，快照标记为 `visible_dom` 和 `mayBeIncomplete: true`。
+- 中断续写入口：下一步应重载插件，在真实 `/web/chat/index` 打开一个已知会话，观察 Debug 页是否出现 `candidate_chat.opened` / `candidate_chat.snapshot_captured`，并检查真实 DOM 是否能提供比姓名指纹更稳定的聊天候选人 ID。
+
+### 任务：聊天快照功能真机验证
+
+- 时间：2026-05-15 15:01 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：重载本地 Chrome 扩展，在真实 BOSS `/web/chat/index` 沟通页验证新增聊天探针是否产生 `candidate_chat.opened`、`candidate_chat.snapshot_captured` 和必要的补采提示事件。
+- 当前理解：上一阶段代码和单测已通过，但尚未在真实页面重载扩展后验证。必须继续避开 CDP / DevTools / 远程调试链路；只能使用普通 Chrome UI、插件自身 Debug 页和扩展本地事件状态观察；不发消息、不点“求简历/换电话/换微信/约面试/不合适”等业务动作。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：不改源码、不改测试、不使用 CDP / DevTools / 远程调试连接 BOSS 页面、不发送消息、不自动打开未读会话、不操作微信或电话交换。
+- 验证计划：用 Computer Use 重载 BOSS Observer 扩展；刷新或重新打开 BOSS 沟通页；人工点开一个会话；切到插件 Debug 页确认 latest/recent events 中出现聊天事件且 payload 不含图片/语音 URL；最后记录结果。
+- 当前状态：准备通过普通 Chrome UI 重载扩展。
+
+#### 阶段记录：聊天真机验证完成并修正提示去重
+
+- 时间：2026-05-15 15:17 CST
+- 状态：已完成
+- 已完成：通过普通 Chrome UI 重载本地 BOSS Observer 扩展并刷新真实 `/web/chat/index` 沟通页。真实页面验证到可见“今天”会话会插入“今日聊天未上报，请点开补采”提示，旧日期会话不标记；点开一个已有聊天后，Debug 页 latest/recent events 出现 `candidate_chat.opened` 和 `candidate_chat.snapshot_captured`，payload 记录文本消息、消息时间、媒体节点数量，不包含图片 URL。真机还发现两个实现细节并已修正：列表项曾出现父子容器重复提示；低置信候选人 ID 仅按姓名指纹会有重名风险，已改为优先使用“姓名 + 沟通职位”短指纹 `chat_name_job_fingerprint`，同时列表提示事件按可见姓名和最后消息时间去重，避免页面渲染中低置信 ID 抖动造成重复 `candidate_chat.report_required`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `test/chat-record-probe.test.js`
+- 验证结果：
+  - 真机验证：Chrome 扩展页重载成功；BOSS 沟通页刷新后 4 条明显今天更新的可见会话各显示 1 个补采提示；点开会话后 Debug 页 latest event 为 `candidate_chat.snapshot_captured`，recent events 包含 `candidate_chat.opened` 和 4 条本轮 `candidate_chat.report_required`；latest payload 的 `stableIdSource` 为 `chat_name_job_fingerprint`，`mediaSummary` 只记录节点计数。
+  - `node --test test/chat-record-probe.test.js` 通过，11 个测试全部通过。
+  - `npm test` 通过，139 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：当前本机配置显示 upload endpoint 未设置、Last upload result 为 None，因此本轮只验证到本地事件生成、Debug 状态和 UI 提示；“服务器成功返回后推进本地水位”的真实上传链路仍需在有可用上传端点时联调。聊天候选人高置信稳定 ID 在本次真实页面中仍未观察到可用 DOM ID，当前只能使用低置信 `chat_name_job_fingerprint` 兜底。
+- 中断续写入口：若继续联调，需要先配置真实上传端点并让服务器返回成功，再验证 background 是否在成功批次后推进 `bossObserver.chatReportState`，以及再次刷新列表后对应会话提示是否消失。
+
+### 任务：修复聊天补采提示污染页面与快照
+
+- 时间：2026-05-15 15:35 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：修复用户反馈的两个问题：补采提醒不应破坏 BOSS 原有聊天列表 DOM 位置和排版；“今日聊天未上报，请点开补采”不应被聊天快照当作聊天记录采集。
+- 当前理解：上一版用 `appendChild(span)` 把提示插入列表项文本流，既可能改变原排版，也会让父级/活动聊天面板的 `innerText` 混入插件提示文本。正确方向是把提示作为绝对定位的旁路 badge，并在消息解析阶段忽略插件自身 DOM 标记文本。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `test/chat-record-probe.test.js`
+- 不修改范围：不改筛选模块未提交改动；不改上传策略；不自动点击、不阻止、不代操作；不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：补充单元测试覆盖提示文本不会进入聊天消息、提示 badge 不追加为列表项普通子节点；运行 `node --test test/chat-record-probe.test.js`、`npm test` 和 `git diff --check`。
+- 当前状态：准备修改聊天探针提示渲染和消息过滤逻辑。
+
+#### 阶段记录：补采提示旁路渲染并排除快照污染
+
+- 时间：2026-05-15 15:50 CST
+- 状态：已完成
+- 已完成：将聊天补采提示从列表项内部 `appendChild` 改为挂载到 `document.body` 的固定定位旁路 badge，仅在原列表项上保留插件自用属性，不再参与 BOSS 原有文本流和布局计算；清理逻辑会移除本轮失效 overlay 和旧版遗留的行内提示节点。聊天列表解析、聊天面板识别、快照构造和消息行解析均改为排除插件自有 DOM/提示文案，避免“今日聊天未上报，请点开补采”进入候选人列表文本或聊天消息。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `test/chat-record-probe.test.js`
+- 验证结果：
+  - 真机验证：通过普通 Chrome UI 重载扩展并刷新真实 BOSS 沟通页后，补采提示以红色浮层显示在今天更新的可见会话旁，不再出现在候选人列表可访问文本节点里；点开已有会话后，插件 Debug 页当前状态搜索“今日聊天未上报”为 0 命中。
+  - `node --check extension/src/content/chat-record-probe.js` 通过。
+  - `node --check test/chat-record-probe.test.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，13 个测试全部通过。
+  - `npm test` 通过，141 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：本机仍未配置 upload endpoint，因此本轮验证的是本地事件、Debug 状态和 UI 表现；服务器成功上传后推进水位仍需在有真实端点时联调。
+- 中断续写入口：若继续验证上传闭环，先配置上传端点并触发 `candidate_chat.snapshot_captured` 成功上传，再确认 `bossObserver.chatReportState` 水位推进和刷新后提示消失。
+
+### 任务：排查打开聊天框后缺少聊天记录日志
+
+- 时间：2026-05-15 15:55 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：排查用户反馈“点开聊天框后没有聊天记录日志”的原因，确认是 content script 未识别打开面板、事件未发出、background 未入队，还是 Debug 页显示/过滤造成误判。
+- 当前理解：上一轮真机曾验证到 `candidate_chat.snapshot_captured`，但刚才修复补采提示污染后，可能因为插件重载、Debug 页最新事件被 `candidate_chat.report_required` 覆盖、面板识别过严，或快照去重导致再次点同一候选人不重复生成日志。需要优先用真实页面和本地 Debug 状态复现，再决定是否改代码。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`（仅在确认代码问题后修改）
+  - `test/chat-record-probe.test.js`（仅在修改行为后补测）
+- 不修改范围：不改筛选模块未提交改动；不改上传端点配置；不发送消息、不点击求简历/换电话/换微信/约面试/不合适等业务动作；不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：检查聊天探针和 background 事件链路；用普通 Chrome UI 点开会话并观察 Debug 页 latest/recent events；如需修复，补充单测并运行相关测试、`npm test` 和 `git diff --check`。
+- 当前状态：准备检查源码中的打开检测、快照去重和 Debug 状态更新逻辑。
+
+#### 完成记录：聊天打开日志恢复
+
+- 时间：2026-05-15 15:59 CST
+- 状态：已完成
+- 已完成：确认用户反馈属实，Debug 页 recent events 中只有 `candidate_chat.report_required`，没有 `candidate_chat.opened` / `candidate_chat.snapshot_captured`。根因是上一轮为排除插件提示节点时改为读取 detached clone 的文本，真实 BOSS 页面下克隆节点会丢失或折叠 `innerText` 换行，导致聊天时间行无法被消息解析器识别。已改回读取 live element 的 `innerText`，再剔除插件提示文案，保留真实渲染换行。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `test/chat-record-probe.test.js`
+- 验证结果：
+  - 真机验证：通过普通 Chrome UI 重载扩展、刷新 BOSS 沟通页、点开已有会话后，插件 Debug 页 latest event 为 `candidate_chat.snapshot_captured`，recent events 包含 `candidate_chat.opened` 和 `candidate_chat.snapshot_captured`，payload 中出现 `chat.messageCount` 与 `chat.messages`。
+  - `node --check extension/src/content/chat-record-probe.js` 通过。
+  - `node --check test/chat-record-probe.test.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，14 个测试全部通过。
+  - `npm test` 通过，142 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：本机仍未配置 upload endpoint，本轮验证到本地事件和 Debug 状态；真实服务器成功上报后的水位推进仍需有上传端点时联调。
+- 中断续写入口：若再次出现“打开会话无快照”，优先检查 Debug 页是否出现 `candidate_chat.capture_failed`，以及真实页面 `innerText` 是否仍保留独立时间行。
+
+### 任务：调整重复打开聊天窗口的快照提交判断
+
+- 时间：2026-05-15 16:02 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：按用户反馈修正“重复点开同一个候选人不会再次生成 snapshot”的逻辑，改为以服务器成功上报水位为准；每次真实打开聊天窗口都应尝试生成快照，只要最后消息晚于本地成功上报水位就继续提交上报。
+- 当前理解：当前内存 `lastSnapshotKeyByConversation` 会把同一候选人、同一最后消息指纹的快照挡掉，导致上传失败或尚未成功上报时，员工重复点开也不会再次入队。正确逻辑应以 `chatReportState` 中服务器成功后的 `lastReportedMessageAt` 为准；无成功水位或快照更新于水位时提交，已成功覆盖到最新消息时不重复提交。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `test/chat-record-probe.test.js`
+- 不修改范围：不改筛选模块未提交改动；不改上传端点配置；不发送消息、不自动打开聊天、不阻止员工操作；不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：补充单测覆盖无成功水位时重复打开会再次产生 snapshot、已有最新成功水位时只记录打开不提交 snapshot；运行聊天探针单测、`npm test` 和 `git diff --check`。如时间允许，再用普通 Chrome UI 真机复测。
+- 当前状态：准备修改聊天探针的打开触发、快照提交判断和相关文档。
+
+#### 完成记录：快照提交改为成功水位驱动
+
+- 时间：2026-05-15 16:12 CST
+- 状态：已完成
+- 已完成：移除“同一会话相同快照本轮内存去重即不再提交”的决策，改为监听员工对聊天列表项的真实点击并记录短期打开尝试。聊天窗口打开、切换、手动重复点击或内容变化时都会尝试构造快照；是否生成 `candidate_chat.snapshot_captured` 由本地成功上报水位决定：无成功水位、或快照最后消息时间晚于 `lastReportedMessageAt` 时提交；成功水位已经覆盖最新消息时只记录打开事实，不重复提交快照。同步修正聊天列表 DOM 解析时提前压平换行的问题，避免列表候选人 ID 因最后消息预览并入岗位而与右侧聊天窗口 ID 不一致。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `test/chat-record-probe.test.js`
+- 验证结果：
+  - `node --check extension/src/content/chat-record-probe.js` 通过。
+  - `node --check test/chat-record-probe.test.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，16 个测试全部通过。
+  - `npm test` 通过，144 个测试全部通过。
+  - `git diff --check` 通过。
+  - 真机部分验证：通过普通 Chrome UI 重载扩展并刷新 BOSS 沟通页后，首次点开会话仍产生 `candidate_chat.opened` / `candidate_chat.snapshot_captured`。尝试第二次点同一会话时 BOSS 跳转到安全验证页，未继续操作验证组件，因此重复点击真机完整验证待账号恢复正常后补做；重复点击行为已由单元测试覆盖。
+- 风险/阻塞：本机仍未配置 upload endpoint，无法验证服务器成功后水位推进对“已覆盖最新消息不再提交”的真链路；重复点击真机验证被 BOSS 安全验证中断。
+- 中断续写入口：账号通过安全验证后，重载扩展并刷新沟通页，连续点击同一可见会话两次，再在 Debug 页确认无成功水位时出现两组 `candidate_chat.opened` / `candidate_chat.snapshot_captured`。

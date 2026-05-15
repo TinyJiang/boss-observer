@@ -1,5 +1,10 @@
 import { hasUploadTarget, readConfig } from "../shared/config.js";
 import {
+  CHAT_REPORT_STATE_KEY,
+  createEmptyChatReportState,
+  updateChatReportStateFromEvents
+} from "../shared/chat-report-state.js";
+import {
   buildClsAnonymousTracklogBody,
   buildClsAnonymousTracklogUrl,
   hasClsAnonymousConfig
@@ -24,11 +29,13 @@ const eventHandlingRunner = createSequentialTaskRunner();
 
 chrome.runtime.onInstalled.addListener(async () => {
   const config = await readConfig();
+  const storedChatReportState = await chrome.storage.local.get(CHAT_REPORT_STATE_KEY);
   chrome.alarms.create("bossObserver.flush", {
     periodInMinutes: Math.max(1, Math.ceil(config.flushIntervalMs / 60000))
   });
   await chrome.storage.local.set({
     [QUEUE_KEY]: [],
+    [CHAT_REPORT_STATE_KEY]: storedChatReportState[CHAT_REPORT_STATE_KEY] || createEmptyChatReportState(),
     [DEBUG_STATE_KEY]: createInitializedDebugState(config)
   });
 });
@@ -115,9 +122,13 @@ async function handleEvent(event, sender) {
   }
 
   if (hasUploadTarget(config)) {
-    const pending = await queue.readBatch(config.uploadBatchSize);
-    if (pending.length >= config.uploadBatchSize) {
+    if (shouldFlushImmediately(enrichedEvent)) {
       await flushQueue();
+    } else {
+      const pending = await queue.readBatch(config.uploadBatchSize);
+      if (pending.length >= config.uploadBatchSize) {
+        await flushQueue();
+      }
     }
   }
 }
@@ -194,6 +205,7 @@ async function flushQueue() {
     }
 
     const uploadResult = await postBatch(config, batch.map((item) => item.event));
+    await updateChatReportStateFromEvents(batch.map((item) => item.event));
     await queue.remove(batch.map((item) => item.id));
     await updateDebugState(async (current) => ({
       ...current,
@@ -242,6 +254,11 @@ function formatError(error) {
   return {
     message: error instanceof Error ? error.message : String(error)
   };
+}
+
+function shouldFlushImmediately(event = {}) {
+  return event.type === EVENT_TYPES.CANDIDATE_CHAT_SNAPSHOT_CAPTURED ||
+    event.type === EVENT_TYPES.CANDIDATE_CHAT_WECHAT_CAPTURED;
 }
 
 async function postBatch(config, events) {

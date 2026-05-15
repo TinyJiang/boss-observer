@@ -1,0 +1,1098 @@
+import {
+  compactPayloadObject,
+  normalizeLines,
+  normalizeText,
+  resolveCandidateId
+} from "./candidate-card.js";
+import { buildCandidateId } from "./candidate-card-registry.js";
+import { EVENT_TYPES } from "../shared/event-types.js";
+import { readChatReportState } from "../shared/chat-report-state.js";
+import { toLocalIsoString } from "../shared/time.js";
+
+export const CHAT_REPORT_PROMPT_ATTRIBUTE = "data-boss-observer-chat-report-required";
+export const CHAT_REPORT_PROMPT_TEXT = "今日聊天未上报，请点开补采";
+
+const SCAN_INTERVAL_MS = 2500;
+const CHAT_PAGE_TYPES = new Set(["chat"]);
+const MAX_LIST_ITEM_TEXT_LENGTH = 700;
+const MAX_ACTIVE_PANEL_TEXT_LENGTH = 20000;
+const CHAT_NAME_JOB_ID_SOURCE = "chat_name_job_fingerprint";
+const CHAT_REPORT_PROMPT_ID_ATTRIBUTE = "data-boss-observer-chat-report-prompt-id";
+const CHAT_REPORT_PROMPT_NODE_SELECTOR = "[data-boss-observer-chat-report-prompt='true']";
+const CHAT_REPORT_PROMPT_OVERLAY_SELECTOR = "[data-boss-observer-chat-report-overlay='true']";
+const MANUAL_OPEN_ATTEMPT_TTL_MS = 8000;
+const ACTIVE_STATUS_PATTERN = /(刚刚活跃|今日活跃|在线|本周活跃|本月活跃|昨天活跃)/;
+const MESSAGE_STATUS_PATTERN = /^(已读|送达|未读)\s+/;
+const WECHAT_CONTEXT_PATTERN = /(?:微信号?|wx|wechat|vx|v信|加我微信|加微信)/i;
+const WECHAT_ACCOUNT_PATTERN_SOURCE = "(?:微信号?|wx|wechat|vx|v信|加我微信|加微信)\\s*(?:是|为|:|：)?\\s*([A-Za-z][A-Za-z0-9_-]{4,30}|1[3-9]\\d{9})";
+const MESSAGE_CONTROL_TEXTS = new Set([
+  "求简历",
+  "换电话",
+  "换微信",
+  "约面试",
+  "不合适",
+  "发送",
+  "在线简历",
+  "附件简历",
+  "牛人分析器"
+]);
+let nextChatReportPromptId = 1;
+
+// Responsibilities:
+// - capture already-rendered chat text when a recruiter opens a conversation
+// - mark visible chat list items that need manual full snapshot refresh
+// - never click, send, scroll, or upload media URLs/binaries
+export class ChatRecordProbe {
+  constructor({
+    collector,
+    sessionContext,
+    scanIntervalMs = SCAN_INTERVAL_MS,
+    now = () => new Date(),
+    readReportState = () => readChatReportState()
+  }) {
+    this.collector = collector;
+    this.sessionContext = sessionContext;
+    this.scanIntervalMs = scanIntervalMs;
+    this.now = now;
+    this.readReportState = readReportState;
+    this.started = false;
+    this.pollHandle = null;
+    this.activeConversationKey = "";
+    this.lastObservedSnapshotKeyByConversation = new Map();
+    this.pendingManualOpenKeys = new Map();
+    this.promptedReportKeys = new Set();
+    this.wechatReportKeys = new Set();
+    this.handleDocumentClick = (event) => {
+      if (this.recordChatListOpenAttempt(event?.target)) {
+        globalThis.setTimeout?.(() => {
+          void this.safeScan("chat_list_click");
+        }, 150);
+      }
+    };
+  }
+
+  start() {
+    if (this.started) {
+      return;
+    }
+
+    this.started = true;
+    globalThis.document?.addEventListener?.("click", this.handleDocumentClick, true);
+    void this.safeScan("start");
+    this.pollHandle = globalThis.setInterval(() => {
+      void this.safeScan("poll");
+    }, this.scanIntervalMs);
+  }
+
+  stop() {
+    if (!this.started) {
+      return;
+    }
+
+    this.started = false;
+    globalThis.document?.removeEventListener?.("click", this.handleDocumentClick, true);
+    if (this.pollHandle !== null) {
+      globalThis.clearInterval(this.pollHandle);
+      this.pollHandle = null;
+    }
+  }
+
+  async scan(source = "poll") {
+    if (!isChatPage(this.sessionContext.page) || !globalThis.document) {
+      return;
+    }
+
+    const reportState = await this.readReportState();
+    this.scanChatListPrompts({ source, reportState });
+    this.scanActiveChatSnapshot({ source, reportState });
+  }
+
+  scanChatListPrompts({ reportState }) {
+    const listItems = findChatListItems(globalThis.document, { now: this.now });
+    const activePromptIds = new Set();
+    listItems.forEach((item) => {
+      const prompt = buildChatReportPrompt(item, reportState);
+      if (!prompt.required) {
+        clearChatReportPrompt(item.element);
+        return;
+      }
+
+      const promptId = applyChatReportPrompt(item.element);
+      if (promptId) {
+        activePromptIds.add(promptId);
+      }
+      const promptKey = buildChatListReportKey(item);
+      if (this.promptedReportKeys.has(promptKey)) {
+        return;
+      }
+
+      this.promptedReportKeys.add(promptKey);
+      this.collector.collect(EVENT_TYPES.CANDIDATE_CHAT_REPORT_REQUIRED, compactPayloadObject({
+        source: "chat_list",
+        chatPageUrl: this.sessionContext.page.url,
+        candidate: item.candidate,
+        listItem: {
+          lastMessageAt: item.lastMessageAt,
+          lastMessageTimeText: item.lastMessageTimeText,
+          lastReportedMessageAt: prompt.lastReportedMessageAt
+        }
+      }));
+    });
+    pruneChatReportPromptOverlays(globalThis.document, activePromptIds);
+  }
+
+  scanActiveChatSnapshot({ source, reportState }) {
+    const panel = findActiveChatPanel(globalThis.document);
+    if (!panel) {
+      return;
+    }
+
+    const payload = buildChatSnapshotPayload(panel, {
+      source,
+      chatPageUrl: this.sessionContext.page.url,
+      now: this.now
+    });
+    if (!payload || !payload.chat?.messageCount) {
+      return;
+    }
+
+    const conversationKey = payload.chat.conversationKey;
+    const snapshotKey = buildSnapshotDedupKey(payload);
+    const conversationChanged = Boolean(conversationKey && conversationKey !== this.activeConversationKey);
+    const manuallyOpened = this.consumeManualOpenAttempt(conversationKey);
+    const contentChanged = this.lastObservedSnapshotKeyByConversation.get(conversationKey) !== snapshotKey;
+    this.lastObservedSnapshotKeyByConversation.set(conversationKey, snapshotKey);
+
+    if (conversationChanged || manuallyOpened) {
+      this.activeConversationKey = conversationKey;
+      this.collector.collect(EVENT_TYPES.CANDIDATE_CHAT_OPENED, compactPayloadObject({
+        source,
+        chatPageUrl: payload.chatPageUrl,
+        candidate: payload.candidate,
+        chat: {
+          conversationKey,
+          jobTitle: payload.chat.jobTitle
+        }
+      }));
+    }
+
+    if ((conversationChanged || manuallyOpened || contentChanged) && shouldSubmitChatSnapshot(payload, reportState)) {
+      this.collector.collect(EVENT_TYPES.CANDIDATE_CHAT_SNAPSHOT_CAPTURED, payload);
+    }
+
+    const wechat = payload.chat.wechat;
+    if (wechat?.accounts?.length) {
+      const wechatKey = [
+        conversationKey,
+        wechat.accounts.join(","),
+        wechat.detectedAtMessageFingerprint || ""
+      ].join(":");
+      if (!this.wechatReportKeys.has(wechatKey)) {
+        this.wechatReportKeys.add(wechatKey);
+        this.collector.collect(EVENT_TYPES.CANDIDATE_CHAT_WECHAT_CAPTURED, compactPayloadObject({
+          source: "snapshot",
+          chatPageUrl: payload.chatPageUrl,
+          candidate: payload.candidate,
+          wechat
+        }));
+      }
+    }
+  }
+
+  recordChatListOpenAttempt(target) {
+    if (!isChatPage(this.sessionContext.page) || !target) {
+      return false;
+    }
+
+    const item = findChatListItemFromTarget(target, { now: this.now });
+    const candidateId = item?.candidate?.candidateId;
+    if (!candidateId) {
+      return false;
+    }
+
+    this.pendingManualOpenKeys.set(candidateId, Date.now() + MANUAL_OPEN_ATTEMPT_TTL_MS);
+    return true;
+  }
+
+  consumeManualOpenAttempt(conversationKey) {
+    if (!conversationKey) {
+      return false;
+    }
+
+    const now = Date.now();
+    for (const [candidateId, expiresAt] of this.pendingManualOpenKeys.entries()) {
+      if (expiresAt <= now) {
+        this.pendingManualOpenKeys.delete(candidateId);
+      }
+    }
+
+    const expiresAt = this.pendingManualOpenKeys.get(conversationKey);
+    if (!expiresAt || expiresAt <= now) {
+      this.pendingManualOpenKeys.delete(conversationKey);
+      return false;
+    }
+
+    this.pendingManualOpenKeys.delete(conversationKey);
+    return true;
+  }
+
+  async safeScan(source) {
+    try {
+      await this.scan(source);
+    } catch (error) {
+      this.collector.collect(EVENT_TYPES.CANDIDATE_CHAT_CAPTURE_FAILED, {
+        source,
+        chatPageUrl: this.sessionContext.page?.url || "",
+        reason: "scan_failed",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+}
+
+export function isChatPage(page) {
+  return Boolean(page?.isBossPage && CHAT_PAGE_TYPES.has(page.pageType));
+}
+
+export function findChatListItems(rootDocument, { now = () => new Date() } = {}) {
+  if (!rootDocument?.querySelectorAll) {
+    return [];
+  }
+
+  const parsedItems = Array.from(rootDocument.querySelectorAll("div, li, section, article"))
+    .map((element) => parseChatListItemElement(element, { now }))
+    .filter(Boolean);
+
+  return dedupeChatListItems(parsedItems);
+}
+
+export function findChatListItemFromTarget(target, { now = () => new Date(), maxDepth = 8 } = {}) {
+  let current = target?.nodeType === 3 ? target.parentElement : target;
+  for (let depth = 0; current && depth < maxDepth; depth += 1) {
+    const parsed = parseChatListItemElement(current, { now });
+    if (parsed) {
+      return parsed;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+export function parseChatListItemElement(element, { now = () => new Date() } = {}) {
+  const rawText = readElementTextExcludingPluginNodes(element);
+  const text = normalizeText(rawText);
+  if (!text || text.length > MAX_LIST_ITEM_TEXT_LENGTH || text.includes("沟通职位：") || text.includes("发送")) {
+    return null;
+  }
+
+  const parsed = parseChatListItemText(rawText, { now });
+  if (!parsed) {
+    return null;
+  }
+
+  return {
+    ...parsed,
+    element,
+    candidate: buildChatCandidatePayload({
+      element,
+      text,
+      displayName: parsed.displayName,
+      jobTitle: parsed.jobTitle,
+      sourceUrl: element?.ownerDocument?.location?.href || globalThis.location?.href || ""
+    })
+  };
+}
+
+export function parseChatListItemText(text = "", { now = () => new Date() } = {}) {
+  const cleanText = stripPluginPromptText(text);
+  const parsedFromLines = parseChatListItemLines(normalizeLines(cleanText), { now });
+  if (parsedFromLines) {
+    return parsedFromLines;
+  }
+
+  const normalized = stripLeadingUnreadCount(normalizeText(cleanText));
+  const timeInfo = parseClearlyTodayChatListTime(normalized, { now });
+  if (!timeInfo) {
+    return null;
+  }
+
+  const rest = normalized.slice(timeInfo.matchLength).trim();
+  if (!rest.includes("【")) {
+    return null;
+  }
+  const { displayName, jobTitle, lastMessagePreview } = parseChatListIdentityText(rest);
+  if (!displayName) {
+    return null;
+  }
+
+  return compactPayloadObject({
+    lastMessageAt: timeInfo.iso,
+    lastMessageTimeText: timeInfo.raw,
+    displayName,
+    jobTitle,
+    lastMessagePreview
+  });
+}
+
+function parseChatListItemLines(lines = [], { now = () => new Date() } = {}) {
+  const normalizedLines = lines
+    .map((line) => normalizeText(line))
+    .filter(Boolean)
+    .filter((line) => line !== CHAT_REPORT_PROMPT_TEXT);
+  if (normalizedLines.length <= 1) {
+    return null;
+  }
+
+  const headerIndex = normalizedLines.findIndex((line) =>
+    parseClearlyTodayChatListTime(line, { now }) && line.includes("【")
+  );
+  if (headerIndex < 0) {
+    return null;
+  }
+
+  const header = stripLeadingUnreadCount(normalizedLines[headerIndex]);
+  const timeInfo = parseClearlyTodayChatListTime(header, { now });
+  if (!timeInfo) {
+    return null;
+  }
+
+  const rest = header.slice(timeInfo.matchLength).trim();
+  const { displayName, jobTitle, lastMessagePreview } = parseChatListIdentityText(rest);
+  if (!displayName) {
+    return null;
+  }
+
+  return compactPayloadObject({
+    lastMessageAt: timeInfo.iso,
+    lastMessageTimeText: timeInfo.raw,
+    displayName,
+    jobTitle,
+    lastMessagePreview: lastMessagePreview || extractListPreviewFromLines(normalizedLines.slice(headerIndex + 1))
+  });
+}
+
+export function parseClearlyTodayChatListTime(text = "", { now = () => new Date() } = {}) {
+  const normalized = stripLeadingUnreadCount(normalizeText(text));
+  const currentDate = asDate(now);
+  const patterns = [
+    /^(今天\s*)?(\d{1,2}):(\d{2})/,
+    /^(刚刚)/,
+    /^(\d+)\s*分钟前/
+  ];
+
+  const timeMatch = normalized.match(patterns[0]);
+  if (timeMatch) {
+    return {
+      raw: timeMatch[0],
+      matchLength: timeMatch[0].length,
+      iso: buildLocalIsoForDateTime({
+        year: currentDate.getFullYear(),
+        month: currentDate.getMonth() + 1,
+        day: currentDate.getDate(),
+        hour: Number(timeMatch[2]),
+        minute: Number(timeMatch[3])
+      })
+    };
+  }
+
+  const justNowMatch = normalized.match(patterns[1]);
+  if (justNowMatch) {
+    return {
+      raw: justNowMatch[0],
+      matchLength: justNowMatch[0].length,
+      iso: toLocalIsoString(currentDate)
+    };
+  }
+
+  const minutesMatch = normalized.match(patterns[2]);
+  if (minutesMatch) {
+    const minutes = Number(minutesMatch[1]);
+    return {
+      raw: minutesMatch[0],
+      matchLength: minutesMatch[0].length,
+      iso: toLocalIsoString(new Date(currentDate.getTime() - minutes * 60 * 1000))
+    };
+  }
+
+  return null;
+}
+
+export function buildChatReportPrompt(item, reportState = {}) {
+  const record = reportState?.candidates?.[item?.candidate?.candidateId] || null;
+  if (!item?.lastMessageAt || !item?.candidate?.candidateId) {
+    return { required: false };
+  }
+  if (!record?.lastReportedMessageAt) {
+    return {
+      required: true,
+      lastReportedMessageAt: ""
+    };
+  }
+
+  const listTime = Date.parse(item.lastMessageAt);
+  const reportedTime = Date.parse(record.lastReportedMessageAt);
+  return {
+    required: Number.isFinite(listTime) && Number.isFinite(reportedTime) && listTime > reportedTime,
+    lastReportedMessageAt: record.lastReportedMessageAt
+  };
+}
+
+export function shouldSubmitChatSnapshot(payload, reportState = {}) {
+  const candidateId = payload?.candidate?.candidateId;
+  const lastMessageAt = payload?.chat?.lastMessageAt || "";
+  if (!candidateId || !lastMessageAt) {
+    return false;
+  }
+
+  const record = reportState?.candidates?.[candidateId] || null;
+  if (!record?.lastReportedMessageAt) {
+    return true;
+  }
+
+  const snapshotTime = Date.parse(lastMessageAt);
+  const reportedTime = Date.parse(record.lastReportedMessageAt);
+  if (!Number.isFinite(snapshotTime)) {
+    return false;
+  }
+  if (!Number.isFinite(reportedTime)) {
+    return true;
+  }
+  return snapshotTime > reportedTime;
+}
+
+export function findActiveChatPanel(rootDocument) {
+  if (!rootDocument?.querySelectorAll) {
+    return null;
+  }
+
+  const candidates = Array.from(rootDocument.querySelectorAll("div, section, article, main"))
+    .map((element) => ({
+      element,
+      text: normalizeText(readElementTextExcludingPluginNodes(element))
+    }))
+    .filter((candidate) =>
+      candidate.text.length > 0 &&
+      candidate.text.length <= MAX_ACTIVE_PANEL_TEXT_LENGTH &&
+      candidate.text.includes("沟通职位：") &&
+      candidate.text.includes("发送") &&
+      (candidate.text.includes("在线简历") || candidate.text.includes("附件简历"))
+    )
+    .sort((left, right) => left.text.length - right.text.length);
+
+  return candidates[0]?.element || null;
+}
+
+export function buildChatSnapshotPayload(panel, {
+  source = "poll",
+  chatPageUrl = "",
+  now = () => new Date()
+} = {}) {
+  const text = readElementTextExcludingPluginNodes(panel);
+  const lines = normalizeLines(text);
+  const displayName = extractActiveChatDisplayName(lines);
+  const jobTitle = extractChatJobTitle(lines);
+  const candidate = buildChatCandidatePayload({
+    element: panel,
+    text,
+    displayName,
+    jobTitle,
+    sourceUrl: chatPageUrl
+  });
+  const messages = collectChatMessagesFromText(text, { now });
+  if (!candidate.candidateId || messages.length === 0) {
+    return null;
+  }
+
+  const firstMessage = messages[0];
+  const lastMessage = messages[messages.length - 1];
+  const wechat = buildWechatPayload(messages);
+
+  return compactPayloadObject({
+    source,
+    chatPageUrl,
+    candidate,
+    chat: {
+      conversationKey: candidate.candidateId,
+      jobTitle,
+      messageCount: messages.length,
+      firstMessageAt: firstMessage.messageAt,
+      lastMessageAt: lastMessage.messageAt,
+      lastMessageFingerprint: lastMessage.fingerprint,
+      snapshotCompleteness: "visible_dom",
+      mayBeIncomplete: true,
+      mediaSummary: countMediaNodes(panel),
+      messages,
+      wechat
+    }
+  });
+}
+
+export function collectChatMessagesFromText(text = "", { now = () => new Date() } = {}) {
+  const lines = normalizeLines(stripPluginPromptText(text));
+  const messages = [];
+  let currentMessageAt = "";
+
+  for (const line of lines) {
+    const timeInfo = parseChatMessageTimeLine(line, { now });
+    if (timeInfo) {
+      currentMessageAt = timeInfo.iso;
+      continue;
+    }
+
+    if (!currentMessageAt || shouldIgnoreChatMessageLine(line)) {
+      continue;
+    }
+
+    const parsed = parseMessageLine(line);
+    if (!parsed.text) {
+      continue;
+    }
+
+    const messageIndex = messages.length;
+    messages.push(compactPayloadObject({
+      messageIndex,
+      messageAt: currentMessageAt,
+      direction: parsed.direction,
+      status: parsed.status,
+      text: parsed.text,
+      fingerprint: buildMessageFingerprint({
+        messageAt: currentMessageAt,
+        direction: parsed.direction,
+        text: parsed.text
+      })
+    }));
+  }
+
+  return messages;
+}
+
+export function parseChatMessageTimeLine(line = "", { now = () => new Date() } = {}) {
+  const normalized = normalizeText(line);
+  const currentDate = asDate(now);
+
+  let match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})$/);
+  if (match) {
+    return { iso: buildLocalIsoForDateTime(readDateTimeMatch(match, 1)) };
+  }
+
+  match = normalized.match(/^(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})$/);
+  if (match) {
+    return {
+      iso: buildLocalIsoForDateTime({
+        year: currentDate.getFullYear(),
+        month: Number(match[1]),
+        day: Number(match[2]),
+        hour: Number(match[3]),
+        minute: Number(match[4])
+      })
+    };
+  }
+
+  match = normalized.match(/^(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})$/);
+  if (match) {
+    return {
+      iso: buildLocalIsoForDateTime({
+        year: currentDate.getFullYear(),
+        month: Number(match[1]),
+        day: Number(match[2]),
+        hour: Number(match[3]),
+        minute: Number(match[4])
+      })
+    };
+  }
+
+  match = normalized.match(/^昨天\s+(\d{1,2}):(\d{2})$/);
+  if (match) {
+    const yesterday = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() - 1);
+    return {
+      iso: buildLocalIsoForDateTime({
+        year: yesterday.getFullYear(),
+        month: yesterday.getMonth() + 1,
+        day: yesterday.getDate(),
+        hour: Number(match[1]),
+        minute: Number(match[2])
+      })
+    };
+  }
+
+  match = normalized.match(/^今天\s+(\d{1,2}):(\d{2})$/);
+  if (match) {
+    return {
+      iso: buildLocalIsoForDateTime({
+        year: currentDate.getFullYear(),
+        month: currentDate.getMonth() + 1,
+        day: currentDate.getDate(),
+        hour: Number(match[1]),
+        minute: Number(match[2])
+      })
+    };
+  }
+
+  match = normalized.match(/^(\d{1,2}):(\d{2})$/);
+  if (match) {
+    return {
+      iso: buildLocalIsoForDateTime({
+        year: currentDate.getFullYear(),
+        month: currentDate.getMonth() + 1,
+        day: currentDate.getDate(),
+        hour: Number(match[1]),
+        minute: Number(match[2])
+      })
+    };
+  }
+
+  return null;
+}
+
+export function buildChatCandidatePayload({
+  element = null,
+  text = "",
+  displayName = "",
+  jobTitle = "",
+  sourceUrl = ""
+} = {}) {
+  const dataset = readMergedDataset(element);
+  const links = readLinks(element);
+  const idInfo = resolveCandidateId({ dataset, links });
+  const normalizedName = normalizeCandidateName(displayName || extractNameFromText(text));
+  const normalizedJobTitle = normalizeText(jobTitle);
+  const fallbackIdentityParts = [normalizedName, normalizedJobTitle].filter(Boolean);
+  const fallbackIdentity = fallbackIdentityParts.length > 0
+    ? fallbackIdentityParts.join("|")
+    : normalizeText(text).slice(0, 80);
+  const fallbackSource = normalizedName && normalizedJobTitle
+    ? CHAT_NAME_JOB_ID_SOURCE
+    : normalizedName
+      ? "chat_name_fingerprint"
+      : normalizedJobTitle
+        ? "chat_job_fingerprint"
+        : "chat_text_fingerprint";
+  const stableIdSource = idInfo.source || fallbackSource;
+  const stableId = idInfo.value || `chat_${hashString(`${sourceUrl}\n${fallbackIdentity}`)}`;
+  const candidate = {
+    candidateId: buildCandidateId({
+      stableId,
+      stableIdSource
+    }),
+    stableId,
+    stableIdSource,
+    identityConfidence: idInfo.value ? "high" : "low",
+    profile: {
+      displayName: displayName || normalizedName
+    }
+  };
+
+  return compactPayloadObject(candidate);
+}
+
+export function extractWechatAccountsFromText(text = "") {
+  if (!WECHAT_CONTEXT_PATTERN.test(text)) {
+    return [];
+  }
+
+  const accounts = [];
+  const normalized = normalizeText(text);
+  for (const match of normalized.matchAll(new RegExp(WECHAT_ACCOUNT_PATTERN_SOURCE, "gi"))) {
+    if (match[1]) {
+      accounts.push(match[1]);
+    }
+  }
+  return Array.from(new Set(accounts));
+}
+
+function parseChatListIdentityText(text = "") {
+  const withoutStatus = text.replace(/\[(?:已读|送达|未读)\]/g, " ").trim();
+  const bracketIndex = withoutStatus.indexOf("【");
+  if (bracketIndex >= 0) {
+    const displayName = withoutStatus.slice(0, bracketIndex).trim();
+    const afterName = withoutStatus.slice(bracketIndex).trim();
+    const jobTitle = extractBracketJobTitle(afterName);
+    return compactPayloadObject({
+      displayName,
+      jobTitle,
+      lastMessagePreview: jobTitle ? afterName.slice(jobTitle.length).trim() : ""
+    });
+  }
+
+  const [displayName = "", ...rest] = withoutStatus.split(/\s+/);
+  return compactPayloadObject({
+    displayName,
+    lastMessagePreview: rest.join(" ")
+  });
+}
+
+function extractListPreviewFromLines(lines = []) {
+  for (const line of lines) {
+    const normalized = normalizeText(line);
+    if (!normalized ||
+      normalized === CHAT_REPORT_PROMPT_TEXT ||
+      normalized === "[已读]" ||
+      normalized === "[送达]" ||
+      normalized === "[未读]") {
+      continue;
+    }
+
+    return normalized.replace(/^\[(?:已读|送达|未读)\]\s*/, "").trim();
+  }
+  return "";
+}
+
+function extractBracketJobTitle(text = "") {
+  const match = text.match(/^(【[^】]+】[^[]*?)(?:\s{2,}|\s+(?:已读|送达|未读)\s+|$)/);
+  if (match?.[1]) {
+    return match[1].trim();
+  }
+  const conservative = text.match(/^(【[^】]+】[^，。！？!?]*)/);
+  return conservative?.[1]?.trim() || "";
+}
+
+function extractActiveChatDisplayName(lines = []) {
+  for (const line of lines) {
+    if (shouldIgnoreHeaderCandidateLine(line)) {
+      continue;
+    }
+    const statusIndex = line.search(ACTIVE_STATUS_PATTERN);
+    const candidate = statusIndex >= 0 ? line.slice(0, statusIndex).trim() : line.trim();
+    if (candidate) {
+      return normalizeCandidateName(candidate);
+    }
+  }
+  return "";
+}
+
+function extractChatJobTitle(lines = []) {
+  const line = lines.find((current) => current.includes("沟通职位："));
+  return normalizeText(line?.replace(/^.*?沟通职位：/, "") || "");
+}
+
+function parseMessageLine(line = "") {
+  const normalized = normalizeText(line);
+  const statusMatch = normalized.match(MESSAGE_STATUS_PATTERN);
+  if (statusMatch) {
+    return {
+      direction: "recruiter",
+      status: statusMatch[1],
+      text: normalized.slice(statusMatch[0].length).trim()
+    };
+  }
+
+  return {
+    direction: "unknown",
+    status: "",
+    text: normalized
+  };
+}
+
+function shouldIgnoreChatMessageLine(line = "") {
+  const normalized = normalizeText(line);
+  if (!normalized || MESSAGE_CONTROL_TEXTS.has(normalized)) {
+    return true;
+  }
+  return normalized === CHAT_REPORT_PROMPT_TEXT ||
+    normalized.includes("沟通的职位-") ||
+    normalized.startsWith("沟通职位：") ||
+    normalized.startsWith("期望：") ||
+    /^\/?\S+\.(?:png|jpe?g|webp|gif|mp3|wav|m4a|mp4)(?:\?\S*)?$/i.test(normalized) ||
+    normalized === "已读" ||
+    normalized === "送达" ||
+    normalized === "未读";
+}
+
+function shouldIgnoreHeaderCandidateLine(line = "") {
+  const normalized = normalizeText(line);
+  return !normalized ||
+    normalized.includes("沟通") ||
+    normalized.includes("全部") ||
+    normalized.includes("发送") ||
+    normalized.includes("在线简历") ||
+    normalized.includes("附件简历") ||
+    /^\d{1,2}岁$/.test(normalized) ||
+    /^\d+年/.test(normalized) ||
+    normalized === "大专" ||
+    normalized === "本科" ||
+    normalized === "高中";
+}
+
+function buildWechatPayload(messages = []) {
+  for (const message of messages) {
+    const accounts = extractWechatAccountsFromText(message.text);
+    if (accounts.length > 0) {
+      return {
+        accounts,
+        source: "chat_text",
+        detectedAtMessageAt: message.messageAt,
+        detectedAtMessageFingerprint: message.fingerprint
+      };
+    }
+  }
+  return null;
+}
+
+function countMediaNodes(panel) {
+  if (!panel?.querySelectorAll) {
+    return {};
+  }
+
+  return compactPayloadObject({
+    imageNodeCount: panel.querySelectorAll("img").length,
+    audioNodeCount: panel.querySelectorAll("audio").length,
+    videoNodeCount: panel.querySelectorAll("video").length
+  });
+}
+
+function applyChatReportPrompt(element) {
+  if (!element?.setAttribute) {
+    return "";
+  }
+  element.setAttribute(CHAT_REPORT_PROMPT_ATTRIBUTE, "true");
+
+  const promptId = ensureChatReportPromptId(element);
+  const existingPrompt = findExistingPrompt(element);
+  if (existingPrompt) {
+    positionChatReportPrompt(element, existingPrompt);
+    return promptId;
+  }
+
+  const doc = element.ownerDocument || globalThis.document;
+  const prompt = doc?.createElement?.("div");
+  if (!prompt) {
+    return promptId;
+  }
+
+  prompt.textContent = CHAT_REPORT_PROMPT_TEXT;
+  prompt.setAttribute("data-boss-observer-chat-report-prompt", "true");
+  prompt.setAttribute("data-boss-observer-chat-report-overlay", "true");
+  prompt.setAttribute(CHAT_REPORT_PROMPT_ID_ATTRIBUTE, promptId);
+  prompt.setAttribute("aria-hidden", "true");
+  prompt.style.cssText = [
+    "position:fixed",
+    "display:block",
+    "pointer-events:none",
+    "z-index:2147483647",
+    "padding:2px 6px",
+    "border-radius:4px",
+    "background:#b91c1c",
+    "color:#fff",
+    "font-size:12px",
+    "font-weight:600",
+    "line-height:16px",
+    "box-shadow:0 1px 4px rgba(0,0,0,.18)",
+    "white-space:nowrap",
+    "overflow:hidden",
+    "text-overflow:ellipsis"
+  ].join(";");
+  (doc?.body || doc?.documentElement)?.appendChild?.(prompt);
+  positionChatReportPrompt(element, prompt);
+  return promptId;
+}
+
+function clearChatReportPrompt(element) {
+  if (!element?.removeAttribute) {
+    return;
+  }
+  const prompt = findExistingPrompt(element);
+  element.removeAttribute(CHAT_REPORT_PROMPT_ATTRIBUTE);
+  element.removeAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE);
+  prompt?.remove?.();
+  removeInlineChatReportPrompts(element);
+}
+
+function findExistingPrompt(element) {
+  const promptId = element?.getAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE);
+  const doc = element?.ownerDocument || globalThis.document;
+  if (promptId && doc?.querySelector) {
+    const overlay = doc.querySelector(`${CHAT_REPORT_PROMPT_OVERLAY_SELECTOR}[${CHAT_REPORT_PROMPT_ID_ATTRIBUTE}="${promptId}"]`);
+    if (overlay) {
+      return overlay;
+    }
+  }
+  return element?.querySelector?.(CHAT_REPORT_PROMPT_NODE_SELECTOR) || null;
+}
+
+function ensureChatReportPromptId(element) {
+  const existingId = element?.getAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE);
+  if (existingId) {
+    return existingId;
+  }
+
+  const promptId = `chat_report_prompt_${nextChatReportPromptId}`;
+  nextChatReportPromptId += 1;
+  element?.setAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE, promptId);
+  return promptId;
+}
+
+function positionChatReportPrompt(element, prompt) {
+  if (!prompt?.style) {
+    return;
+  }
+  const rect = element?.getBoundingClientRect?.();
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    prompt.style.display = "none";
+    return;
+  }
+
+  prompt.style.display = "block";
+  prompt.style.left = `${Math.max(0, Math.round(rect.left + 6))}px`;
+  prompt.style.top = `${Math.max(0, Math.round(rect.top + 4))}px`;
+  prompt.style.maxWidth = `${Math.max(96, Math.round(rect.width - 12))}px`;
+}
+
+function pruneChatReportPromptOverlays(rootDocument, activePromptIds = new Set()) {
+  const overlays = rootDocument?.querySelectorAll?.(CHAT_REPORT_PROMPT_OVERLAY_SELECTOR) || [];
+  Array.from(overlays).forEach((overlay) => {
+    const promptId = overlay.getAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE);
+    if (!promptId || !activePromptIds.has(promptId)) {
+      overlay.remove?.();
+    }
+  });
+}
+
+function removeInlineChatReportPrompts(element) {
+  const prompts = element?.querySelectorAll?.(CHAT_REPORT_PROMPT_NODE_SELECTOR) || [];
+  Array.from(prompts).forEach((prompt) => {
+    prompt.remove?.();
+  });
+}
+
+function readElementTextExcludingPluginNodes(element) {
+  if (!element) {
+    return "";
+  }
+
+  // Use the live element's innerText so browser-rendered chat line breaks are preserved.
+  // Detached clones can collapse BOSS chat bubbles into one text line, which breaks
+  // timestamp-based message parsing.
+  const text = element.innerText || element.textContent || "";
+  return stripPluginPromptText(text);
+}
+
+function stripPluginPromptText(text = "") {
+  return String(text).split(CHAT_REPORT_PROMPT_TEXT).join(" ");
+}
+
+function buildSnapshotDedupKey(payload = {}) {
+  return [
+    payload.candidate?.candidateId || "",
+    payload.chat?.messageCount || 0,
+    payload.chat?.lastMessageAt || "",
+    payload.chat?.lastMessageFingerprint || ""
+  ].join(":");
+}
+
+function buildMessageFingerprint({ messageAt = "", direction = "", text = "" } = {}) {
+  return `msg_${hashString(`${messageAt}\n${direction}\n${text}`)}`;
+}
+
+function readDateTimeMatch(match, startIndex) {
+  return {
+    year: Number(match[startIndex]),
+    month: Number(match[startIndex + 1]),
+    day: Number(match[startIndex + 2]),
+    hour: Number(match[startIndex + 3]),
+    minute: Number(match[startIndex + 4])
+  };
+}
+
+function buildLocalIsoForDateTime({ year, month, day, hour, minute }) {
+  return toLocalIsoString(new Date(year, month - 1, day, hour, minute, 0, 0));
+}
+
+function asDate(now) {
+  const value = typeof now === "function" ? now() : now;
+  return value instanceof Date ? value : new Date(value);
+}
+
+function stripLeadingUnreadCount(text = "") {
+  return normalizeText(text).replace(/^\d+\s+/, "");
+}
+
+function normalizeCandidateName(value = "") {
+  return normalizeText(value).replace(/\s+/g, "");
+}
+
+function extractNameFromText(text = "") {
+  const firstLine = normalizeLines(text)[0] || "";
+  const statusIndex = firstLine.search(ACTIVE_STATUS_PATTERN);
+  return statusIndex >= 0 ? firstLine.slice(0, statusIndex).trim() : firstLine.split(/\s+/)[0] || "";
+}
+
+function readMergedDataset(element) {
+  const merged = {};
+  let current = element;
+  for (let steps = 0; current && steps < 6; steps += 1) {
+    Object.assign(merged, current.dataset || {});
+    current = current.parentElement;
+  }
+  return merged;
+}
+
+function readLinks(element) {
+  if (!element?.querySelectorAll) {
+    return [];
+  }
+  return Array.from(element.querySelectorAll("a[href]"))
+    .map((link) => link.href)
+    .filter(Boolean);
+}
+
+function dedupeChatListItems(items = []) {
+  const withoutBroadParents = items.filter((item, index) => !items.some((other, otherIndex) =>
+    otherIndex !== index &&
+    containsElement(item.element, other.element) &&
+    isDifferentChatListItem(item, other)
+  ));
+
+  const bestByReportKey = new Map();
+  withoutBroadParents.forEach((item) => {
+    const reportKey = buildChatListReportKey(item);
+    const existing = bestByReportKey.get(reportKey);
+    if (!existing || getElementTextLength(item.element) > getElementTextLength(existing.element)) {
+      bestByReportKey.set(reportKey, item);
+    }
+  });
+
+  return Array.from(bestByReportKey.values());
+}
+
+function buildChatListReportKey(item = {}) {
+  return [
+    item.displayName || item.candidate?.candidateId || "",
+    item.lastMessageAt || ""
+  ].join(":");
+}
+
+function isDifferentChatListItem(left = {}, right = {}) {
+  const leftIdentity = left.displayName || left.candidate?.candidateId || "";
+  const rightIdentity = right.displayName || right.candidate?.candidateId || "";
+  return left.lastMessageAt !== right.lastMessageAt ||
+    leftIdentity !== rightIdentity;
+}
+
+function getElementTextLength(element) {
+  return normalizeText(readElementTextExcludingPluginNodes(element)).length;
+}
+
+function containsElement(parent, child) {
+  if (!parent || !child || parent === child) {
+    return false;
+  }
+  if (typeof parent.contains === "function") {
+    return parent.contains(child);
+  }
+  let current = child.parentElement;
+  while (current) {
+    if (current === parent) {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function hashString(input = "") {
+  let hash = 5381;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 33) ^ input.charCodeAt(index);
+  }
+  return (hash >>> 0).toString(36);
+}

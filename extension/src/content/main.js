@@ -1,6 +1,7 @@
 import { readConfig } from "../shared/config.js";
 import { CandidateDetailProbe } from "./candidate-detail-probe.js";
 import { CandidateListProbe } from "./candidate-list-probe.js";
+import { ChatRecordProbe } from "./chat-record-probe.js";
 import { EventCollector } from "./event-collector.js";
 import { FilterProbe } from "./filter-probe.js";
 import { GreetingProbe } from "./greeting-probe.js";
@@ -21,12 +22,14 @@ async function bootstrap() {
   const filterProbe = new FilterProbe({ collector, sessionContext });
   const candidateDetailProbe = new CandidateDetailProbe({ collector, sessionContext });
   const candidateListProbe = new CandidateListProbe({ collector, sessionContext });
+  const chatRecordProbe = new ChatRecordProbe({ collector, sessionContext });
   const greetingProbe = new GreetingProbe({ collector, sessionContext });
   pageSessionProbe.start();
   jobContextProbe.start();
   filterProbe.start();
   candidateDetailProbe.start();
   candidateListProbe.start();
+  chatRecordProbe.start();
   greetingProbe.start();
 }
 
