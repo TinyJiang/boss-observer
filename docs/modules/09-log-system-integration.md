@@ -20,6 +20,7 @@
 
 Chrome 插件负责：
 
+- 在采集前校验操作员配置和 BOSS 页面展示账号姓名。
 - 生成事实日志。
 - 本地缓存日志。
 - 批量上传日志。
@@ -52,7 +53,7 @@ Chrome 插件负责：
 日志系统需要支持以下查询维度：
 
 - 日期
-- 招聘专员
+- 招聘专员 / 操作员 ID
 - 岗位
 - 候选人
 - 事件类型
@@ -108,10 +109,11 @@ MVP 需要完成：
 - 我们的业务日志按“事实事件”写入 CLS，不在插件侧做分析加工。
 - 插件侧仍然保留本地队列，用于失败重试和离线缓冲。
 - 上传链路优先使用 CLS 匿名上传能力，通过 HTTPS 直传到日志主题。
-- 开发阶段默认关闭上传，使用 `uploadEnabled` 开关控制是否真正 flush 到 CLS。
+- 当前默认开启上传，使用 `uploadEnabled` 开关控制是否真正 flush 到 CLS；如需本地只观察，可显式把该开关设为 `false`。
+- 插件必须先在 popup 配置 `operatorId` 和 `accountName`，且 `accountName` 必须与 BOSS 页面展示账号姓名一致；未配置、未检测到页面姓名或姓名不一致时，background 不写本地队列、不上传正式事件。
 - 写入 CLS 时使用结构化日志，不要把所有字段挤成不可检索的大字符串。
 - 当前本地保留的 CLS 目标地域是 `ap-shanghai`，topic id 是 `5407c0a7-3e37-4c45-a204-bf5d40f157a1`。
-- `event.type`、`page_type`、`session_id`、`plugin_version`、`source_tab_id` 等字段应建立索引。
+- `event.type`、`page_type`、`session_id`、`operator_id`、`operator_account_name`、`plugin_version`、`source_tab_id` 等字段应建立索引。
 - 原始 `payload` 和 `context` 可以保留为 JSON 字符串备份，但不要依赖嵌套对象做 CLS 索引。
 
 如果后续发现匿名直传的数据污染风险不可接受，再退回“插件本地队列 -> 自建接收服务 -> CLS”的代理方案。

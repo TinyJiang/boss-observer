@@ -40,6 +40,12 @@
   "type": "page_session.page_changed",
   "occurredAt": "2026-05-11T16:04:03.999+08:00",
   "pluginVersion": "0.1.0",
+  "operator": {
+    "operatorId": "op_001",
+    "accountName": "张三",
+    "bossAccountName": "张三",
+    "bossAccountMatched": true
+  },
   "context": {},
   "payload": {},
   "sourceTabId": 669699710,
@@ -54,6 +60,7 @@
 - `type`: 事件类型枚举，见第 6 节。
 - `occurredAt`: 事件发生时间，ISO 8601 字符串，使用本地时区偏移格式，例如 `+08:00`。
 - `pluginVersion`: 插件版本号。
+- `operator`: 操作员信息，由 background 在入队前统一补充；未通过操作员门禁的事件不会入队。
 - `context`: 采集时的页面会话快照，见第 4 节。
 - `payload`: 事件专属数据，见第 7 节。
 - `sourceTabId`: 事件来源标签页 ID。
@@ -61,6 +68,13 @@
 - `sourceTabUrl`: 事件来源标签页 URL。
 
 后端应允许 `sourceTabId`、`sourceWindowId`、`sourceTabUrl` 缺省或为空，以兼容不同阶段的实现。
+
+操作员门禁：
+
+- 插件必须先在 popup 配置 `operatorId` 和 `accountName` 才允许采集。
+- content script 会保守识别 BOSS 页面顶部展示的账号姓名并上报给 background；background 只把它用于门禁状态，不作为业务事件。
+- 当未配置操作员、未检测到 BOSS 账号姓名，或配置姓名与 BOSS 页面姓名不一致时，background 不写本地队列、不上传正式事件，并在 popup/debug state 展示严重提示。
+- `operator.operatorId` 和 `operator.accountName` 来自 popup 配置；`operator.bossAccountName` 来自当前 BOSS 页面展示姓名；`operator.bossAccountMatched` 表示本次采集前已通过姓名对照。
 
 ## 4. 会话上下文字段
 
@@ -129,7 +143,6 @@
 | `candidate_list.list_viewed` | 候选人列表曝光 |
 | `candidate_list.card_exposed` | 候选人卡片曝光 |
 | `candidate_detail.opened` | 候选人详情打开 |
-| `candidate_detail.boss_analysis_viewed` | 候选人详情牛人分析模块曝光 |
 | `candidate_detail.closed` | 候选人详情关闭 |
 | `candidate_greeting.clicked` | 打招呼按钮点击 |
 | `candidate_greeting.succeeded` | 打招呼成功 |
@@ -137,7 +150,7 @@
 | `candidate_chat.opened` | 候选人聊天窗口打开 |
 | `candidate_chat.snapshot_captured` | 候选人聊天文本快照已采集 |
 | `candidate_chat.wechat_captured` | 已换微信候选人的微信信息已采集 |
-| `candidate_chat.report_required` | 聊天列表已提示需要打开补采 |
+| `candidate_chat.report_required` | 聊天列表发现需要打开补采，并进入 popup 未上报统计 |
 | `candidate_chat.capture_failed` | 聊天采集异常 |
 | `queue.write_failed` | 本地队列写入失败 |
 | `upload.started` | 开始上传 |
@@ -357,6 +370,9 @@
   "source": "poll",
   "detailUrl": "https://www.zhipin.com/web/chat/index?geekId=abc123",
   "detectedBy": "c_resume_frame",
+  "analysis": {
+    "module": "boss_analysis"
+  },
   "candidate": {
     "candidateId": "bo_candidate_url_geekid_abc123_k8s2p1",
     "stableId": "abc123",
@@ -412,6 +428,8 @@
 
 - `detailUrl`: 当前识别到的详情 URL。弹窗/抽屉场景无法识别时可能为空字符串。
 - `detectedBy`: 当前常见值为 `detail_url`、`detail_dom`、`c_resume_frame`、`c_resume_selected_card`、`c_resume_recent_card`、`c_resume_matched_card`、`c_resume_canvas` 或 `c_resume_canvas_matched_card`。
+- `analysis.module`: 当详情打开时已经可见“牛人分析”模块，固定输出 `boss_analysis`；没有看见该模块时省略 `analysis`。该字段只表示模块可见，不表示插件端认可 BOSS 的分析结论。
+- `candidate_detail.opened` 会在初次识别后短暂等待异步详情内容和牛人分析模块渲染；如果等待期间详情关闭、候选人切换或探针停止，会先立即写入 pending opened，再写入 closed 或完成清理，保证秒开秒关也有打开事实。
 - `candidate`: 与候选人卡片曝光共用候选人身份和 `profile` 快照结构。
 - 当详情来自最近点击或当前选中的已曝光卡片时，`candidate` 会继承卡片曝光事件中的 `candidateId`、`exposureKey` 和 `exposedEventId`。这三个字段优先用于后端计算曝光点击率，详情 DOM/Canvas 解析失败不应阻断漏斗关联。
 - 如果详情候选人与最近曝光卡片的核心 profile 冲突，插件会先按当前候选人的 `stableIdSource + stableId` 回连同一列表页里的精确曝光；仍无法命中时才不继承旧 `exposureKey/exposedEventId`，避免错连两个候选人。
@@ -421,26 +439,7 @@
 
 当前第一版会把 `/web/frame/c-resume` 作为 BOSS 详情 iframe 的强识别信号；普通候选人列表文本不会仅凭多个卡片内容触发详情事件。详情页 DOM/辅助文本不可读时，插件会使用同一详情 frame 中短期捕获的 Canvas 可见渲染文字作为解析输入，但不会把完整 Canvas 文本或完整简历正文写入 payload。事件不会把完整简历正文、完整工作/教育经历正文、聊天内容、手机号或微信号写入 payload；详情摘要会过滤包含微信、手机号、电话、联系方式等关键词的行，并对手机号、邮箱做脱敏兜底。
 
-### 7.12 `candidate_detail.boss_analysis_viewed`
-
-```json
-{
-  "source": "poll",
-  "detailUrl": "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
-  "detectedBy": "detail_dom",
-  "candidate": {},
-  "openedEventId": "evt_abc",
-  "analysis": {
-    "module": "boss_analysis"
-  }
-}
-```
-
-- `openedEventId`: 对应的 `candidate_detail.opened` 事件 ID。
-- `analysis.module`: 当前固定为 `boss_analysis`。
-- 事件类型本身表示模块被看见，不表示插件端认可 BOSS 的分析结论。
-
-### 7.13 `candidate_detail.closed`
+### 7.12 `candidate_detail.closed`
 
 ```json
 {
@@ -457,7 +456,7 @@
 - `durationMs`: 本次详情打开到关闭的毫秒时长，由 content script 本地计时，仅表示页面可观察到的打开时长。
 - `openedEventId`: 对应 `candidate_detail.opened` 事件 ID；如果测试或异常环境无法返回事件 ID，可能为空字符串。
 
-### 7.14 `candidate_greeting.clicked`
+### 7.13 `candidate_greeting.clicked`
 
 ```json
 {
@@ -474,11 +473,12 @@
 - `entry`: 当前识别到的打招呼入口，常见值为 `candidate_list`、`candidate_detail`、`chat` 或 `unknown`。
 - `candidate`: 与候选人列表曝光/详情打开共用候选人身份和 `profile` 快照结构。
 - 如果点击目标能关联到已曝光卡片，`candidate` 会携带同一组 `candidateId`、`exposureKey` 和 `exposedEventId`；结果事件会沿用 clicked 事件里的 `candidate`。
+- 如果点击目标只能读到按钮局部文本，插件会按 `candidateId` 回查本地候选人快照；若最近打开的详情候选人仍处于可见/刷新有效期内，打招呼事件会继承该详情候选人的 `candidateId`、基础 `profile` 和已有关联字段，避免生成无法与列表/详情事件串联的按钮文本指纹 ID。详情关闭时会清理这份兜底上下文。
 - `page`、`sourceUrl`、`greeting.actionLabel`、`greeting.targetKey`、`greeting.matchedSignals` 不进入正式 payload；点击和结果通过事件根部 ID 与结果事件的 `clickedEventId` 关联。
 
 当前第一版监听顶层页面和同源 iframe 中的“打招呼”按钮/链接点击，不采集打招呼话术、聊天正文、完整简历正文、手机号或微信号。
 
-### 7.15 `candidate_greeting.succeeded`
+### 7.14 `candidate_greeting.succeeded`
 
 ```json
 {
@@ -501,7 +501,7 @@
 
 该事件只表示插件在页面上观察到成功提示或按钮状态变化，不在插件端判断触达质量、话术质量或后续转化。
 
-### 7.16 `candidate_greeting.failed`
+### 7.15 `candidate_greeting.failed`
 
 ```json
 {
@@ -522,7 +522,7 @@
 
 点击后短时间内如果没有观察到成功或失败提示，当前实现只丢弃 pending 状态，不会把“未观察到确认”写成失败事实。
 
-### 7.17 `candidate_chat.opened`
+### 7.16 `candidate_chat.opened`
 
 ```json
 {
@@ -547,7 +547,7 @@
 - `candidate` 复用候选人列表、详情和打招呼模块的身份结构；聊天页只读到姓名时会使用低置信短指纹，并输出 `identityConfidence: "low"`。
 - `chat.conversationKey` 是插件本地识别当前聊天窗口的键，优先使用 `candidateId`。重复打开同一候选人仍可再次产生打开事实。
 
-### 7.18 `candidate_chat.snapshot_captured`
+### 7.17 `candidate_chat.snapshot_captured`
 
 ```json
 {
@@ -590,7 +590,7 @@
 - `chat.snapshotCompleteness` 当前固定为 `visible_dom`；`mayBeIncomplete: true` 表示插件没有自动滚动加载历史，不承诺完整覆盖所有历史消息。
 - `chat.mediaSummary` 只记录媒体节点数量，不记录媒体地址。
 
-### 7.19 `candidate_chat.wechat_captured`
+### 7.18 `candidate_chat.wechat_captured`
 
 ```json
 {
@@ -610,7 +610,7 @@
 - 普通“换微信”按钮不触发该事件。
 - 图片中的微信号不采集，除非 BOSS 页面已经转写成可见文本。
 
-### 7.20 `candidate_chat.report_required`
+### 7.19 `candidate_chat.report_required`
 
 ```json
 {
@@ -620,16 +620,19 @@
   "listItem": {
     "lastMessageAt": "2026-05-15T09:54:00.000+08:00",
     "lastMessageTimeText": "09:54",
+    "displayName": "桂儿",
+    "jobTitle": "【8000+】居家黑板主播",
     "lastReportedMessageAt": "2026-05-15T09:20:00.000+08:00"
   }
 }
 ```
 
-- 事件表示插件已经在聊天列表项上显示“今日聊天未上报，请点开补采”之类提示。
+- 事件表示插件已经把该聊天窗口写入扩展 popup 的未上报聊天统计。
+- 插件不会向 BOSS 页面插入 badge、overlay、属性标记或其他可见 DOM 提示。
 - 插件不会自动打开该会话，不会阻止员工操作。
 - 列表只检查明显今天的时间文本，例如 `HH:mm`、`今天 HH:mm`、`刚刚`、`N分钟前`；`昨天`、旧日期和不确定文本会忽略。
 
-### 7.21 `candidate_chat.capture_failed`
+### 7.20 `candidate_chat.capture_failed`
 
 ```json
 {
@@ -713,6 +716,10 @@ https://{region}.cls.tencentcs.com/tracklog?topic_id={topic_id}
 | `is_boss_page` | `context.isBossPage` |
 | `job_id` | `context.jobContext.jobId` |
 | `job_status` | `context.jobContext.jobStatus` |
+| `operator_id` | `operator.operatorId` |
+| `operator_account_name` | `operator.accountName` |
+| `boss_account_name` | `operator.bossAccountName` |
+| `boss_account_matched` | `operator.bossAccountMatched` |
 | `source_tab_id` | `sourceTabId` |
 | `source_window_id` | `sourceWindowId` |
 | `source_tab_url` | `sourceTabUrl` |
@@ -721,7 +728,7 @@ https://{region}.cls.tencentcs.com/tracklog?topic_id={topic_id}
 
 建议：
 
-- `event_type`、`page_type`、`session_id`、`job_id`、`plugin_version`、`source_tab_id`、`source_window_id` 作为主要索引字段。
+- `event_type`、`page_type`、`session_id`、`job_id`、`operator_id`、`operator_account_name`、`plugin_version`、`source_tab_id`、`source_window_id` 作为主要索引字段。
 - `payload_json` 和 `context_json` 作为原始备份，不作为主要查询字段。
 - 如果需要按事件附加字段检索，优先把该字段提到扁平列，不要依赖嵌套 JSON。
 - 匿名直传要求 CLS 日志主题开启匿名上传；如果后续数据污染风险不可接受，再切回自建接收服务代理写入 CLS。
@@ -729,14 +736,16 @@ https://{region}.cls.tencentcs.com/tracklog?topic_id={topic_id}
 
 当前插件配置字段：
 
-- `uploadEnabled`: 上传总开关。开发阶段默认 `false`，只保留本地队列和调试页日志；设为 `true` 后才会按上传目标 flush。
+- `operatorId`: 操作员 ID，必须由 popup 配置；为空时禁止采集。
+- `accountName`: 操作员账号姓名，必须与 BOSS 页面展示姓名一致；不一致时禁止采集。
+- `uploadEnabled`: 上传总开关。当前默认 `true`，按配置的上传目标 flush；如需本地只观察，可显式设为 `false`。
 - `clsRegion`: CLS 地域，例如 `ap-guangzhou`。
 - `clsTopicId`: CLS 日志主题 ID。
 - `clsSource`: CLS `source` 字段，默认 `boss-observer-extension`。
 - `uploadEndpoint`: 兼容旧的自建接收服务方案；当 `uploadEnabled` 为 `true` 且配置了 `clsRegion` 和 `clsTopicId` 时，优先走 CLS 直传。
 
-当前本地默认值保留 CLS 目标，但默认关闭上传：
+当前本地默认值保留 CLS 目标，并默认开启上传：
 
-- `uploadEnabled = false`
+- `uploadEnabled = true`
 - `clsRegion = ap-shanghai`
 - `clsTopicId = 5407c0a7-3e37-4c45-a204-bf5d40f157a1`

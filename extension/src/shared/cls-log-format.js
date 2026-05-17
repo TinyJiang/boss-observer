@@ -25,6 +25,7 @@ export function buildClsLog(event, { now = () => Date.now() } = {}) {
 export function buildClsContents(event) {
   const context = event.context || {};
   const jobContext = context.jobContext || {};
+  const operator = event.operator || {};
 
   return {
     event_id: stringifyClsValue(event.id),
@@ -38,6 +39,10 @@ export function buildClsContents(event) {
     is_boss_page: stringifyClsValue(context.isBossPage),
     job_id: stringifyClsValue(jobContext.jobId),
     job_status: stringifyClsValue(jobContext.jobStatus),
+    operator_id: stringifyClsValue(operator.operatorId),
+    operator_account_name: stringifyClsValue(operator.accountName),
+    boss_account_name: stringifyClsValue(operator.bossAccountName),
+    boss_account_matched: stringifyClsValue(operator.bossAccountMatched),
     source_tab_id: stringifyClsValue(event.sourceTabId),
     source_window_id: stringifyClsValue(event.sourceWindowId),
     source_tab_url: stringifyClsValue(event.sourceTabUrl),

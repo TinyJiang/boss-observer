@@ -15,6 +15,7 @@ import {
 } from "../extension/src/content/candidate-card.js";
 import {
   clearCandidateCardRegistry,
+  getRecentCandidateDetailAssociation,
   recordCandidateCardInteraction,
   registerCandidateCardAssociation
 } from "../extension/src/content/candidate-card-registry.js";
@@ -442,6 +443,40 @@ test("candidate detail detection prefers focused detail container over recommend
   assert.equal(JSON.stringify(payload).includes("陈**"), false);
 });
 
+test("candidate detail detection ignores chat page profile-like panels", () => {
+  const chatPanelText = [
+    "Alone 刚刚活跃",
+    "24岁 3年 大专 离职-随时到岗",
+    "求职期望",
+    "杭州 主播",
+    "牛人分析",
+    "沟通意愿较强",
+    "个人优势",
+    "有直播经验",
+    "工作经历",
+    "杭州某传媒 主播 2023-2024",
+    "收藏 不合适 举报 转发牛人"
+  ].join("\n");
+  const profilePanel = createFakeElement({
+    className: "chat-profile geek-panel",
+    text: chatPanelText
+  });
+  const document = createFakeDocument({
+    url: "https://www.zhipin.com/web/chat/index",
+    bodyText: [
+      "沟通",
+      "Alone",
+      "兼职·【8000+】搞笑兼职主播（时薪40+）",
+      chatPanelText
+    ].join("\n"),
+    detailElements: [profilePanel]
+  });
+
+  const detected = findActiveCandidateDetail(document, classifyPage("https://www.zhipin.com/web/chat/index"));
+
+  assert.equal(detected, null);
+});
+
 test("candidate detail detection scans nested c-resume iframes", () => {
   const detailText = [
     "赵女士 刚刚活跃",
@@ -563,6 +598,55 @@ test("candidate detail detection uses captured canvas text for c-resume details"
   assert.equal(Object.hasOwn(payload, "detail"), false);
 });
 
+test("candidate detail detection recognizes spaced canvas boss analysis labels", () => {
+  const canvasText = [
+    "南葵籽 刚刚活跃",
+    "24岁 | 中专/中技 | 8年 | 离职-随时到岗",
+    "求职期望",
+    "杭州 美工",
+    "个人优势",
+    "可以独立完成店铺装修和海报设计",
+    "工作经历",
+    "杭州某公司 美工",
+    "教育经历",
+    "某职业学校 中专/中技",
+    "牛 人 分 析 器",
+    "求职意愿 较强，近期更新过简历",
+    "查 看 全 部 8 项 分 析"
+  ].join("\n");
+  const resumeDocument = createFakeDocument({
+    url: "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
+    bodyText: "BOSS直聘 页面脚本 wasm 详情加载中 暂无可读候选人文本".repeat(8),
+    detailElements: []
+  });
+  const recommendDocument = createFakeDocument({
+    url: "https://www.zhipin.com/web/frame/recommend/?jobid=job1",
+    bodyText: "推荐",
+    detailElements: [],
+    iframes: [createFakeFrame(resumeDocument)]
+  });
+  const topDocument = createFakeDocument({
+    url: "https://www.zhipin.com/web/chat/recommend",
+    bodyText: "BOSS直聘 推荐",
+    detailElements: [],
+    iframes: [createFakeFrame(recommendDocument)]
+  });
+
+  const detected = findActiveCandidateDetail(topDocument, classifyPage("https://www.zhipin.com/web/chat/recommend"), {
+    readCanvasText: (document) => document === resumeDocument ? canvasText : ""
+  });
+  const payload = buildCandidateDetailPayload({
+    page: classifyPage("https://www.zhipin.com/web/chat/recommend"),
+    ...detected
+  });
+
+  assert.equal(detected.analysisVisible, true);
+  assert.equal(payload.analysis.module, "boss_analysis");
+  assert.equal(payload.candidate.detailProfile.bossAnalysis.title, "牛人分析器");
+  assert.equal(payload.candidate.detailProfile.bossAnalysis.items[0].includes("求职意愿"), true);
+  assert.equal(payload.candidate.detailProfile.bossAnalysis.actionText, "查看全部8项分析");
+});
+
 test("candidate detail detection falls back to selected recommendation card for empty c-resume iframe", () => {
   const selectedCard = createFakeElement({
     className: "geek-card active",
@@ -611,6 +695,54 @@ test("candidate detail detection falls back to selected recommendation card for 
   assert.equal(payload.candidate.profile.expectedPosition, "网络销售");
   assert.equal(payload.candidate.detailProfile, undefined);
   assert.equal(Object.hasOwn(payload, "detail"), false);
+});
+
+test("candidate detail selected-card fallback keeps visible boss analysis marker", () => {
+  const selectedCard = createFakeElement({
+    className: "geek-card active",
+    text: [
+      "刘心雨 刚刚活跃",
+      "23岁 本科 25年应届生",
+      "期望 杭州 主播",
+      "打招呼"
+    ].join("\n"),
+    dataset: {
+      securityId: "liuxinyu_sec_1"
+    }
+  });
+  const resumeDocument = createFakeDocument({
+    url: "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
+    bodyText: [
+      "BOSS直聘 页面脚本 wasm",
+      "牛人分析器",
+      "查看全部8项分析"
+    ].join("\n"),
+    detailElements: []
+  });
+  const recommendDocument = createFakeDocument({
+    url: "https://www.zhipin.com/web/frame/recommend/?jobid=job1",
+    bodyText: "推荐",
+    detailElements: [],
+    selectedElements: [selectedCard],
+    iframes: [createFakeFrame(resumeDocument)]
+  });
+  const topDocument = createFakeDocument({
+    url: "https://www.zhipin.com/web/chat/recommend",
+    bodyText: "BOSS直聘 推荐",
+    detailElements: [],
+    iframes: [createFakeFrame(recommendDocument)]
+  });
+
+  const detected = findActiveCandidateDetail(topDocument, classifyPage("https://www.zhipin.com/web/chat/recommend"));
+  const payload = buildCandidateDetailPayload({
+    page: classifyPage("https://www.zhipin.com/web/chat/recommend"),
+    ...detected
+  });
+
+  assert.equal(detected.detectedBy, "c_resume_selected_card");
+  assert.equal(payload.candidate.profile.displayName, "刘心雨");
+  assert.equal(payload.candidate.detailProfile, undefined);
+  assert.equal(payload.analysis.module, "boss_analysis");
 });
 
 test("candidate detail selected-card fallback does not mix c-resume bottom recommendation noise", () => {
@@ -917,6 +1049,7 @@ test("candidate detail probe emits open once and closes when detail disappears",
   const probe = new CandidateDetailProbe({
     collector,
     sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
     detectActiveDetail: () => activeDetail,
     now: () => now
   });
@@ -939,6 +1072,254 @@ test("candidate detail probe emits open once and closes when detail disappears",
   assert.equal(collector.events[1].payload.openedEventId, "evt_1");
 });
 
+test("candidate detail probe keeps active detail association fresh until close", () => {
+  let now = 1000;
+  let activeDetail = {
+    sourceUrl: "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
+    text: [
+      "刘心雨 刚刚活跃",
+      "23岁 本科 25年应届生",
+      "求职期望 杭州 主播",
+      "工作经历 A",
+      "教育经历 B"
+    ].join("\n"),
+    detectedBy: "c_resume_frame"
+  };
+  const collector = createCollector();
+  const probe = new CandidateDetailProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
+    detectActiveDetail: () => activeDetail,
+    now: () => now
+  });
+
+  probe.scan("poll");
+  now += 45_000;
+  probe.scan("poll");
+
+  const refreshedAssociation = getRecentCandidateDetailAssociation({
+    maxAgeMs: 30_000,
+    now: () => now + 1000
+  });
+  assert.equal(refreshedAssociation?.candidate.profile.displayName, "刘心雨");
+
+  activeDetail = null;
+  now += 1000;
+  probe.scan("poll");
+
+  assert.equal(getRecentCandidateDetailAssociation({
+    maxAgeMs: 30_000,
+    now: () => now
+  }), null);
+});
+
+test("candidate detail opened carries boss analysis marker without standalone analysis event", () => {
+  const activeDetail = {
+    sourceUrl: "https://www.zhipin.com/web/chat/index?geekId=abc123",
+    text: [
+      "吴先生 28岁 求职期望 杭州 主播",
+      "工作经历 A",
+      "教育经历 B",
+      "牛人分析器",
+      "牛人 10小时前 更新过简历，其通常活跃时间为 2-6pm",
+      "查看全部8项分析"
+    ].join("\n"),
+    detectedBy: "detail_url"
+  };
+  const collector = createCollector();
+  const probe = new CandidateDetailProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
+    detectActiveDetail: () => activeDetail,
+    now: () => 1000
+  });
+
+  probe.scan("poll");
+  probe.scan("poll");
+
+  assert.deepEqual(
+    collector.events.map((event) => event.type),
+    [EVENT_TYPES.CANDIDATE_DETAIL_OPENED]
+  );
+  assert.equal(collector.events[0].payload.analysis.module, "boss_analysis");
+  assert.equal(collector.events[0].payload.candidate.detailProfile.bossAnalysis.actionText, "查看全部8项分析");
+});
+
+test("candidate detail probe waits briefly for async boss analysis before opening", () => {
+  let now = 1000;
+  let activeDetail = {
+    sourceUrl: "https://www.zhipin.com/web/chat/index?geekId=abc123",
+    text: "吴先生 28岁 求职期望 杭州 主播 工作经历 A 教育经历 B",
+    detectedBy: "detail_url"
+  };
+  const collector = createCollector();
+  const probe = new CandidateDetailProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    detectActiveDetail: () => activeDetail,
+    now: () => now
+  });
+
+  probe.scan("poll");
+  assert.deepEqual(collector.events, []);
+
+  now = 1800;
+  activeDetail = {
+    ...activeDetail,
+    text: [
+      activeDetail.text,
+      "牛人分析器",
+      "查看全部8项分析"
+    ].join("\n")
+  };
+  probe.scan("poll");
+
+  assert.deepEqual(
+    collector.events.map((event) => event.type),
+    [EVENT_TYPES.CANDIDATE_DETAIL_OPENED]
+  );
+  assert.equal(collector.events[0].payload.analysis.module, "boss_analysis");
+});
+
+test("candidate detail probe emits pending opened after defer window without analysis", () => {
+  let now = 1000;
+  const activeDetail = {
+    sourceUrl: "https://www.zhipin.com/web/chat/index?geekId=abc123",
+    text: "吴先生 28岁 求职期望 杭州 主播 工作经历 A 教育经历 B",
+    detectedBy: "detail_url"
+  };
+  const collector = createCollector();
+  const probe = new CandidateDetailProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    detectActiveDetail: () => activeDetail,
+    now: () => now
+  });
+
+  probe.scan("poll");
+  now = 2600;
+  probe.scan("poll");
+
+  assert.deepEqual(
+    collector.events.map((event) => event.type),
+    [EVENT_TYPES.CANDIDATE_DETAIL_OPENED]
+  );
+  assert.equal(collector.events[0].payload.analysis, undefined);
+});
+
+test("candidate detail probe flushes pending opened before quick close", () => {
+  let now = 1000;
+  let activeDetail = {
+    sourceUrl: "https://www.zhipin.com/web/chat/index?geekId=abc123",
+    text: "吴先生 28岁 求职期望 杭州 主播 工作经历 A 教育经历 B",
+    detectedBy: "detail_url"
+  };
+  const collector = createCollector();
+  const probe = new CandidateDetailProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    detectActiveDetail: () => activeDetail,
+    now: () => now
+  });
+
+  probe.scan("poll");
+  activeDetail = null;
+  now = 1100;
+  probe.scan("poll");
+
+  assert.deepEqual(
+    collector.events.map((event) => event.type),
+    [
+      EVENT_TYPES.CANDIDATE_DETAIL_OPENED,
+      EVENT_TYPES.CANDIDATE_DETAIL_CLOSED
+    ]
+  );
+  assert.equal(collector.events[1].payload.reason, "detail_disappeared");
+  assert.equal(collector.events[1].payload.openedEventId, "evt_1");
+  assert.equal(collector.events[1].payload.durationMs, 100);
+});
+
+test("candidate detail probe flushes pending opened before candidate switch", () => {
+  let now = 1000;
+  let activeDetail = {
+    sourceUrl: "https://www.zhipin.com/web/chat/index?geekId=abc123",
+    text: "吴先生 28岁 求职期望 杭州 主播 工作经历 A 教育经历 B",
+    detectedBy: "detail_url"
+  };
+  const collector = createCollector();
+  const probe = new CandidateDetailProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    detectActiveDetail: () => activeDetail,
+    now: () => now
+  });
+
+  probe.scan("poll");
+  activeDetail = {
+    sourceUrl: "https://www.zhipin.com/web/chat/index?geekId=def456",
+    text: "李女士 26岁 求职期望 杭州 运营 工作经历 A 教育经历 B",
+    detectedBy: "detail_url"
+  };
+  now = 1200;
+  probe.scan("poll");
+
+  assert.deepEqual(
+    collector.events.map((event) => event.type),
+    [
+      EVENT_TYPES.CANDIDATE_DETAIL_OPENED,
+      EVENT_TYPES.CANDIDATE_DETAIL_CLOSED
+    ]
+  );
+  assert.equal(collector.events[0].payload.candidate.stableId, "abc123");
+  assert.equal(collector.events[1].payload.reason, "candidate_switched");
+  assert.equal(collector.events[1].payload.openedEventId, "evt_1");
+
+  now = 2800;
+  probe.scan("poll");
+  assert.equal(collector.events[2].type, EVENT_TYPES.CANDIDATE_DETAIL_OPENED);
+  assert.equal(collector.events[2].payload.candidate.stableId, "def456");
+});
+
+test("candidate detail probe re-emits opened when boss analysis appears later", () => {
+  let activeDetail = {
+    sourceUrl: "https://www.zhipin.com/web/chat/index?geekId=abc123",
+    text: "吴先生 28岁 求职期望 杭州 主播 工作经历 A 教育经历 B",
+    detectedBy: "detail_url"
+  };
+  const collector = createCollector();
+  const probe = new CandidateDetailProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
+    detectActiveDetail: () => activeDetail,
+    now: () => 1000
+  });
+
+  probe.scan("poll");
+  activeDetail = {
+    ...activeDetail,
+    text: [
+      activeDetail.text,
+      "牛人分析器",
+      "受欢迎程度 较高，被沟通次数超过 55% 的同类牛人",
+      "查看全部8项分析"
+    ].join("\n")
+  };
+  probe.scan("poll");
+
+  assert.deepEqual(
+    collector.events.map((event) => event.type),
+    [
+      EVENT_TYPES.CANDIDATE_DETAIL_OPENED,
+      EVENT_TYPES.CANDIDATE_DETAIL_OPENED
+    ]
+  );
+  assert.equal(collector.events[0].payload.analysis, undefined);
+  assert.equal(collector.events[1].payload.analysis.module, "boss_analysis");
+});
+
 test("candidate detail probe closes previous detail before opening switched candidate", () => {
   let activeDetail = {
     sourceUrl: "https://www.zhipin.com/web/chat/index?geekId=abc123",
@@ -949,6 +1330,7 @@ test("candidate detail probe closes previous detail before opening switched cand
   const probe = new CandidateDetailProbe({
     collector,
     sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
     detectActiveDetail: () => activeDetail,
     now: () => 1000
   });
@@ -984,6 +1366,7 @@ test("candidate detail probe does not close and reopen while text-only detail is
   const probe = new CandidateDetailProbe({
     collector,
     sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
     detectActiveDetail: () => activeDetail,
     now: () => now
   });
@@ -1013,6 +1396,7 @@ test("candidate detail probe emits opened again when placeholder detail becomes 
   const probe = new CandidateDetailProbe({
     collector,
     sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
     detectActiveDetail: () => activeDetail,
     now: () => now
   });
@@ -1072,6 +1456,7 @@ test("candidate detail probe inherits exposure association for c-resume detail a
   const probe = new CandidateDetailProbe({
     collector,
     sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
     detectActiveDetail: () => ({
       sourceUrl: "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
       text: "BOSS直聘 页面脚本 wasm 详情加载中 暂无可读候选人文本",
@@ -1128,6 +1513,7 @@ test("candidate detail probe reconnects conflicting recent association to exact 
   const probe = new CandidateDetailProbe({
     collector,
     sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
     getRecentCandidateCardAssociation: () => staleAssociation,
     detectActiveDetail: () => ({
       sourceUrl: "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
@@ -1190,6 +1576,7 @@ test("candidate detail probe prefers recent clicked card over stale selected fal
   const probe = new CandidateDetailProbe({
     collector,
     sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
     getRecentCandidateCardAssociation: () => miyaAssociation,
     detectActiveDetail: () => ({
       sourceUrl: "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
@@ -1242,6 +1629,7 @@ test("candidate detail probe keeps active exposure association after recent clic
   const probe = new CandidateDetailProbe({
     collector,
     sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    openDeferMs: 0,
     detectActiveDetail: () => ({
       sourceUrl: "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
       text: "BOSS直聘 页面脚本 wasm 详情加载中 暂无可读候选人文本",

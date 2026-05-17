@@ -4,22 +4,23 @@
   "version": "0.1.0",
   "description": "Collects factual recruiting workflow logs on BOSS Zhipin pages.",
   "action": {
-    "default_title": "BOSS Observer Debug"
+    "default_title": "BOSS Observer Stats",
+    "default_popup": "debug/index.html"
   },
   "permissions": ["storage", "alarms"],
-  "host_permissions": ["https://www.zhipin.com/*"],
+  "host_permissions": ["https://www.zhipin.com/*", "https://zhipin.com/*"],
   "background": {
     "service_worker": "src/background/service-worker.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["https://www.zhipin.com/*"],
+      "matches": ["https://www.zhipin.com/*", "https://zhipin.com/*"],
       "js": ["src/content/content-runtime.js"],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.zhipin.com/*"],
+      "matches": ["https://www.zhipin.com/*", "https://zhipin.com/*"],
       "js": ["src/content/network-debug-hook.js"],
       "run_at": "document_start",
       "all_frames": true,
@@ -27,7 +28,7 @@
       "world": "MAIN"
     },
     {
-      "matches": ["https://www.zhipin.com/*"],
+      "matches": ["https://www.zhipin.com/*", "https://zhipin.com/*"],
       "js": ["src/content/canvas-text-capture-hook.js"],
       "run_at": "document_start",
       "all_frames": true,
@@ -35,14 +36,14 @@
       "world": "MAIN"
     },
     {
-      "matches": ["https://www.zhipin.com/*"],
+      "matches": ["https://www.zhipin.com/*", "https://zhipin.com/*"],
       "js": ["src/content/canvas-text-capture-runtime.js"],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true
     },
     {
-      "matches": ["https://www.zhipin.com/*"],
+      "matches": ["https://www.zhipin.com/*", "https://zhipin.com/*"],
       "js": ["src/content/network-debug-runtime.js"],
       "run_at": "document_start",
       "all_frames": true,
@@ -52,7 +53,7 @@
   "web_accessible_resources": [
     {
       "resources": ["src/content/*.js", "src/shared/*.js"],
-      "matches": ["https://www.zhipin.com/*"]
+      "matches": ["https://www.zhipin.com/*", "https://zhipin.com/*"]
     }
   ]
 }

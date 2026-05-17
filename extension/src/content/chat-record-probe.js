@@ -7,9 +7,13 @@ import {
 import { buildCandidateId } from "./candidate-card-registry.js";
 import { EVENT_TYPES } from "../shared/event-types.js";
 import { readChatReportState } from "../shared/chat-report-state.js";
+import {
+  getChatSnapshotCoverageLastMessageAt,
+  isIsoTimeAfter
+} from "../shared/chat-snapshot-coverage.js";
 import { toLocalIsoString } from "../shared/time.js";
 
-export const CHAT_REPORT_PROMPT_ATTRIBUTE = "data-boss-observer-chat-report-required";
+const LEGACY_CHAT_REPORT_PROMPT_ATTRIBUTE = "data-boss-observer-chat-report-required";
 export const CHAT_REPORT_PROMPT_TEXT = "今日聊天未上报，请点开补采";
 
 const SCAN_INTERVAL_MS = 2500;
@@ -36,7 +40,6 @@ const MESSAGE_CONTROL_TEXTS = new Set([
   "附件简历",
   "牛人分析器"
 ]);
-let nextChatReportPromptId = 1;
 
 // Responsibilities:
 // - capture already-rendered chat text when a recruiter opens a conversation
@@ -108,19 +111,14 @@ export class ChatRecordProbe {
   }
 
   scanChatListPrompts({ reportState }) {
+    removeLegacyChatReportPrompts(globalThis.document);
     const listItems = findChatListItems(globalThis.document, { now: this.now });
-    const activePromptIds = new Set();
     listItems.forEach((item) => {
       const prompt = buildChatReportPrompt(item, reportState);
       if (!prompt.required) {
-        clearChatReportPrompt(item.element);
         return;
       }
 
-      const promptId = applyChatReportPrompt(item.element);
-      if (promptId) {
-        activePromptIds.add(promptId);
-      }
       const promptKey = buildChatListReportKey(item);
       if (this.promptedReportKeys.has(promptKey)) {
         return;
@@ -134,11 +132,12 @@ export class ChatRecordProbe {
         listItem: {
           lastMessageAt: item.lastMessageAt,
           lastMessageTimeText: item.lastMessageTimeText,
+          displayName: item.displayName,
+          jobTitle: item.jobTitle,
           lastReportedMessageAt: prompt.lastReportedMessageAt
         }
       }));
     });
-    pruneChatReportPromptOverlays(globalThis.document, activePromptIds);
   }
 
   scanActiveChatSnapshot({ source, reportState }) {
@@ -147,19 +146,21 @@ export class ChatRecordProbe {
       return;
     }
 
-    const payload = buildChatSnapshotPayload(panel, {
+    const rawPayload = buildChatSnapshotPayload(panel, {
       source,
       chatPageUrl: this.sessionContext.page.url,
       now: this.now
     });
-    if (!payload || !payload.chat?.messageCount) {
+    if (!rawPayload || !rawPayload.chat?.messageCount) {
       return;
     }
 
+    const manualOpenAttempt = this.consumeManualOpenAttempt(rawPayload);
+    const payload = applyManualOpenCoverageToSnapshot(rawPayload, manualOpenAttempt);
     const conversationKey = payload.chat.conversationKey;
     const snapshotKey = buildSnapshotDedupKey(payload);
     const conversationChanged = Boolean(conversationKey && conversationKey !== this.activeConversationKey);
-    const manuallyOpened = this.consumeManualOpenAttempt(conversationKey);
+    const manuallyOpened = Boolean(manualOpenAttempt);
     const contentChanged = this.lastObservedSnapshotKeyByConversation.get(conversationKey) !== snapshotKey;
     this.lastObservedSnapshotKeyByConversation.set(conversationKey, snapshotKey);
 
@@ -210,30 +211,45 @@ export class ChatRecordProbe {
       return false;
     }
 
-    this.pendingManualOpenKeys.set(candidateId, Date.now() + MANUAL_OPEN_ATTEMPT_TTL_MS);
+    this.pendingManualOpenKeys.set(candidateId, {
+      expiresAt: Date.now() + MANUAL_OPEN_ATTEMPT_TTL_MS,
+      candidateId,
+      displayName: item.displayName || "",
+      jobTitle: item.jobTitle || "",
+      listLastMessageAt: item.lastMessageAt || "",
+      listLastMessageTimeText: item.lastMessageTimeText || ""
+    });
     return true;
   }
 
-  consumeManualOpenAttempt(conversationKey) {
+  consumeManualOpenAttempt(payload) {
+    const conversationKey = payload?.chat?.conversationKey || "";
     if (!conversationKey) {
-      return false;
+      return null;
     }
 
     const now = Date.now();
-    for (const [candidateId, expiresAt] of this.pendingManualOpenKeys.entries()) {
-      if (expiresAt <= now) {
+    for (const [candidateId, attempt] of this.pendingManualOpenKeys.entries()) {
+      if ((attempt?.expiresAt || 0) <= now) {
         this.pendingManualOpenKeys.delete(candidateId);
       }
     }
 
-    const expiresAt = this.pendingManualOpenKeys.get(conversationKey);
-    if (!expiresAt || expiresAt <= now) {
+    const exactAttempt = this.pendingManualOpenKeys.get(conversationKey);
+    if (exactAttempt) {
       this.pendingManualOpenKeys.delete(conversationKey);
-      return false;
+      return exactAttempt;
     }
 
-    this.pendingManualOpenKeys.delete(conversationKey);
-    return true;
+    for (const [candidateId, attempt] of this.pendingManualOpenKeys.entries()) {
+      if (!doesManualOpenAttemptMatchSnapshot(attempt, payload)) {
+        continue;
+      }
+      this.pendingManualOpenKeys.delete(candidateId);
+      return attempt;
+    }
+
+    return null;
   }
 
   async safeScan(source) {
@@ -281,7 +297,11 @@ export function findChatListItemFromTarget(target, { now = () => new Date(), max
 export function parseChatListItemElement(element, { now = () => new Date() } = {}) {
   const rawText = readElementTextExcludingPluginNodes(element);
   const text = normalizeText(rawText);
-  if (!text || text.length > MAX_LIST_ITEM_TEXT_LENGTH || text.includes("沟通职位：") || text.includes("发送")) {
+  if (!text ||
+    text.length > MAX_LIST_ITEM_TEXT_LENGTH ||
+    text.includes("沟通职位：") ||
+    text.includes("沟通的职位-") ||
+    text.includes("发送")) {
     return null;
   }
 
@@ -321,7 +341,7 @@ export function parseChatListItemText(text = "", { now = () => new Date() } = {}
     return null;
   }
   const { displayName, jobTitle, lastMessagePreview } = parseChatListIdentityText(rest);
-  if (!displayName) {
+  if (!isValidChatListDisplayName(displayName)) {
     return null;
   }
 
@@ -358,7 +378,7 @@ function parseChatListItemLines(lines = [], { now = () => new Date() } = {}) {
 
   const rest = header.slice(timeInfo.matchLength).trim();
   const { displayName, jobTitle, lastMessagePreview } = parseChatListIdentityText(rest);
-  if (!displayName) {
+  if (!isValidChatListDisplayName(displayName)) {
     return null;
   }
 
@@ -439,7 +459,7 @@ export function buildChatReportPrompt(item, reportState = {}) {
 
 export function shouldSubmitChatSnapshot(payload, reportState = {}) {
   const candidateId = payload?.candidate?.candidateId;
-  const lastMessageAt = payload?.chat?.lastMessageAt || "";
+  const lastMessageAt = getChatSnapshotCoverageLastMessageAt(payload?.chat);
   if (!candidateId || !lastMessageAt) {
     return false;
   }
@@ -449,15 +469,7 @@ export function shouldSubmitChatSnapshot(payload, reportState = {}) {
     return true;
   }
 
-  const snapshotTime = Date.parse(lastMessageAt);
-  const reportedTime = Date.parse(record.lastReportedMessageAt);
-  if (!Number.isFinite(snapshotTime)) {
-    return false;
-  }
-  if (!Number.isFinite(reportedTime)) {
-    return true;
-  }
-  return snapshotTime > reportedTime;
+  return isIsoTimeAfter(lastMessageAt, record.lastReportedMessageAt);
 }
 
 export function findActiveChatPanel(rootDocument) {
@@ -655,7 +667,7 @@ export function buildChatCandidatePayload({
   const links = readLinks(element);
   const idInfo = resolveCandidateId({ dataset, links });
   const normalizedName = normalizeCandidateName(displayName || extractNameFromText(text));
-  const normalizedJobTitle = normalizeText(jobTitle);
+  const normalizedJobTitle = normalizeChatIdentityJobTitle(jobTitle);
   const fallbackIdentityParts = [normalizedName, normalizedJobTitle].filter(Boolean);
   const fallbackIdentity = fallbackIdentityParts.length > 0
     ? fallbackIdentityParts.join("|")
@@ -668,7 +680,7 @@ export function buildChatCandidatePayload({
         ? "chat_job_fingerprint"
         : "chat_text_fingerprint";
   const stableIdSource = idInfo.source || fallbackSource;
-  const stableId = idInfo.value || `chat_${hashString(`${sourceUrl}\n${fallbackIdentity}`)}`;
+  const stableId = idInfo.value || `chat_${hashString(fallbackIdentity)}`;
   const candidate = {
     candidateId: buildCandidateId({
       stableId,
@@ -840,117 +852,21 @@ function countMediaNodes(panel) {
   });
 }
 
-function applyChatReportPrompt(element) {
-  if (!element?.setAttribute) {
-    return "";
-  }
-  element.setAttribute(CHAT_REPORT_PROMPT_ATTRIBUTE, "true");
-
-  const promptId = ensureChatReportPromptId(element);
-  const existingPrompt = findExistingPrompt(element);
-  if (existingPrompt) {
-    positionChatReportPrompt(element, existingPrompt);
-    return promptId;
-  }
-
-  const doc = element.ownerDocument || globalThis.document;
-  const prompt = doc?.createElement?.("div");
-  if (!prompt) {
-    return promptId;
-  }
-
-  prompt.textContent = CHAT_REPORT_PROMPT_TEXT;
-  prompt.setAttribute("data-boss-observer-chat-report-prompt", "true");
-  prompt.setAttribute("data-boss-observer-chat-report-overlay", "true");
-  prompt.setAttribute(CHAT_REPORT_PROMPT_ID_ATTRIBUTE, promptId);
-  prompt.setAttribute("aria-hidden", "true");
-  prompt.style.cssText = [
-    "position:fixed",
-    "display:block",
-    "pointer-events:none",
-    "z-index:2147483647",
-    "padding:2px 6px",
-    "border-radius:4px",
-    "background:#b91c1c",
-    "color:#fff",
-    "font-size:12px",
-    "font-weight:600",
-    "line-height:16px",
-    "box-shadow:0 1px 4px rgba(0,0,0,.18)",
-    "white-space:nowrap",
-    "overflow:hidden",
-    "text-overflow:ellipsis"
-  ].join(";");
-  (doc?.body || doc?.documentElement)?.appendChild?.(prompt);
-  positionChatReportPrompt(element, prompt);
-  return promptId;
-}
-
-function clearChatReportPrompt(element) {
-  if (!element?.removeAttribute) {
-    return;
-  }
-  const prompt = findExistingPrompt(element);
-  element.removeAttribute(CHAT_REPORT_PROMPT_ATTRIBUTE);
-  element.removeAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE);
-  prompt?.remove?.();
-  removeInlineChatReportPrompts(element);
-}
-
-function findExistingPrompt(element) {
-  const promptId = element?.getAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE);
-  const doc = element?.ownerDocument || globalThis.document;
-  if (promptId && doc?.querySelector) {
-    const overlay = doc.querySelector(`${CHAT_REPORT_PROMPT_OVERLAY_SELECTOR}[${CHAT_REPORT_PROMPT_ID_ATTRIBUTE}="${promptId}"]`);
-    if (overlay) {
-      return overlay;
-    }
-  }
-  return element?.querySelector?.(CHAT_REPORT_PROMPT_NODE_SELECTOR) || null;
-}
-
-function ensureChatReportPromptId(element) {
-  const existingId = element?.getAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE);
-  if (existingId) {
-    return existingId;
-  }
-
-  const promptId = `chat_report_prompt_${nextChatReportPromptId}`;
-  nextChatReportPromptId += 1;
-  element?.setAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE, promptId);
-  return promptId;
-}
-
-function positionChatReportPrompt(element, prompt) {
-  if (!prompt?.style) {
-    return;
-  }
-  const rect = element?.getBoundingClientRect?.();
-  if (!rect || rect.width <= 0 || rect.height <= 0) {
-    prompt.style.display = "none";
-    return;
-  }
-
-  prompt.style.display = "block";
-  prompt.style.left = `${Math.max(0, Math.round(rect.left + 6))}px`;
-  prompt.style.top = `${Math.max(0, Math.round(rect.top + 4))}px`;
-  prompt.style.maxWidth = `${Math.max(96, Math.round(rect.width - 12))}px`;
-}
-
-function pruneChatReportPromptOverlays(rootDocument, activePromptIds = new Set()) {
+function removeLegacyChatReportPrompts(rootDocument) {
   const overlays = rootDocument?.querySelectorAll?.(CHAT_REPORT_PROMPT_OVERLAY_SELECTOR) || [];
   Array.from(overlays).forEach((overlay) => {
-    const promptId = overlay.getAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE);
-    if (!promptId || !activePromptIds.has(promptId)) {
-      overlay.remove?.();
-    }
+    overlay.remove?.();
   });
-}
 
-function removeInlineChatReportPrompts(element) {
-  const prompts = element?.querySelectorAll?.(CHAT_REPORT_PROMPT_NODE_SELECTOR) || [];
+  const prompts = rootDocument?.querySelectorAll?.(CHAT_REPORT_PROMPT_NODE_SELECTOR) || [];
   Array.from(prompts).forEach((prompt) => {
     prompt.remove?.();
+  });
+
+  const marked = rootDocument?.querySelectorAll?.(`[${LEGACY_CHAT_REPORT_PROMPT_ATTRIBUTE}], [${CHAT_REPORT_PROMPT_ID_ATTRIBUTE}]`) || [];
+  Array.from(marked).forEach((element) => {
+    element.removeAttribute?.(LEGACY_CHAT_REPORT_PROMPT_ATTRIBUTE);
+    element.removeAttribute?.(CHAT_REPORT_PROMPT_ID_ATTRIBUTE);
   });
 }
 
@@ -975,8 +891,42 @@ function buildSnapshotDedupKey(payload = {}) {
     payload.candidate?.candidateId || "",
     payload.chat?.messageCount || 0,
     payload.chat?.lastMessageAt || "",
+    payload.chat?.coverageLastMessageAt || "",
+    payload.chat?.listObservedLastMessageAt || "",
     payload.chat?.lastMessageFingerprint || ""
   ].join(":");
+}
+
+function applyManualOpenCoverageToSnapshot(payload = {}, manualOpenAttempt = null) {
+  const listLastMessageAt = manualOpenAttempt?.listLastMessageAt || "";
+  if (!isIsoTimeAfter(listLastMessageAt, payload.chat?.lastMessageAt)) {
+    return payload;
+  }
+
+  return compactPayloadObject({
+    ...payload,
+    chat: {
+      ...payload.chat,
+      coverageLastMessageAt: listLastMessageAt,
+      coverageSource: "manual_chat_list_open",
+      listObservedLastMessageAt: listLastMessageAt,
+      listObservedLastMessageTimeText: manualOpenAttempt.listLastMessageTimeText || "",
+      listObservedJobTitle: manualOpenAttempt.jobTitle || "",
+      hasUncapturedListMessage: true
+    }
+  });
+}
+
+function doesManualOpenAttemptMatchSnapshot(attempt = {}, payload = {}) {
+  const attemptName = normalizeCandidateName(attempt.displayName);
+  const snapshotName = normalizeCandidateName(payload.candidate?.profile?.displayName);
+  if (!attemptName || attemptName !== snapshotName) {
+    return false;
+  }
+
+  const attemptJobTitle = normalizeChatIdentityJobTitle(attempt.jobTitle);
+  const snapshotJobTitle = normalizeChatIdentityJobTitle(payload.chat?.jobTitle);
+  return Boolean(attemptJobTitle && snapshotJobTitle && attemptJobTitle === snapshotJobTitle);
 }
 
 function buildMessageFingerprint({ messageAt = "", direction = "", text = "" } = {}) {
@@ -1008,6 +958,29 @@ function stripLeadingUnreadCount(text = "") {
 
 function normalizeCandidateName(value = "") {
   return normalizeText(value).replace(/\s+/g, "");
+}
+
+function normalizeChatIdentityJobTitle(value = "") {
+  return normalizeText(value)
+    .replace(/^.*?沟通职位：/, "")
+    .replace(/^\d{1,2}月\d{1,2}日\s*沟通的职位-/, "")
+    .replace(/^[^【]{1,20}·(?=【)/, "")
+    .replace(/\s+/g, "");
+}
+
+function isValidChatListDisplayName(value = "") {
+  const normalized = normalizeCandidateName(value);
+  if (!normalized || normalized.length > 24 || /[【】]/.test(normalized)) {
+    return false;
+  }
+  if (normalized.includes("沟通") ||
+    normalized.includes("职位") ||
+    normalized.includes("发送") ||
+    normalized.includes("在线简历") ||
+    normalized.includes("附件简历")) {
+    return false;
+  }
+  return !/^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}|\d{1,2}月\d{1,2}日|今天|昨天|刚刚|\d+分钟前)/.test(normalized);
 }
 
 function extractNameFromText(text = "") {

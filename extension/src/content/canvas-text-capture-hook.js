@@ -192,7 +192,7 @@
   function isCandidateDetailFrameUrl(url) {
     try {
       const parsed = new URL(url);
-      return parsed.hostname === "www.zhipin.com" &&
+      return (parsed.hostname === "zhipin.com" || parsed.hostname === "www.zhipin.com") &&
         (
           parsed.pathname.includes("/web/frame/c-resume") ||
           parsed.pathname.includes("/geek/detail") ||

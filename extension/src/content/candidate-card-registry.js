@@ -7,6 +7,7 @@ const LEGACY_CANDIDATE_CARD_ID_ATTRIBUTE = "data-boss-observer-card-id";
 const associationsByCardId = new Map();
 const cardIdsByExposureKey = new Map();
 let recentInteraction = null;
+let recentDetailInteraction = null;
 
 export function registerCandidateCardAssociation({
   element,
@@ -77,6 +78,10 @@ export function getCandidateCardAssociationFromElement(element) {
   return cardId ? associationsByCardId.get(cardId) || null : null;
 }
 
+export function getCandidateCardAssociationById(candidateId = "") {
+  return candidateId ? associationsByCardId.get(candidateId) || null : null;
+}
+
 export function getCandidateCardAssociationByExposure({
   candidate = {},
   listUrl = "",
@@ -124,6 +129,52 @@ export function recordCandidateCardInteraction(cardId, {
     sourceUrl,
     occurredAtMs: now()
   };
+  rememberRecentDetailInteractionIfNeeded(recentInteraction);
+  return association;
+}
+
+export function rememberCandidateSnapshotAssociation({
+  candidate = {},
+  interactionType = "candidate_snapshot",
+  sourceUrl = "",
+  now = () => Date.now()
+} = {}) {
+  const cardId = candidate?.candidateId || "";
+  if (!cardId) {
+    return null;
+  }
+
+  const existingAssociation = associationsByCardId.get(cardId);
+  const exposureKey = candidate.exposureKey || existingAssociation?.exposureKey || "";
+  const exposedEventId = candidate.exposedEventId || existingAssociation?.exposedEventId || "";
+  const seenAtMs = now();
+  const association = {
+    cardId,
+    exposureKey,
+    exposedEventId,
+    candidate: attachCandidateCardAssociation(
+      mergeCandidateSnapshots(existingAssociation?.candidate, candidate),
+      { cardId, exposureKey, exposedEventId }
+    ),
+    exposure: existingAssociation?.exposure || {},
+    listUrl: existingAssociation?.listUrl || "",
+    listPageType: existingAssociation?.listPageType || "",
+    sourceUrl: sourceUrl || existingAssociation?.sourceUrl || "",
+    lastSeenAtMs: seenAtMs
+  };
+
+  associationsByCardId.set(cardId, association);
+  if (exposureKey) {
+    cardIdsByExposureKey.set(exposureKey, cardId);
+  }
+
+  recentInteraction = {
+    cardId,
+    interactionType,
+    sourceUrl,
+    occurredAtMs: seenAtMs
+  };
+  rememberRecentDetailInteractionIfNeeded(recentInteraction);
   return association;
 }
 
@@ -136,6 +187,48 @@ export function getRecentCandidateCardAssociation({
   }
 
   return associationsByCardId.get(recentInteraction.cardId) || null;
+}
+
+export function getRecentCandidateCardInteraction({
+  maxAgeMs = DEFAULT_RECENT_INTERACTION_TTL_MS,
+  now = () => Date.now()
+} = {}) {
+  if (!recentInteraction || now() - recentInteraction.occurredAtMs > maxAgeMs) {
+    return null;
+  }
+
+  const association = associationsByCardId.get(recentInteraction.cardId);
+  if (!association) {
+    return null;
+  }
+
+  return {
+    ...recentInteraction,
+    association
+  };
+}
+
+export function getRecentCandidateDetailAssociation({
+  maxAgeMs = DEFAULT_RECENT_INTERACTION_TTL_MS,
+  now = () => Date.now()
+} = {}) {
+  if (!recentDetailInteraction || now() - recentDetailInteraction.occurredAtMs > maxAgeMs) {
+    return null;
+  }
+
+  return associationsByCardId.get(recentDetailInteraction.cardId) || null;
+}
+
+export function clearRecentCandidateDetailAssociation({
+  candidateId = ""
+} = {}) {
+  if (!recentDetailInteraction) {
+    return;
+  }
+  if (candidateId && recentDetailInteraction.cardId !== candidateId) {
+    return;
+  }
+  recentDetailInteraction = null;
 }
 
 export function attachCandidateCardAssociation(candidate = {}, association = {}) {
@@ -195,6 +288,7 @@ export function clearCandidateCardRegistry() {
   associationsByCardId.clear();
   cardIdsByExposureKey.clear();
   recentInteraction = null;
+  recentDetailInteraction = null;
 }
 
 export function buildCandidateExposureKey({
@@ -316,6 +410,23 @@ function mergeCandidateProfiles(associationProfile = {}, candidateProfile = {}) 
       associationProfile?.[key];
   });
   return merged;
+}
+
+function mergeCandidateSnapshots(previous = {}, next = {}) {
+  return {
+    ...(previous || {}),
+    ...(next || {}),
+    detailUrl: next?.detailUrl || previous?.detailUrl || "",
+    profile: mergeCandidateProfiles(previous?.profile, next?.profile),
+    detailProfile: next?.detailProfile || previous?.detailProfile
+  };
+}
+
+function rememberRecentDetailInteractionIfNeeded(interaction = null) {
+  if (interaction?.interactionType !== "candidate_detail_opened") {
+    return;
+  }
+  recentDetailInteraction = { ...interaction };
 }
 
 function hasMeaningfulProfileValue(value) {

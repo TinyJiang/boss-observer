@@ -1,4 +1,5 @@
 import { nowLocalIsoString } from "./time.js";
+import { getChatSnapshotCoverageLastMessageAt } from "./chat-snapshot-coverage.js";
 
 export const CHAT_REPORT_STATE_KEY = "bossObserver.chatReportState";
 
@@ -93,7 +94,8 @@ export function normalizeChatReportState(state = {}) {
 function buildSnapshotReportRecord(event, { now }) {
   const candidate = event.payload?.candidate || {};
   const chat = event.payload?.chat || {};
-  if (!candidate.candidateId || !chat.lastMessageAt) {
+  const lastReportedMessageAt = getChatSnapshotCoverageLastMessageAt(chat);
+  if (!candidate.candidateId || !lastReportedMessageAt) {
     return null;
   }
 
@@ -101,7 +103,7 @@ function buildSnapshotReportRecord(event, { now }) {
     candidateId: candidate.candidateId,
     stableId: candidate.stableId,
     stableIdSource: candidate.stableIdSource,
-    lastReportedMessageAt: chat.lastMessageAt,
+    lastReportedMessageAt,
     lastReportedMessageFingerprint: chat.lastMessageFingerprint,
     lastReportedAt: now(),
     lastSnapshotEventId: event.id,

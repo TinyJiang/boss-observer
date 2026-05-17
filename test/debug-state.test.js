@@ -13,8 +13,13 @@ test("debug state starts empty", () => {
   assert.equal(state.recentEvents.length, 0);
   assert.equal(state.lastEvent, null);
   assert.equal(state.lastUploadResult, null);
+  assert.equal(state.collectionGate.status, "operator_unconfigured");
+  assert.equal(state.collectionGate.canCollect, false);
+  assert.equal(state.lastCollectionBlock, null);
   assert.equal(state.networkDebug.enabled, false);
   assert.deepEqual(state.networkDebug.recentRequests, []);
+  assert.equal(state.productionStats.modules.candidate_chat.pendingCount, 0);
+  assert.deepEqual(state.productionStats.unreportedChats, []);
 });
 
 test("debug state initialization clears previous runtime state", () => {
@@ -34,8 +39,12 @@ test("debug state initialization clears previous runtime state", () => {
   assert.equal(nextState.lastUploadResult, null);
   assert.equal(nextState.lastUploadError, null);
   assert.equal(nextState.lastEvent, null);
+  assert.equal(nextState.collectionGate.status, "operator_unconfigured");
+  assert.equal(nextState.lastCollectionBlock, null);
   assert.deepEqual(nextState.recentEvents, []);
   assert.equal(nextState.networkDebug.enabled, false);
+  assert.equal(nextState.productionStats.modules.candidate_chat.producedCount, 0);
+  assert.deepEqual(nextState.productionStats.unreportedChats, []);
   assert.deepEqual(nextState.config, {
     clsRegion: "ap-shanghai",
     clsTopicId: "5407c0a7-3e37-4c45-a204-bf5d40f157a1"

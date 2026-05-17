@@ -194,7 +194,9 @@
   function isBossRequestUrl(url) {
     try {
       const parsed = new URL(url, window.location.href);
-      return parsed.hostname === "www.zhipin.com" || parsed.hostname.endsWith(".zhipin.com");
+      return parsed.hostname === "zhipin.com" ||
+        parsed.hostname === "www.zhipin.com" ||
+        parsed.hostname.endsWith(".zhipin.com");
     } catch {
       return false;
     }

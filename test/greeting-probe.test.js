@@ -11,6 +11,8 @@ import {
 } from "../extension/src/content/greeting-probe.js";
 import {
   clearCandidateCardRegistry,
+  rememberCandidateSnapshotAssociation,
+  recordCandidateCardInteraction,
   registerCandidateCardAssociation
 } from "../extension/src/content/candidate-card-registry.js";
 import { EVENT_TYPES } from "../extension/src/shared/event-types.js";
@@ -162,6 +164,105 @@ test("greeting click target inherits exposure association from the clicked candi
   assert.equal(payload.candidate.exposureKey, association.exposureKey);
   assert.equal(payload.candidate.exposedEventId, "evt_exposed");
   assert.equal(Object.hasOwn(payload, "greeting"), false);
+});
+
+test("greeting click target inherits recent detail candidate when action text has no profile context", () => {
+  let now = 1000;
+  const button = createElement({
+    tagName: "BUTTON",
+    text: "打招呼"
+  });
+  const currentDocument = createDocument({
+    body: button,
+    href: "https://www.zhipin.com/web/frame/recommend/?source=0"
+  });
+  const detailAssociation = rememberCandidateSnapshotAssociation({
+    candidate: {
+      candidateId: "bo_candidate_detail_1",
+      stableId: "card_detail_1",
+      stableIdSource: "text_fingerprint",
+      profile: {
+        displayName: "谢蓉",
+        age: 27,
+        education: "大专",
+        experience: "19年毕业"
+      },
+      detailProfile: {
+        sectionKeys: ["advantage"]
+      }
+    },
+    interactionType: "candidate_detail_opened",
+    sourceUrl: "https://www.zhipin.com/web/frame/c-resume/",
+    now: () => now
+  });
+  const otherAssociation = registerCandidateCardAssociation({
+    element: createElement({}),
+    candidate: {
+      stableId: "other_card",
+      stableIdSource: "text_fingerprint",
+      profile: {
+        displayName: "其他候选人",
+        age: 25
+      }
+    },
+    listUrl: "https://www.zhipin.com/web/chat/recommend",
+    listPageType: "candidate_recommend"
+  });
+  now = 1200;
+  recordCandidateCardInteraction(otherAssociation.cardId, {
+    interactionType: "candidate_card_click",
+    sourceUrl: "https://www.zhipin.com/web/frame/recommend/",
+    now: () => now
+  });
+  now = 1400;
+
+  const target = buildGreetingClickTargetFromElement({
+    actionElement: button,
+    currentDocument,
+    page: classifyPage("https://www.zhipin.com/web/chat/recommend"),
+    now: () => now
+  });
+  const payload = buildGreetingClickPayload({
+    page: classifyPage("https://www.zhipin.com/web/chat/recommend"),
+    ...target
+  });
+
+  assert.equal(target.entry, "candidate_detail");
+  assert.equal(target.candidateAssociation?.cardId, detailAssociation.cardId);
+  assert.equal(payload.candidate.candidateId, "bo_candidate_detail_1");
+  assert.equal(payload.candidate.profile.displayName, "谢蓉");
+  assert.equal(payload.candidate.profile.education, "大专");
+  assert.deepEqual(payload.candidate.detailProfile.sectionKeys, ["advantage"]);
+});
+
+test("greeting click payload hydrates candidate profile from registry when candidate id matches", () => {
+  const association = registerCandidateCardAssociation({
+    element: createElement({}),
+    candidate: {
+      stableId: "geek-9",
+      stableIdSource: "url.geekId",
+      detailUrl: "https://www.zhipin.com/web/chat/index?geekId=geek-9",
+      profile: {
+        displayName: "周先生",
+        age: 29,
+        expectedPosition: "主播"
+      }
+    },
+    listUrl: "https://www.zhipin.com/web/chat/recommend",
+    listPageType: "candidate_recommend",
+    exposedEventId: "evt_exposed"
+  });
+
+  const payload = buildGreetingClickPayload({
+    sourceUrl: "https://www.zhipin.com/web/chat/index?geekId=geek-9",
+    entry: "candidate_list",
+    text: "打招呼"
+  });
+
+  assert.equal(payload.candidate.candidateId, association.cardId);
+  assert.equal(payload.candidate.exposedEventId, "evt_exposed");
+  assert.equal(payload.candidate.profile.displayName, "周先生");
+  assert.equal(payload.candidate.profile.expectedPosition, "主播");
 });
 
 test("greeting result text classifies success and failure signals", () => {

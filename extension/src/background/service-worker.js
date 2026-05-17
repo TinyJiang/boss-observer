@@ -1,4 +1,4 @@
-import { hasUploadTarget, readConfig } from "../shared/config.js";
+import { hasUploadTarget, readConfig, writeConfig } from "../shared/config.js";
 import {
   CHAT_REPORT_STATE_KEY,
   createEmptyChatReportState,
@@ -20,12 +20,25 @@ import {
   clearNetworkDebugRequests,
   setNetworkDebugEnabled
 } from "../shared/network-debug.js";
+import {
+  attachOperatorToEvent,
+  evaluateCollectionGate,
+  normalizeBossAccountObservation
+} from "../shared/operator-identity.js";
+import {
+  recordProducedEvent,
+  recordUploadedEvents,
+  recordUploadFailedEvents,
+  syncPendingEvents
+} from "../shared/production-stats.js";
 import { createSequentialTaskRunner } from "../shared/sequential-task-runner.js";
 import { QUEUE_KEY, StorageQueue } from "../shared/storage-queue.js";
 import { nowLocalIsoString } from "../shared/time.js";
+import { shouldFlushImmediately } from "../shared/upload-policy.js";
 
 let flushing = false;
 const eventHandlingRunner = createSequentialTaskRunner();
+const BOSS_TAB_URL_PATTERNS = ["https://www.zhipin.com/*", "https://zhipin.com/*"];
 
 chrome.runtime.onInstalled.addListener(async () => {
   const config = await readConfig();
@@ -38,11 +51,6 @@ chrome.runtime.onInstalled.addListener(async () => {
     [CHAT_REPORT_STATE_KEY]: storedChatReportState[CHAT_REPORT_STATE_KEY] || createEmptyChatReportState(),
     [DEBUG_STATE_KEY]: createInitializedDebugState(config)
   });
-});
-
-chrome.action.onClicked.addListener(async () => {
-  const targetUrl = chrome.runtime.getURL("debug/index.html");
-  await chrome.tabs.create({ url: targetUrl });
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -61,6 +69,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.kind === "bossObserver.networkDebug.request") {
     eventHandlingRunner.run(() => handleNetworkDebugRequest(message.request))
       .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+
+    return true;
+  }
+
+  if (message.kind === "bossObserver.bossAccountObserved") {
+    eventHandlingRunner.run(() => handleBossAccountObserved(message.account, _sender))
+      .then((state) => sendResponse({ ok: true, collectionGate: state.collectionGate }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+
+    return true;
+  }
+
+  if (message.kind === "bossObserver.config.update") {
+    eventHandlingRunner.run(() => handleConfigUpdate(message.patch || {}))
+      .then((state) => sendResponse({ ok: true, config: state.config, collectionGate: state.collectionGate }))
       .catch((error) => sendResponse({ ok: false, error: String(error) }));
 
     return true;
@@ -97,23 +121,36 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 async function handleEvent(event, sender) {
   const config = await readConfig();
+  const currentState = await readDebugState();
+  const collectionGate = evaluateCollectionGate(config, currentState.collectionGate?.bossAccount);
+  if (!collectionGate.canCollect) {
+    await recordBlockedCollectionEvent({ event, sender, config, collectionGate });
+    return;
+  }
+
   const queue = new StorageQueue({ maxSize: config.maxQueueSize });
-  const enrichedEvent = {
+  const enrichedEvent = attachOperatorToEvent({
     ...event,
     sourceTabId: sender?.tab?.id ?? null,
     sourceWindowId: sender?.tab?.windowId ?? null,
     sourceTabUrl: sender?.tab?.url ?? null
-  };
+  }, collectionGate);
   const { droppedCount } = await queue.enqueue(enrichedEvent);
   await updateDebugState(async (current) => {
     const queued = await queue.readAll();
+    const productionStats = syncPendingEvents(
+      recordProducedEvent(current.productionStats, enrichedEvent),
+      queued.map((item) => item.event)
+    );
     return {
       ...current,
       updatedAt: nowLocalIsoString(),
       config,
+      collectionGate,
       queueSize: queued.length,
       lastEvent: enrichedEvent,
-      recentEvents: [enrichedEvent, ...current.recentEvents].slice(0, 50)
+      recentEvents: [enrichedEvent, ...current.recentEvents].slice(0, 50),
+      productionStats
     };
   });
 
@@ -131,6 +168,67 @@ async function handleEvent(event, sender) {
       }
     }
   }
+}
+
+async function handleBossAccountObserved(account, sender) {
+  const config = await readConfig();
+  const bossAccount = normalizeBossAccountObservation({
+    ...account,
+    sourceTabId: sender?.tab?.id ?? null,
+    sourceWindowId: sender?.tab?.windowId ?? null,
+    pageUrl: account?.pageUrl || sender?.tab?.url || ""
+  });
+  const collectionGate = evaluateCollectionGate(config, bossAccount);
+  let nextState = null;
+  await updateDebugState(async (current) => {
+    nextState = {
+      ...current,
+      updatedAt: nowLocalIsoString(),
+      config,
+      collectionGate
+    };
+    return nextState;
+  });
+  return nextState;
+}
+
+async function handleConfigUpdate(patch) {
+  const config = await writeConfig({
+    operatorId: patch.operatorId,
+    accountName: patch.accountName
+  });
+  let nextState = null;
+  await updateDebugState(async (current) => {
+    const collectionGate = evaluateCollectionGate(config, current.collectionGate?.bossAccount);
+    nextState = {
+      ...current,
+      updatedAt: nowLocalIsoString(),
+      config,
+      collectionGate
+    };
+    return nextState;
+  });
+  return nextState;
+}
+
+async function recordBlockedCollectionEvent({ event, sender, config, collectionGate }) {
+  await updateDebugState(async (current) => ({
+    ...current,
+    updatedAt: nowLocalIsoString(),
+    config,
+    collectionGate,
+    lastCollectionBlock: {
+      blockedAt: nowLocalIsoString(),
+      reason: collectionGate.status,
+      severity: collectionGate.severity,
+      message: collectionGate.message,
+      eventId: event?.id || "",
+      eventType: event?.type || "",
+      sourceTabId: sender?.tab?.id ?? null,
+      sourceWindowId: sender?.tab?.windowId ?? null,
+      sourceTabUrl: sender?.tab?.url ?? null
+    }
+  }));
 }
 
 async function handleNetworkDebugRequest(request) {
@@ -171,7 +269,12 @@ async function handleNetworkDebugCommand(command) {
 }
 
 async function broadcastNetworkDebugControl(networkDebug) {
-  const tabs = await chrome.tabs.query({ url: "https://www.zhipin.com/*" });
+  const matchedTabs = await Promise.all(
+    BOSS_TAB_URL_PATTERNS.map((url) => chrome.tabs.query({ url }))
+  );
+  const tabs = Array.from(
+    new Map(matchedTabs.flat().map((tab) => [tab.id, tab])).values()
+  );
   await Promise.all(tabs.map((tab) => new Promise((resolve) => {
     chrome.tabs.sendMessage(tab.id, {
       kind: "bossObserver.networkDebug.control",
@@ -207,29 +310,48 @@ async function flushQueue() {
     const uploadResult = await postBatch(config, batch.map((item) => item.event));
     await updateChatReportStateFromEvents(batch.map((item) => item.event));
     await queue.remove(batch.map((item) => item.id));
-    await updateDebugState(async (current) => ({
-      ...current,
-      updatedAt: nowLocalIsoString(),
-      config,
-      lastFlushAt: nowLocalIsoString(),
-      lastUploadResult: uploadResult,
-      lastUploadError: null,
-      queueSize: (await queue.readAll()).length
-    }));
+    await updateDebugState(async (current) => {
+      const queued = await queue.readAll();
+      const productionStats = syncPendingEvents(
+        recordUploadedEvents(current.productionStats, batch.map((item) => item.event), {
+          uploadedAt: uploadResult.uploadedAt
+        }),
+        queued.map((item) => item.event)
+      );
+      return {
+        ...current,
+        updatedAt: nowLocalIsoString(),
+        config,
+        lastFlushAt: nowLocalIsoString(),
+        lastUploadResult: uploadResult,
+        lastUploadError: null,
+        queueSize: queued.length,
+        productionStats
+      };
+    });
   } catch (error) {
     const retryError = await recordFailedBatchRetry(queue, batch);
-    await updateDebugState(async (current) => ({
-      ...current,
-      updatedAt: nowLocalIsoString(),
-      lastUploadError: {
-        message: error instanceof Error ? error.message : String(error),
-        occurredAt: nowLocalIsoString(),
-        batchSize: batch.length,
-        retryError: retryError ? formatError(retryError) : null
-      },
-      lastUploadResult: null,
-      queueSize: queue ? (await queue.readAll()).length : current.queueSize
-    }));
+    await updateDebugState(async (current) => {
+      const queued = queue ? await queue.readAll() : [];
+      const failedAt = nowLocalIsoString();
+      const productionStats = syncPendingEvents(
+        recordUploadFailedEvents(current.productionStats, batch.map((item) => item.event), { failedAt }),
+        queued.map((item) => item.event)
+      );
+      return {
+        ...current,
+        updatedAt: nowLocalIsoString(),
+        lastUploadError: {
+          message: error instanceof Error ? error.message : String(error),
+          occurredAt: failedAt,
+          batchSize: batch.length,
+          retryError: retryError ? formatError(retryError) : null
+        },
+        lastUploadResult: null,
+        queueSize: queue ? queued.length : current.queueSize,
+        productionStats
+      };
+    });
     console.warn("[BOSS Observer] upload failed", error);
   } finally {
     flushing = false;
@@ -254,11 +376,6 @@ function formatError(error) {
   return {
     message: error instanceof Error ? error.message : String(error)
   };
-}
-
-function shouldFlushImmediately(event = {}) {
-  return event.type === EVENT_TYPES.CANDIDATE_CHAT_SNAPSHOT_CAPTURED ||
-    event.type === EVENT_TYPES.CANDIDATE_CHAT_WECHAT_CAPTURED;
 }
 
 async function postBatch(config, events) {

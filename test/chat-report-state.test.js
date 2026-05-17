@@ -65,6 +65,24 @@ test("chat report state ignores older snapshots for the same candidate", () => {
   assert.equal(state.candidates.candidate_1.lastReportedMessageAt, "2026-05-15T10:00:00.000+08:00");
 });
 
+test("chat report state advances from snapshot coverage time when list observed a newer message", () => {
+  const state = applyChatReportEvents({}, [
+    createSnapshotEvent({
+      id: "evt_snapshot_coverage",
+      candidateId: "candidate_1",
+      lastMessageAt: "2026-05-15T12:44:00.000+08:00",
+      coverageLastMessageAt: "2026-05-15T12:45:00.000+08:00",
+      lastMessageFingerprint: "msg_1244",
+      messageCount: 1
+    })
+  ], {
+    now: () => "2026-05-15T14:10:00.000+08:00"
+  });
+
+  assert.equal(state.candidates.candidate_1.lastReportedMessageAt, "2026-05-15T12:45:00.000+08:00");
+  assert.equal(state.candidates.candidate_1.lastReportedMessageFingerprint, "msg_1244");
+});
+
 test("chat report state merges wechat accounts from snapshot and wechat events", () => {
   const state = applyChatReportEvents({}, [
     createSnapshotEvent({
@@ -114,6 +132,7 @@ function createSnapshotEvent({
   id = "evt_snapshot",
   candidateId,
   lastMessageAt,
+  coverageLastMessageAt = "",
   lastMessageFingerprint = "msg_last",
   messageCount = 1,
   wechatAccounts = []
@@ -129,6 +148,7 @@ function createSnapshotEvent({
       },
       chat: {
         lastMessageAt,
+        coverageLastMessageAt,
         lastMessageFingerprint,
         messageCount,
         wechat: wechatAccounts.length ? { accounts: wechatAccounts } : undefined

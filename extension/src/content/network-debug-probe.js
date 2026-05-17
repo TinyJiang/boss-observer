@@ -164,7 +164,9 @@ function postControlToWindow(targetWindow, message) {
 function isTrustedBossOrigin(origin) {
   try {
     const parsed = new URL(origin);
-    return parsed.hostname === "www.zhipin.com" || parsed.hostname.endsWith(".zhipin.com");
+    return parsed.hostname === "zhipin.com" ||
+      parsed.hostname === "www.zhipin.com" ||
+      parsed.hostname.endsWith(".zhipin.com");
   } catch {
     return false;
   }

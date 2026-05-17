@@ -1,224 +1,240 @@
 import { readDebugState } from "../src/shared/debug-state.js";
+import { readConfig } from "../src/shared/config.js";
 import {
-  filterNetworkDebugRequests,
-  NETWORK_DEBUG_REQUEST_CATEGORY_ALL,
-  NETWORK_DEBUG_REQUEST_CATEGORY_OPTIONS
-} from "../src/shared/network-debug.js";
+  buildDiagnosticProfile,
+  buildDiagnosticProfileFilename
+} from "../src/shared/diagnostic-profile.js";
+import { evaluateCollectionGate } from "../src/shared/operator-identity.js";
+import {
+  getModuleHealthStatus,
+  MODULE_REPORT_DEFINITIONS
+} from "../src/shared/production-stats.js";
 
-const updatedAtEl = document.getElementById("updatedAt");
-const summaryEl = document.getElementById("summary");
-const lastEventEl = document.getElementById("lastEvent");
-const recentEventsEl = document.getElementById("recentEvents");
-const lastUploadErrorEl = document.getElementById("lastUploadError");
-const lastUploadResultEl = document.getElementById("lastUploadResult");
-const networkRequestsEl = document.getElementById("networkRequests");
-const rawStateEl = document.getElementById("rawState");
+const overallStatusEl = document.getElementById("overallStatus");
+const moduleStatusEl = document.getElementById("moduleStatus");
+const unreportedChatsEl = document.getElementById("unreportedChats");
+const downloadProfileButton = document.getElementById("downloadProfileButton");
+const openDebugButton = document.getElementById("openDebugButton");
 const refreshButton = document.getElementById("refreshButton");
-const startNetworkButton = document.getElementById("startNetworkButton");
-const stopNetworkButton = document.getElementById("stopNetworkButton");
-const clearNetworkButton = document.getElementById("clearNetworkButton");
-const networkCaptureStatusEl = document.getElementById("networkCaptureStatus");
-const networkRequestFilterEl = document.getElementById("networkRequestFilter");
-const networkRequestFilterSummaryEl = document.getElementById("networkRequestFilterSummary");
+const operatorIdInput = document.getElementById("operatorIdInput");
+const accountNameInput = document.getElementById("accountNameInput");
+const saveOperatorButton = document.getElementById("saveOperatorButton");
+const operatorSaveStatusEl = document.getElementById("operatorSaveStatus");
+const collectionGateStatusEl = document.getElementById("collectionGateStatus");
 
-let lastRenderedState = null;
+const MODULE_LABELS = {
+  page_session: "页面记录",
+  job_context: "职位记录",
+  candidate_filter: "筛选记录",
+  candidate_list: "候选人列表",
+  candidate_detail: "候选人详情",
+  candidate_greeting: "打招呼记录",
+  candidate_chat: "聊天记录",
+  queue_upload: "数据同步"
+};
 
-populateNetworkRequestFilter();
+let operatorFormDirty = false;
+
+downloadProfileButton.addEventListener("click", () => downloadProfile());
+openDebugButton.addEventListener("click", () => openDebugPage());
 refreshButton.addEventListener("click", () => render());
-startNetworkButton.addEventListener("click", () => runNetworkCommand("start"));
-stopNetworkButton.addEventListener("click", () => runNetworkCommand("stop"));
-clearNetworkButton.addEventListener("click", () => runNetworkCommand("clear"));
-networkRequestFilterEl.addEventListener("change", () => render());
-document.addEventListener("click", (event) => {
-  const button = event.target.closest?.("[data-copy-panel]");
-  if (button) {
-    copyPanel(button).catch(() => {});
-  }
+saveOperatorButton.addEventListener("click", () => saveOperatorConfig());
+operatorIdInput.addEventListener("input", () => {
+  operatorFormDirty = true;
+});
+accountNameInput.addEventListener("input", () => {
+  operatorFormDirty = true;
 });
 
 render();
-setInterval(() => render(), 2000);
+setInterval(() => render(), 3000);
 
 async function render() {
-  const state = await readDebugState();
-  lastRenderedState = state;
-  updatedAtEl.textContent = state.updatedAt
-    ? `Last updated ${new Date(state.updatedAt).toLocaleString()}`
-    : "No data yet.";
-
-  summaryEl.innerHTML = "";
-  appendRow(summaryEl, "Queue size", String(state.queueSize ?? 0));
-  appendRow(summaryEl, "Last flush", state.lastFlushAt ? new Date(state.lastFlushAt).toLocaleString() : "Never");
-  appendRow(summaryEl, "Config enabled", state.config?.enabled ? "yes" : "no");
-  appendRow(summaryEl, "Upload endpoint", state.config?.uploadEndpoint || "(not set)");
-  appendRow(summaryEl, "Debug mode", state.config?.debug ? "on" : "off");
-  appendRow(summaryEl, "Batch size", String(state.config?.uploadBatchSize ?? 0));
-  appendRow(summaryEl, "Queue cap", String(state.config?.maxQueueSize ?? 0));
-  appendRow(summaryEl, "Source tab", formatSourceTab(state.lastEvent));
-  appendRow(summaryEl, "Network capture", state.networkDebug?.enabled ? "on" : "off");
-  appendRow(summaryEl, "Network requests", String(state.networkDebug?.requestCount ?? 0));
-  renderNetworkCaptureControls(state.networkDebug);
-
-  lastEventEl.textContent = state.lastEvent ? JSON.stringify(state.lastEvent, null, 2) : "No event yet.";
-
-  recentEventsEl.innerHTML = "";
-  for (const event of state.recentEvents || []) {
-    const li = document.createElement("li");
-    li.innerHTML = `
-      <div><strong>${escapeHtml(event.type)}</strong> <span>${escapeHtml(event.occurredAt || "")}</span></div>
-      <div style="color:#6b7280">${escapeHtml(event.context?.pageType || "unknown")} | ${escapeHtml(event.context?.pageUrl || "")}</div>
-    `;
-    recentEventsEl.appendChild(li);
-  }
-
-  lastUploadErrorEl.textContent = state.lastUploadError
-    ? JSON.stringify(state.lastUploadError, null, 2)
-    : "None.";
-
-  lastUploadResultEl.textContent = state.lastUploadResult
-    ? JSON.stringify(state.lastUploadResult, null, 2)
-    : "None.";
-
-  const networkRequests = state.networkDebug?.recentRequests || [];
-  const filteredNetworkRequests = getFilteredNetworkRequests(state);
-  networkRequestFilterSummaryEl.textContent = `Showing ${filteredNetworkRequests.length} of ${networkRequests.length}`;
-  networkRequestsEl.textContent = filteredNetworkRequests.length
-    ? JSON.stringify(filteredNetworkRequests, null, 2)
-    : "No captured requests.";
-
-  rawStateEl.textContent = JSON.stringify(state, null, 2);
-}
-
-async function runNetworkCommand(command) {
-  await chrome.runtime.sendMessage({
-    kind: "bossObserver.networkDebug.command",
-    command
+  const [state, config] = await Promise.all([
+    readDebugState(),
+    readConfig()
+  ]);
+  const collectionGate = evaluateCollectionGate(config, state.collectionGate?.bossAccount);
+  const productionStats = state.productionStats || {};
+  const modules = productionStats.modules || {};
+  const unreportedChats = productionStats.unreportedChats || [];
+  const rows = buildStatusRows({
+    modules,
+    unreportedChats,
+    uploadEnabled: config.uploadEnabled === true,
+    hasUploadError: Boolean(state.lastUploadError)
   });
-  await render();
+  const overallStatus = !collectionGate.canCollect || rows.some((row) => row.status === "problem")
+    ? "problem"
+    : "ok";
+
+  renderOperatorConfig(config, collectionGate);
+  renderOverallStatus(overallStatus);
+  renderStatusRows(rows);
+  renderUnreportedChats(unreportedChats);
 }
 
-async function copyPanel(button) {
-  const panel = button.dataset.copyPanel;
-  const text = buildCopyText(panel, lastRenderedState || await readDebugState());
+async function saveOperatorConfig() {
+  const originalText = saveOperatorButton.textContent;
+  saveOperatorButton.disabled = true;
+  saveOperatorButton.textContent = "保存中";
+  operatorSaveStatusEl.textContent = "";
   try {
-    await writeClipboardText(text);
-    showCopyStatus(button, "已复制", "copied");
-  } catch {
-    showCopyStatus(button, "复制失败", "failed");
+    const response = await sendRuntimeMessage({
+      kind: "bossObserver.config.update",
+      patch: {
+        operatorId: operatorIdInput.value,
+        accountName: accountNameInput.value
+      }
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || "保存失败");
+    }
+    operatorFormDirty = false;
+    operatorSaveStatusEl.textContent = "已保存";
+    await render();
+  } catch (error) {
+    operatorSaveStatusEl.textContent = "保存失败";
+    console.warn("[BOSS Observer] operator config save failed", error);
+  } finally {
+    saveOperatorButton.disabled = false;
+    saveOperatorButton.textContent = originalText;
+    window.setTimeout(() => {
+      operatorSaveStatusEl.textContent = "";
+    }, 1800);
   }
 }
 
-function buildCopyText(panel, state) {
-  if (panel === "summary") {
-    return buildSummaryCopyText(state);
+async function downloadProfile() {
+  const originalText = downloadProfileButton.textContent;
+  try {
+    const state = await readDebugState();
+    const profile = buildDiagnosticProfile(state, {
+      manifest: chrome.runtime.getManifest()
+    });
+    const blobUrl = URL.createObjectURL(new Blob([
+      `${JSON.stringify(profile, null, 2)}\n`
+    ], {
+      type: "application/json"
+    }));
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = buildDiagnosticProfileFilename(profile);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    downloadProfileButton.textContent = "已下载";
+  } catch (error) {
+    downloadProfileButton.textContent = "下载失败";
+    console.warn("[BOSS Observer] diagnostic profile download failed", error);
+  } finally {
+    window.setTimeout(() => {
+      downloadProfileButton.textContent = originalText;
+    }, 1800);
   }
-  if (panel === "lastEvent") {
-    return formatJsonOrFallback(state.lastEvent, "No event yet.");
-  }
-  if (panel === "recentEvents") {
-    return formatJsonOrFallback(state.recentEvents || [], "[]");
-  }
-  if (panel === "networkRequests") {
-    return formatJsonOrFallback(getFilteredNetworkRequests(state), "[]");
-  }
-  if (panel === "lastUploadError") {
-    return formatJsonOrFallback(state.lastUploadError, "None.");
-  }
-  if (panel === "lastUploadResult") {
-    return formatJsonOrFallback(state.lastUploadResult, "None.");
-  }
-  if (panel === "rawState") {
-    return JSON.stringify(state, null, 2);
-  }
-  return "";
 }
 
-function buildSummaryCopyText(state) {
-  return [
-    ["Queue size", String(state.queueSize ?? 0)],
-    ["Last flush", state.lastFlushAt ? new Date(state.lastFlushAt).toLocaleString() : "Never"],
-    ["Config enabled", state.config?.enabled ? "yes" : "no"],
-    ["Upload endpoint", state.config?.uploadEndpoint || "(not set)"],
-    ["Debug mode", state.config?.debug ? "on" : "off"],
-    ["Batch size", String(state.config?.uploadBatchSize ?? 0)],
-    ["Queue cap", String(state.config?.maxQueueSize ?? 0)],
-    ["Source tab", formatSourceTab(state.lastEvent)],
-    ["Network capture", state.networkDebug?.enabled ? "on" : "off"],
-    ["Network requests", String(state.networkDebug?.requestCount ?? 0)]
-  ].map(([key, value]) => `${key}: ${value}`).join("\n");
+function openDebugPage() {
+  chrome.tabs.create({
+    url: chrome.runtime.getURL("debug-raw/index.html")
+  });
 }
 
-function formatJsonOrFallback(value, fallback) {
-  return value ? JSON.stringify(value, null, 2) : fallback;
+function renderOperatorConfig(config, collectionGate) {
+  if (!operatorFormDirty) {
+    operatorIdInput.value = config.operatorId || "";
+    accountNameInput.value = config.accountName || "";
+  }
+
+  collectionGateStatusEl.className = `gate-status ${collectionGate.canCollect ? "ok" : "problem"}`;
+  collectionGateStatusEl.textContent = buildCollectionGateText(collectionGate);
 }
 
-async function writeClipboardText(text) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
+function buildCollectionGateText(collectionGate) {
+  const operatorName = collectionGate.operator?.accountName || "未配置";
+  const bossName = collectionGate.bossAccount?.accountName || "未检测到";
+  if (collectionGate.status === "ok") {
+    return `账号已匹配：${operatorName}`;
+  }
+  if (collectionGate.status === "boss_account_mismatch") {
+    return `严重：账号姓名不一致，配置为 ${operatorName}，BOSS 页面为 ${bossName}，采集已停止`;
+  }
+  if (collectionGate.status === "boss_account_unknown") {
+    return "严重：未检测到 BOSS 页面展示的账号姓名，采集已停止";
+  }
+  return "严重：请先配置操作员ID和账号姓名，采集已停止";
+}
+
+function buildStatusRows({ modules = {}, unreportedChats = [], uploadEnabled = false, hasUploadError = false } = {}) {
+  return MODULE_REPORT_DEFINITIONS.map((definition) => {
+    const status = getRowStatus({
+      definition,
+      moduleStats: modules[definition.id] || {},
+      unreportedChats,
+      uploadEnabled,
+      hasUploadError
+    });
+    return {
+      id: definition.id,
+      label: MODULE_LABELS[definition.id] || definition.label,
+      status
+    };
+  });
+}
+
+function getRowStatus({ definition, moduleStats, unreportedChats, uploadEnabled, hasUploadError }) {
+  if (definition.id === "queue_upload" && (!uploadEnabled || hasUploadError)) {
+    return "problem";
+  }
+  return getModuleHealthStatus(moduleStats, {
+    hasUnreportedChats: definition.id === "candidate_chat" && unreportedChats.length > 0
+  });
+}
+
+function renderOverallStatus(status) {
+  overallStatusEl.className = `overall ${status}`;
+  overallStatusEl.textContent = status === "ok" ? "正常" : "需要处理";
+}
+
+function renderStatusRows(rows) {
+  moduleStatusEl.innerHTML = "";
+  rows.forEach((row) => {
+    const rowEl = document.createElement("div");
+    rowEl.className = `status-row ${row.status}`;
+    rowEl.innerHTML = `
+      <div class="row-main">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="label">${escapeHtml(row.label)}</span>
+      </div>
+      <span class="state-text">${row.status === "ok" ? "正常" : "需处理"}</span>
+    `;
+    moduleStatusEl.appendChild(rowEl);
+  });
+}
+
+function renderUnreportedChats(chats) {
+  unreportedChatsEl.innerHTML = "";
+  if (!chats.length) {
+    const row = document.createElement("div");
+    row.className = "chat-row ok";
+    row.innerHTML = `
+      <span class="dot" aria-hidden="true"></span>
+      <span class="label">暂无需要补采的聊天</span>
+    `;
+    unreportedChatsEl.appendChild(row);
     return;
   }
 
-  fallbackCopyText(text);
-}
-
-function fallbackCopyText(text) {
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) {
-    throw new Error("Clipboard write failed");
-  }
-}
-
-function showCopyStatus(button, label, className) {
-  const originalLabel = button.dataset.originalLabel || button.textContent;
-  button.dataset.originalLabel = originalLabel;
-  button.textContent = label;
-  button.classList.remove("copied", "failed");
-  button.classList.add(className);
-  window.setTimeout(() => {
-    button.textContent = originalLabel;
-    button.classList.remove("copied", "failed");
-  }, 1200);
-}
-
-function renderNetworkCaptureControls(networkDebug = {}) {
-  const enabled = networkDebug.enabled === true;
-  startNetworkButton.disabled = enabled;
-  stopNetworkButton.disabled = !enabled;
-  networkCaptureStatusEl.textContent = enabled ? "Network Capture: ON" : "Network Capture: OFF";
-  networkCaptureStatusEl.className = `capture-status ${enabled ? "on" : "off"}`;
-}
-
-function populateNetworkRequestFilter() {
-  networkRequestFilterEl.innerHTML = "";
-  for (const option of NETWORK_DEBUG_REQUEST_CATEGORY_OPTIONS) {
-    const optionEl = document.createElement("option");
-    optionEl.value = option.value;
-    optionEl.textContent = option.label;
-    networkRequestFilterEl.appendChild(optionEl);
-  }
-  networkRequestFilterEl.value = NETWORK_DEBUG_REQUEST_CATEGORY_ALL;
-}
-
-function getFilteredNetworkRequests(state) {
-  return filterNetworkDebugRequests(
-    state.networkDebug?.recentRequests || [],
-    networkRequestFilterEl.value || NETWORK_DEBUG_REQUEST_CATEGORY_ALL
-  );
-}
-
-function appendRow(container, key, value) {
-  const row = document.createElement("div");
-  row.className = "row";
-  row.innerHTML = `<div class="key">${escapeHtml(key)}</div><div class="value">${escapeHtml(value)}</div>`;
-  container.appendChild(row);
+  chats.forEach((chat) => {
+    const row = document.createElement("div");
+    row.className = "chat-row problem";
+    row.innerHTML = `
+      <span class="dot" aria-hidden="true"></span>
+      <span class="label">${escapeHtml(chat.displayName || "未识别候选人")}</span>
+    `;
+    unreportedChatsEl.appendChild(row);
+  });
 }
 
 function escapeHtml(value) {
@@ -229,13 +245,15 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function formatSourceTab(event) {
-  if (!event) {
-    return "(none)";
-  }
-
-  const tabId = event.sourceTabId ?? "n/a";
-  const windowId = event.sourceWindowId ?? "n/a";
-  const title = event.context?.pageTitle || "untitled";
-  return `tab ${tabId}, window ${windowId}, ${title}`;
+function sendRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(response);
+    });
+  });
 }

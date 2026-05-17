@@ -8,8 +8,9 @@ import {
 } from "./candidate-card.js";
 import { findCandidateCardAncestor } from "./candidate-list-probe.js";
 import {
+  getCandidateCardAssociationById,
   getCandidateCardAssociationFromElement,
-  getRecentCandidateCardAssociation,
+  getRecentCandidateDetailAssociation,
   mergeCandidateSnapshotWithAssociation,
   recordCandidateCardInteraction
 } from "./candidate-card-registry.js";
@@ -191,7 +192,8 @@ export class GreetingProbe {
     const target = buildGreetingClickTargetFromElement({
       actionElement,
       currentDocument,
-      page: this.sessionContext.page
+      page: this.sessionContext.page,
+      now: this.now
     });
     this.recordGreetingClickTarget(target);
   }
@@ -259,14 +261,18 @@ function buildGreetingClickAttemptPayload({
     links,
     sourceUrl
   }), candidateAssociation);
-  const targetKey = buildGreetingTargetKey({ candidate, sourceUrl, entry });
+  const hydratedCandidate = mergeCandidateSnapshotWithAssociation(
+    candidate,
+    getCandidateCardAssociationById(candidate.candidateId)
+  );
+  const targetKey = buildGreetingTargetKey({ candidate: hydratedCandidate, sourceUrl, entry });
 
   return {
     targetKey,
     payload: compactPayloadObject({
       source,
       entry,
-      candidate: compactCandidateSnapshotPayload(candidate)
+      candidate: compactCandidateSnapshotPayload(hydratedCandidate)
     })
   };
 }
@@ -362,8 +368,8 @@ export function detectGreetingOutcome(attempt, documents = []) {
   };
 }
 
-export function buildGreetingClickTargetFromElement({ actionElement, currentDocument, page }) {
-  const context = resolveGreetingContextElement({ actionElement, currentDocument, page });
+export function buildGreetingClickTargetFromElement({ actionElement, currentDocument, page, now = () => Date.now() }) {
+  const context = resolveGreetingContextElement({ actionElement, currentDocument, page, now });
   return {
     source: "click",
     sourceUrl: context.sourceUrl,
@@ -378,7 +384,7 @@ export function buildGreetingClickTargetFromElement({ actionElement, currentDocu
   };
 }
 
-function resolveGreetingContextElement({ actionElement, currentDocument, page }) {
+function resolveGreetingContextElement({ actionElement, currentDocument, page, now }) {
   const sourceUrl = currentDocument?.location?.href || globalThis.location?.href || "";
   const card = findCandidateCardAncestor(actionElement);
   const nearbyContext = findNearbyCandidateContextElement(actionElement, currentDocument);
@@ -386,19 +392,33 @@ function resolveGreetingContextElement({ actionElement, currentDocument, page })
     findCandidateSnapshotAncestor(actionElement) ||
     nearbyContext ||
     actionElement;
-  const entry = inferGreetingEntry({ page, sourceUrl, card });
+  const directAssociation = getCandidateCardAssociationFromElement(actionElement) ||
+    getCandidateCardAssociationFromElement(contextElement);
+  const recentDetailAssociation = getRecentGreetingCandidateAssociation({
+    contextElement,
+    directAssociation,
+    now
+  });
+  const entry = inferGreetingEntry({
+    page,
+    sourceUrl,
+    card,
+    recentDetailAssociation,
+    contextElement
+  });
   return {
     element: contextElement,
     sourceUrl,
     entry,
-    candidateAssociation: getCandidateCardAssociationFromElement(actionElement) ||
-      getCandidateCardAssociationFromElement(contextElement) ||
-      getRecentGreetingCandidateAssociation(entry)
+    candidateAssociation: directAssociation || recentDetailAssociation
   };
 }
 
-function inferGreetingEntry({ page, sourceUrl, card }) {
+function inferGreetingEntry({ page, sourceUrl, card, recentDetailAssociation = null, contextElement = null }) {
   if (isCandidateDetailUrl(sourceUrl) || page?.pageType === "candidate_detail") {
+    return "candidate_detail";
+  }
+  if (recentDetailAssociation && !card && !hasCandidateProfileSignals(normalizeText(readElementText(contextElement)))) {
     return "candidate_detail";
   }
   if (card || LIST_PAGE_TYPES.has(page?.pageType)) {
@@ -590,11 +610,22 @@ function buildGreetingTargetKey({ candidate, sourceUrl = "", entry = "unknown" }
   ].join(":");
 }
 
-function getRecentGreetingCandidateAssociation(entry) {
-  if (entry !== "candidate_detail") {
+function getRecentGreetingCandidateAssociation({ contextElement = null, directAssociation = null, now = () => Date.now() } = {}) {
+  if (directAssociation) {
     return null;
   }
-  return getRecentCandidateCardAssociation();
+
+  const recentDetailAssociation = getRecentCandidateDetailAssociation({ now });
+  if (!recentDetailAssociation) {
+    return null;
+  }
+
+  const contextText = normalizeText(readElementText(contextElement));
+  if (hasCandidateProfileSignals(contextText)) {
+    return null;
+  }
+
+  return recentDetailAssociation;
 }
 
 function detectGreetingMessageOutcome(documents) {

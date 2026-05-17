@@ -2914,3 +2914,901 @@
   - 真机部分验证：通过普通 Chrome UI 重载扩展并刷新 BOSS 沟通页后，首次点开会话仍产生 `candidate_chat.opened` / `candidate_chat.snapshot_captured`。尝试第二次点同一会话时 BOSS 跳转到安全验证页，未继续操作验证组件，因此重复点击真机完整验证待账号恢复正常后补做；重复点击行为已由单元测试覆盖。
 - 风险/阻塞：本机仍未配置 upload endpoint，无法验证服务器成功后水位推进对“已覆盖最新消息不再提交”的真链路；重复点击真机验证被 BOSS 安全验证中断。
 - 中断续写入口：账号通过安全验证后，重载扩展并刷新沟通页，连续点击同一可见会话两次，再在 Debug 页确认无成功水位时出现两组 `candidate_chat.opened` / `candidate_chat.snapshot_captured`。
+
+### 任务：移除聊天页 DOM 提示并改造插件生产统计弹窗
+
+- 时间：2026-05-16 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：去掉聊天界面对 BOSS 页面 DOM 的补采提示插入，把插件 popup/debug 页面改为生产数据统计面板，按模块展示上报状态，并显示未上报聊天窗口姓名。
+- 当前理解：聊天列表仍应产生 `candidate_chat.report_required` 事实事件用于统计，但不再向 BOSS 页面插入 badge、overlay 或其他可见 DOM；未上报聊天候选人名单应从本地事件/状态中汇总给插件弹窗展示。现有 manifest 没有 `default_popup`，action 点击由 background 打开 debug 页，需要改成弹窗入口或等价生产统计页。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/manifest.json`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/shared/debug-state.js`
+  - `extension/debug/index.html`
+  - `extension/debug/debug.js`
+  - `test/chat-record-probe.test.js`
+  - `test/debug-state.test.js`
+  - 视实现需要补充后台统计相关测试
+- 不修改范围：不改上传目标配置；不自动点击聊天列表、不发送消息、不阻止招聘专员操作；不使用 CDP / DevTools / 远程调试连接 BOSS 页面；不采集图片、语音、附件 URL 或敏感自由文本原文；不在插件端做候选人质量、员工绩效或聊天质量判断。
+- 验证计划：补充或调整单元测试覆盖聊天探针不插入页面 DOM、统计面板数据聚合和未上报聊天姓名列表；运行相关 `node --check`、相关 `node --test`、`npm test` 和 `git diff --check`。
+- 当前状态：准备读取聊天探针、debug state、background 和 popup/debug 页面实现。
+
+#### 完成记录：聊天 DOM 提示移除并完成生产统计 popup
+
+- 时间：2026-05-16 CST
+- 状态：已完成
+- 已完成：聊天列表扫描仍会生成 `candidate_chat.report_required` 事件，但不再向 BOSS 页面插入 badge、overlay、属性标记或其他可见 DOM；同时保留旧版提示文案过滤和旧节点清理，避免历史提示污染聊天快照。新增生产统计聚合状态，后台在事件入队、上传成功和上传失败时按模块维护记录数、待上报数、已上报数、失败数，并把 `candidate_chat.report_required` 汇总为未上报聊天窗口名单；上传成功的聊天快照会从未上报名单移除。插件 action 已改为默认 popup，页面展示总览、每个模块上报状态、未上报聊天窗口姓名和最近事件。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/overview-design.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/manifest.json`
+  - `extension/debug/index.html`
+  - `extension/debug/debug.js`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/debug-state.js`
+  - `extension/src/shared/production-stats.js`
+  - `test/chat-record-probe.test.js`
+  - `test/debug-state.test.js`
+  - `test/production-stats.test.js`
+- 验证结果：
+  - `node --check extension/src/shared/production-stats.js` 通过。
+  - `node --check extension/src/shared/debug-state.js` 通过。
+  - `node --check extension/src/background/service-worker.js` 通过。
+  - `node --check extension/src/content/chat-record-probe.js` 通过。
+  - `node --check extension/debug/debug.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，16 个测试全部通过。
+  - `node --test test/production-stats.test.js` 通过，5 个测试全部通过。
+  - `node --test test/debug-state.test.js` 通过，2 个测试全部通过。
+  - `npm test` 通过，149 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：尚未重载真实 Chrome 扩展做 popup 视觉和真实 BOSS 聊天页复测；本机上传仍默认关闭，因此已上报统计需要在开启上传并成功 flush 后才会增长。
+- 中断续写入口：重载扩展后打开 BOSS 聊天页，确认页面内不再出现插件提示 DOM；再点击扩展图标，确认 popup 中模块统计更新且“未上报聊天窗口”列出今天未成功上报的候选人姓名。
+
+### 任务：真机验证生产统计 popup 与聊天页无 DOM 提示
+
+- 时间：2026-05-16 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：重载本地 Chrome 扩展，在真实 BOSS 聊天页验证不再插入页面提示 DOM，并确认插件 popup 展示生产统计和未上报聊天窗口姓名。
+- 当前理解：上一阶段代码和自动化测试已通过，但尚未在真实 Chrome 扩展环境验证。必须继续避开 CDP / DevTools / 远程调试链路；只能使用普通 Chrome UI、插件 popup 和扩展本地页面状态观察；不发送消息、不点击求简历/换电话/换微信/约面试/不合适等业务动作。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 如真机发现问题，可能修改 popup、聊天探针或统计聚合相关文件
+- 不修改范围：不使用 CDP / DevTools / 远程调试连接 BOSS 页面；不自动打开未读会话；不发送消息；不操作业务按钮；不改上传配置。
+- 验证计划：用 Computer Use 操作普通 Chrome 重载扩展；刷新真实 BOSS 聊天页；观察聊天列表不出现“今日聊天未上报，请点开补采”或插件红色浮层；打开插件 popup，确认模块统计和未上报聊天窗口姓名可见；若发现问题，小步修复后运行相关测试。
+- 当前状态：准备加载 Computer Use 工具并观察当前 Chrome 状态。
+
+#### 完成记录：生产统计 popup 真机验证通过
+
+- 时间：2026-05-16 CST
+- 状态：已完成
+- 已完成：通过普通 Chrome UI 重载本地 BOSS Observer 扩展，工具栏 action 标题从旧的 `BOSS Observer Debug` 更新为 `BOSS Observer Stats`。打开真实 `https://www.zhipin.com/web/chat/index` 沟通页，等待聊天列表探针运行后，页面可见区域和无障碍树中未出现“今日聊天未上报，请点开补采”、插件红色浮层、`data-boss-observer-chat-report-*` 提示节点或其他插件可见提示 DOM。打开扩展 action popup 后，生产统计面板正常展示总览、模块上报状态、未上报聊天窗口和最近事件。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - 真机验证：BOSS 沟通页左侧聊天列表只显示 BOSS 原生内容；未出现插件插入的聊天补采提示。
+  - 真机验证：popup 总览显示上传未开启、待上报事件 8、已上报事件 0、已记录事件 8、未上报聊天 6、队列大小 8。
+  - 真机验证：模块状态中 `页面会话` 显示待上报，`聊天记录` 显示记录 6 / 待传 6 / 已传 0 / 失败 0。
+  - 真机验证：未上报聊天窗口列表可见候选人姓名和最近消息时间，包括“蒋姜”“女士”“王姐”“安炫美”“星云”“周藤芬”。
+  - 全程未使用 CDP / DevTools / 远程调试链路，未发送消息，未打开未读会话，未点击求简历/换电话/换微信/约面试/不合适等业务按钮。
+- 风险/阻塞：本机上传仍默认关闭，因此本轮验证的是本地排队和 popup 统计展示；已上报计数和上传成功后移除未上报名单仍需开启真实上传并成功 flush 后联调。
+- 中断续写入口：如继续验证上传闭环，先显式开启上传配置并确保 CLS/端点可用，再触发聊天快照上传，确认 popup 中 `已上报事件` 增长且对应候选人从“未上报聊天窗口”列表移除。
+
+### 任务：简化使用者 popup 为红绿状态
+
+- 时间：2026-05-16 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：按使用者视角改造 popup，不再展示详细条数、事件名称、最近事件等调试数据，只展示每类数据的绿色/红色状态；绿色代表没问题，红色代表需要处理。
+- 当前理解：popup 是给招聘使用者看的，不应该暴露事件类型、队列计数、已记录/待传/失败明细。内部仍可保留 production stats 计数用于计算状态，但 UI 只显示每类状态和必要的未上报聊天窗口姓名。聊天姓名保留为操作指引，不展示最近消息时间、职位、事件名或数量。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/shared/production-stats.js`
+  - `extension/debug/index.html`
+  - `extension/debug/debug.js`
+  - `test/production-stats.test.js`
+- 不修改范围：不改聊天采集逻辑、不改上传配置、不改后台入队和上传行为、不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：补充/调整 production stats 状态计算测试；运行 popup 脚本语法检查、统计单测、`npm test` 和 `git diff --check`。
+- 当前状态：准备实现红绿状态计算和简化 popup 展示。
+
+#### 完成记录：popup 已收敛为使用者红绿状态
+
+- 时间：2026-05-16 CST
+- 状态：已完成
+- 已完成：新增 `getModuleHealthStatus`，内部仍用生产统计计数计算每类数据状态，但 popup 只展示绿色“正常”或红色“需处理”。popup 已移除待上报/已上报/已记录/队列大小等条数，移除事件名称、最近事件、最近消息时间、沟通职位等调试细节；整体状态和每类数据只显示红绿状态。未上报聊天区域只保留需要补采的候选人姓名，用于使用者执行动作。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/debug/index.html`
+  - `extension/debug/debug.js`
+  - `extension/src/shared/production-stats.js`
+  - `test/production-stats.test.js`
+- 验证结果：
+  - `node --check extension/src/shared/production-stats.js` 通过。
+  - `node --check extension/debug/debug.js` 通过。
+  - `node --test test/production-stats.test.js` 通过，7 个测试全部通过。
+  - `npm test` 通过，151 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：本轮未重新真机打开 popup 复测新版视觉；需要重载扩展后确认使用者界面只剩红绿状态和聊天姓名。
+- 中断续写入口：重载扩展，点击 `BOSS Observer Stats`，确认 popup 不再展示条数、事件名称、最近事件、消息时间或职位，仅展示整体/各类红绿状态和待补采聊天姓名。
+
+### 任务：恢复独立开发 Debug 页面
+
+- 时间：2026-05-16 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：在保留使用者红绿状态 popup 的同时，单独新增一个开发调试页面，后续可继续查看详细事件、原始状态、上传结果和网络调试请求。
+- 当前理解：`extension/debug/index.html` 已经变成给使用者看的简化 popup，不应再暴露详细事件；旧 Debug 页面仍有开发价值，应作为手动打开的内部页面恢复到新的路径，例如 `extension/debug-raw/index.html`。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/debug-raw/index.html`
+  - `extension/debug-raw/debug.js`
+- 不修改范围：不改变插件 action popup；不改采集、上传、统计逻辑；不改 manifest 的默认 popup。
+- 验证计划：对新增 `debug-raw/debug.js` 运行 `node --check`，运行 `git diff --check`；必要时说明手动访问 URL。
+- 当前状态：准备从当前 Git 基线恢复旧 Debug 页面到新目录。
+
+#### 完成记录：独立开发 Debug 页面已恢复
+
+- 时间：2026-05-16 CST
+- 状态：已完成
+- 已完成：新增 `extension/debug-raw/index.html` 和 `extension/debug-raw/debug.js`，恢复原详细 Debug 页面能力，包括 Summary、Latest Event、Recent Events、Network Debug Requests、Last Upload Error、Last Upload Result 和 Raw State。插件 action popup 仍保持使用者红绿状态页，不向使用者暴露详细调试数据。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/debug-raw/index.html`
+  - `extension/debug-raw/debug.js`
+- 验证结果：
+  - `node --check extension/debug-raw/debug.js` 通过。
+  - `git diff --check` 通过。
+- 使用入口：手动打开 `chrome-extension://eekcajddmlkcgehpnkpioeenoimeadja/debug-raw/index.html`。
+- 风险/阻塞：尚未重载扩展后真机打开该新页面；如 Chrome 使用新的扩展 ID，需要把 URL 中的扩展 ID 替换为当前扩展详情页显示的 ID。
+- 中断续写入口：重载扩展后手动访问上述 URL，确认旧 Debug 页面可读到当前 `debugState`，网络调试按钮可正常发送 runtime message。
+
+### 任务：开启 CLS 上传并执行全量真机回归
+
+- 时间：2026-05-16 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：开启当前插件默认上传接口，让事件走已有 Tencent CLS 匿名直传配置；随后重载扩展并在真实 BOSS 页面做核心链路回归，确认采集、上传、popup 状态和开发 Debug 页面没有明显问题。
+- 当前理解：用户已明确要求打开上传接口，并会协助打开腾讯 CLS 后台方便验证。开启后，插件采集到的事实事件会传到当前配置的 CLS topic；仍需避免发送消息、点击打招呼、求简历、换电话、换微信、约面试、不合适等会产生业务影响的动作。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/shared/config.js`
+  - `test/config.test.js`
+  - 视实际行为可能同步相关文档或修复发现的问题
+- 不修改范围：不改 CLS region/topic/source；不改事件 payload 结构；不使用 CDP / DevTools / 远程调试连接 BOSS 页面；不发送消息、不打招呼、不操作候选人业务动作。
+- 验证计划：先改配置并运行 `node --test test/config.test.js`、`npm test`、`git diff --check`；再用普通 Chrome UI 重载扩展，访问 BOSS 推荐/筛选/详情/沟通等页面做只读或低风险动作，通过 popup 和 `debug-raw` 确认事件上报状态，最后在 CLS 后台确认新事件可检索。
+- 当前状态：准备开启 `uploadEnabled` 默认值并更新测试。
+
+#### 接手记录：继续上传真机回归
+
+- 时间：2026-05-16 21:48:57 CST
+- 状态：进行中
+- 当前理解：代码层已把默认上传打开，`config` 测试、全量 `npm test` 和 `git diff --check` 已通过；当前需要在真实 Chrome 中重载扩展，让新配置和新版 popup/debug-raw 生效，再在 BOSS 推荐、筛选、详情、沟通等核心页面做非业务影响回归，并通过开发 Debug 页面和腾讯 CLS 控制台确认上传链路。
+- 已检查：已阅读本任务日志尾部，`git status --short` 显示当前改动均为本轮相关文件；当前没有发现与任务冲突的外部 diff。
+- 下一步：用普通 Chrome UI 重载扩展，执行只读/低风险真机回归，期间不使用 CDP / DevTools / 远程调试链路，不发送消息，不点击打招呼、求简历、换电话、换微信、约面试、不合适等业务按钮。
+
+#### 阶段记录：真机发现裸域未注入并修复
+
+- 时间：2026-05-16 22:06:00 CST
+- 状态：待重新真机验证
+- 已完成：通过普通 Chrome UI 重载扩展后，真实 BOSS 页面实际访问域名为 `https://zhipin.com/...`，但 `extension/manifest.json` 仅匹配 `https://www.zhipin.com/*`，导致 content script 未注入，debug-raw 显示 `uploadEnabled: true` 但事件、队列和上传结果均为空。已补全裸域 `https://zhipin.com/*` 的 host permissions、content script matches 和 web accessible resources，并同步后台 network debug 广播查询；同时让 network/canvas hook 信任裸域详情页。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/manifest.json`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/network-debug-hook.js`
+  - `extension/src/content/network-debug-probe.js`
+  - `extension/src/content/canvas-text-capture-hook.js`
+  - `test/manifest.test.js`
+- 当前验证结果：
+  - `node --check extension/src/background/service-worker.js` 通过。
+  - `node --check extension/src/content/network-debug-hook.js` 通过。
+  - `node --check extension/src/content/network-debug-probe.js` 通过。
+  - `node --check extension/src/content/canvas-text-capture-hook.js` 通过。
+  - `node --test test/manifest.test.js` 通过。
+  - `npm test` 通过，152 个测试全部通过。
+  - `git diff --check` 通过。
+- 如果此刻中断：先通过 Chrome 扩展详情页再次重载扩展，再刷新/重新打开 `https://zhipin.com/web/chat/index`、推荐页和 debug-raw，确认事件开始入队/上传，然后去 CLS 控制台检索最新日志。
+
+#### 完成记录：上传闭环真机验证通过，业务页回归被安全验证阻断
+
+- 时间：2026-05-16 22:17:38 CST
+- 状态：已完成（带阻塞项）
+- 已完成：再次通过普通 Chrome UI 重载扩展后，裸域匹配修复生效。BOSS 页面跳转到安全验证，但扩展已能在 `zhipin.com` / `www.zhipin.com` 跳转后的页面中注入并产生事件。debug-raw 显示 `uploadEnabled: true`，最近事件包含 `page_session.plugin_started`、`page_session.boss_page_entered` 和 `candidate_chat.report_required`；队列归零，最近上传结果为 `targetType: cls_anonymous`、HTTP `200`、`batchSize: 14`，`lastUploadError` 为 None。腾讯 CLS 检索页在近 15 分钟范围内检索到 14 条日志，包含 `candidate_chat.report_required`，字段包括 `__SOURCE__=boss-observer-extension`、`event_type`、`page_type`、`page_url`、`payload_json` 等。
+- popup 真机结果：使用者 popup 只展示红绿状态和待补采姓名，不展示条数、事件名或最近事件；数据同步为绿色，聊天记录为红色并仅显示“蒋姜、女士、王姐、安炫美、星云、周颜芬”等待补采姓名。
+- 阻塞/风险：BOSS 触发“安全验证”，无法继续完整复测推荐、筛选、候选人详情、沟通快照等业务页链路；未处理验证组件，也未使用 CDP / DevTools / 远程调试。安全验证解除后需要刷新 BOSS 页面继续全量回归。
+- 验证结果：
+  - `node --check extension/src/background/service-worker.js` 通过。
+  - `node --check extension/src/content/network-debug-hook.js` 通过。
+  - `node --check extension/src/content/network-debug-probe.js` 通过。
+  - `node --check extension/src/content/canvas-text-capture-hook.js` 通过。
+  - `node --test test/manifest.test.js` 通过。
+  - `npm test` 通过，152 个测试全部通过。
+  - `git diff --check` 通过。
+- 中断续写入口：用户完成 BOSS 安全验证后，刷新 `https://zhipin.com/web/chat/recommend` 和 `https://zhipin.com/web/chat/index`，只读打开推荐、筛选、候选人详情和已读沟通窗口，再用 debug-raw / popup / CLS 确认候选人列表、详情、筛选、聊天快照事件继续上传。
+
+### 任务：排查 CLS payload_json 与聊天对话缺失
+
+- 时间：2026-05-16 22:26:43 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：解释并修复/标注 CLS 中 `payload` 变成 `payload_json`、以及聊天对话在某条 CLS 日志里看起来缺失的问题。
+- 当前理解：截图里本地 Debug 原始事件和 CLS 展开日志可能不是同一个事件；本地截图包含聊天 `messages`，CLS 截图当前展开的是 `candidate_chat.opened`，该事件本来只记录打开事实，不包含聊天对话。另一个问题是 `payload_json` 是当前 CLS 映射层主动把嵌套 payload JSON 字符串化后的字段名，需要确认这是为了 CLS contents 的扁平 key/value 限制，还是可以优化为更清晰的字段。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 视排查结果可能修改 `extension/src/shared/cls-log-format.js`
+  - 视排查结果可能修改 `test/cls-log-format.test.js`
+- 不修改范围：不改聊天 DOM 采集逻辑，不扩大敏感文本采集范围，不使用 CDP / DevTools / 远程调试连接 BOSS 页面，不操作 BOSS 业务按钮。
+- 验证计划：阅读 CLS 映射和聊天事件生成逻辑，必要时补充/调整 CLS 格式单测；运行相关 `node --test`、`npm test`、`git diff --check`。
+- 当前状态：已开始核对 `cls-log-format`、聊天探针和现有 diff。
+
+#### 完成记录：确认不是聊天内容上传丢失
+
+- 时间：2026-05-16 22:28:37 CST
+- 状态：已完成
+- 已完成：确认 `payload_json` 来自 `extension/src/shared/cls-log-format.js` 的上传格式映射，原因是 CLS 日志内容按扁平字段上传，嵌套的 `payload` 被 JSON 字符串化为 `payload_json`，`context` 同理为 `context_json`。截图中的“聊天对话缺失”不是上传序列化丢失，而是 CLS 当前展开的是 `candidate_chat.opened`，该事件只记录打开事实；同一次扫描会随后产生 `candidate_chat.snapshot_captured`，聊天 `messages` 只在这个快照事件的 `payload_json` 里。两条事件可能同毫秒发生，但 `event_id` 后缀和 `event_type` 不同。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `test/cls-log-format.test.js`
+- 验证结果：
+  - 新增测试 `serializes chat snapshot messages into cls payload_json`，确认 `candidate_chat.snapshot_captured` 上传格式中 `payload_json` 可解析并保留 `chat.messages`。
+  - `node --test test/cls-log-format.test.js` 通过，4 个测试全部通过。
+  - `npm test` 通过，153 个测试全部通过。
+- 下一步建议：在 CLS 后台排查聊天正文时优先筛选 `event_type = candidate_chat.snapshot_captured`，或用 Debug 原始事件里的 snapshot `event_id` 精确查找；不要用同毫秒的 `candidate_chat.opened` 判断聊天正文是否上传。
+
+### 任务：排查打开蒋姜后 popup 待补采状态未消失
+
+- 时间：2026-05-16 22:30:41 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：解释并修复“蒋姜聊天快照已上传到 CLS，但 popup 仍显示蒋姜需要补采”的状态同步问题。
+- 当前理解：popup 的聊天红色状态来自本地 `productionStats.unreportedChats`，不是直接查询 CLS。该名单由 `candidate_chat.report_required` 增加，由成功上传的 `candidate_chat.snapshot_captured` 删除；如果删除 key 不匹配、快照时间未覆盖列表时间，或上传后列表扫描又重新产生 `report_required`，都会导致姓名仍显示。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/shared/production-stats.js`
+  - `test/production-stats.test.js`
+  - 视排查结果可能修改聊天上报水位或 popup 逻辑
+- 不修改范围：不使用 CDP / DevTools / 远程调试连接 BOSS 页面；不操作 BOSS 业务按钮；不改变 CLS topic/region。
+- 验证计划：阅读 production stats、chat report state 和聊天事件 key 生成逻辑；补充单元测试覆盖快照上传后候选人仍在名单中的边界；运行相关测试、`npm test`、`git diff --check`。
+- 当前状态：准备核对未上报名单删除条件和聊天快照事件 payload。
+
+#### 接手记录：继续修复 popup 待补采状态
+
+- 时间：2026-05-17 14:57:41 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：继续解决“蒋姜聊天快照已上传但 popup 仍显示待补采”，并修复新出现的待补采列表中混入“5月16日 沟通的职位-”这类非候选人姓名项的问题。
+- 当前理解：popup 状态来自本地 `productionStats.unreportedChats`，与 CLS 是否已有日志不是同一个实时查询链路；当前疑点集中在聊天列表候选人身份生成、快照上传后的本地删除匹配条件，以及聊天列表 DOM 解析把日期/职位分组文本误当作候选人。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/production-stats.js`
+  - `test/chat-record-probe.test.js`
+  - `test/production-stats.test.js`
+- 不修改范围：不改变 CLS topic/region，不扩大聊天采集范围，不使用 CDP / DevTools / 远程调试连接 BOSS 页面，不操作 BOSS 业务按钮。
+- 验证计划：补充单元测试覆盖候选人 ID 归一化、快照上传后删除不同来源 ID 的未补采项、过滤非聊天候选人姓名；运行相关 `node --test`、`npm test` 和 `git diff --check`。
+- 当前状态：准备阅读相关源码和现有 diff 后小步修复。
+
+#### 阶段记录：完成 popup 待补采状态修复实现
+
+- 时间：2026-05-17 15:04:00 CST
+- 状态：待全量验证
+- 已完成：确认 popup 红色状态来自本地 `productionStats.unreportedChats`，不是直接读取 CLS。已修复两个问题：聊天低置信候选人 ID 不再把页面 URL 纳入指纹，并对列表职位和打开面板职位做归一化，避免同一个“蒋姜”因 `_security_check` 或 `兼职·` 前缀生成不同 ID；同时 `productionStats` 在快照上传成功后支持用“姓名 + 归一化职位 + 消息时间覆盖”清理旧的未补采项，并过滤/去重已持久化的异常待补采项。另修复聊天列表识别，避免把主动聊天面板里的“5月16日 沟通的职位-...”时间线文本当成候选人姓名。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/production-stats.js`
+  - `test/chat-record-probe.test.js`
+  - `test/production-stats.test.js`
+- 当前验证结果：
+  - `node --check extension/src/content/chat-record-probe.js` 通过。
+  - `node --check extension/src/shared/production-stats.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，18 个测试全部通过。
+  - `node --test test/production-stats.test.js` 通过，9 个测试全部通过。
+- 如果此刻中断：继续运行全量 `npm test` 和 `git diff --check`；随后重载扩展，在真实聊天页打开“蒋姜”并观察 popup 是否去掉该姓名，同时确认“5月16日 沟通的职位-”不再出现在待补采列表。
+
+#### 完成记录：popup 待补采误报与重复项修复完成
+
+- 时间：2026-05-17 15:12:00 CST
+- 状态：已完成
+- 已完成：修复 popup 待补采状态不随聊天快照上传清理的问题。根因是聊天页低置信候选人 ID 把页面 URL 和未归一化职位文案纳入指纹，导致列表项和打开后的聊天面板可能生成不同 `candidateId`；现在低置信 ID 使用姓名 + 归一化职位，去掉 `_security_check` 等 URL 干扰，并把 `兼职·【...】` 与 `【...】` 视为同一职位。`productionStats` 上传成功清理待补采时也增加“姓名 + 归一化职位 + 快照时间覆盖”的兜底匹配，可清掉旧版本已经写入的待补采项。
+- 已完成：修复待补采列表混入“5月16日/5月17日 沟通的职位-...”的问题。聊天列表解析现在过滤主动聊天面板的职位时间线文本，并校验待补采展示名不能是日期、职位分组、发送/简历等非候选人文本。`productionStats` 读取旧状态时也会过滤这些异常项。
+- 已完成：修复同一候选人同一职位因最近消息时间更新而出现重复姓名的问题。待补采列表按“姓名 + 归一化职位”去重，后来的 `report_required` 会覆盖旧记录，不再按消息时间保留多条。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/production-stats.js`
+  - `test/chat-record-probe.test.js`
+  - `test/production-stats.test.js`
+- 验证结果：
+  - `node --check extension/src/content/chat-record-probe.js` 通过。
+  - `node --check extension/src/shared/production-stats.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，18 个测试全部通过。
+  - `node --test test/production-stats.test.js` 通过，10 个测试全部通过。
+  - `npm test` 通过，158 个测试全部通过。
+  - `git diff --check` 通过。
+  - 真机验证：通过普通 Chrome UI 重载扩展，打开真实 `https://zhipin.com/web/chat/index`，popup 旧异常项被过滤；聊天页扫描后待补采列表只出现真实候选人姓名，没有“5月17日 沟通的职位-...”这类文本。
+  - 真机验证：只读点开“陈晨”聊天窗口后生成 `candidate_chat.opened` / `candidate_chat.snapshot_captured`，debug-raw 显示上传 `status: 200`、`targetType: cls_anonymous`、`queueSize: 0`、`lastUploadError: null`；本地待补采名单中“陈晨”已消失。
+- 风险/阻塞：由于当前日期已是 2026-05-17，真实列表里的“蒋姜”显示为“昨天”，按设计不会进入“今天待补采”扫描，因此本轮无法在真机上复现并直接点开同一个“蒋姜”验证；对应边界已由单元测试覆盖“列表 ID 与面板 ID 不同但姓名职位一致时清理待补采”。全程未使用 CDP / DevTools / 远程调试，未点击打招呼、求简历、换电话、换微信、约面试、不合适或发送。
+- 中断续写入口：如后续再次出现某个姓名未消失，先在 debug-raw 对比该 `report_required` 与 `snapshot_captured` 的 `candidate.profile.displayName`、`listItem.jobTitle` / `chat.jobTitle`、`lastMessageAt`，确认是否还有新的 BOSS 职位文案变体需要加入归一化。
+
+### 任务：popup 增加诊断 Profile 下载与 Debug 入口
+
+- 时间：2026-05-17 15:17:45 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：在使用者 popup 上增加当前执行过程和结果的诊断 Profile 下载入口，方便真机异常时用户直接导出给 AI 分析；同时在 popup 上增加内部 debug 页面入口，并补充诊断 Profile 分析约定文档。
+- 当前理解：popup 仍然应保持使用者视角，不直接暴露大量调试条目；新增的 Profile 下载可以作为主动操作，导出脱敏后的运行状态、模块健康、上传结果、队列状态、最近事件摘要、待补采名单和网络调试摘要。为了避免不必要的敏感泄露，默认不导出聊天 `messages` 正文、请求/响应正文或完整配置密钥；需要更细节时再由用户主动打开 debug 页面。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/diagnostic-profile-analysis.md`
+  - `extension/debug/index.html`
+  - `extension/debug/debug.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `test/diagnostic-profile.test.js`
+- 不修改范围：不改变采集、上传、CLS topic/region 或后台队列行为；不在 popup 常态展示事件名、条数、聊天正文或调试详情；不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：新增诊断 Profile 纯函数单测，验证脱敏和核心字段；运行 popup 脚本语法检查、相关单测、`npm test` 和 `git diff --check`；必要时重载扩展轻量确认按钮存在。
+- 当前状态：准备实现共享 Profile 构建函数和 popup 两个按钮。
+
+#### 完成记录：诊断 Profile 与 Debug 入口已完成
+
+- 时间：2026-05-17 15:24:00 CST
+- 状态：已完成
+- 已完成：popup 顶部新增 `下载Profile` 和 `打开Debug` 两个入口。`下载Profile` 会导出 `boss-observer-profile-<version>-<timestamp>.json`，内容包含插件版本、脱敏配置摘要、队列状态、上传结果/错误、模块红绿状态、生产统计、待补采聊天、网络调试摘要和最近事件摘要；默认不包含聊天正文、网络请求/响应正文、联系方式明文或完整 CLS topic id。`打开Debug` 会打开 `debug-raw/index.html` 内部调试页。
+- 已完成：新增共享模块 `extension/src/shared/diagnostic-profile.js`，让 profile 构建、URL 去 query、事件摘要、网络摘要和文件名生成都有单元测试覆盖。
+- 已完成：新增 `docs/diagnostic-profile-analysis.md`，约定用户如何下载 Profile、Profile 字段含义、分析顺序、常见判断和隐私边界。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/diagnostic-profile-analysis.md`
+  - `extension/debug/index.html`
+  - `extension/debug/debug.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `test/diagnostic-profile.test.js`
+- 验证结果：
+  - `node --check extension/src/shared/diagnostic-profile.js` 通过。
+  - `node --check extension/debug/debug.js` 通过。
+  - `node --test test/diagnostic-profile.test.js` 通过，2 个测试全部通过，覆盖聊天正文、微信号、手机号和网络正文不进入 Profile。
+  - `npm test` 通过，160 个测试全部通过。
+  - `git diff --check` 通过。
+  - 真机验证：通过普通 Chrome UI 重载扩展后，popup 可见 `下载Profile`、`打开Debug`、`刷新`；点击 `打开Debug` 成功打开 `chrome-extension://eekcajddmlkcgehpnkpioeenoimeadja/debug-raw/index.html`。
+  - 真机验证：点击 `下载Profile` 成功下载 `/Users/tiny/Downloads/boss-observer-profile-0.1.0-2026-05-17T15-22-40-355+08-00.json`，文件可解析，包含 `schemaVersion: 1.0.0`、`source: boss_observer_popup`、插件版本和运行摘要。
+- 风险/阻塞：本轮只验证了当前空运行态导出；出现真实 BOSS 异常时，用户应在问题发生后立刻下载 Profile，避免重载扩展后运行态被清空。
+
+### 任务：排查李女士只有 opened 无聊天快照
+
+- 时间：2026-05-17 15:40:10 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：排查并修复用户打开“李女士”聊天后 debug 页面和 CLS 都只有 `candidate_chat.opened`、没有聊天快照事件的问题。
+- 当前理解：用户提供的 Profile 显示李女士列表最新消息时间为 `2026-05-17T12:45:00.000+08:00`，本地已上报水位为 `12:44`，并且确实产生了 opened 事件；但没有 snapshot，说明当前 active panel 快照要么没有解析到消息，要么解析出的 `chat.lastMessageAt` 未超过水位，导致 `shouldSubmitChatSnapshot` 拦截。由于 opened 已产生，点击识别和候选人 ID 匹配大概率正常，疑点集中在“列表看到更新，但详情可见 DOM 文本未覆盖更新消息”的水位判断。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `test/chat-record-probe.test.js`
+  - `test/diagnostic-profile.test.js`
+- 不修改范围：不扩大聊天正文采集范围，不改变上传接口和 CLS 配置，不在 popup 常态展示事件名或详细条数，不使用 CDP / DevTools / 远程调试连接 BOSS 页面，不操作 BOSS 业务按钮。
+- 验证计划：补充单元测试覆盖“列表最新时间超过上报水位，但详情 DOM 只解析到旧消息”的手动打开场景；更新 Profile 摘要字段帮助后续判断快照是否借用了列表时间；运行相关 `node --test`、`npm test` 和 `git diff --check`。
+- 当前状态：准备修改聊天快照提交逻辑，让手动打开列表项时的列表最新消息时间可作为快照覆盖水位的保守证据，并在 payload 中显式标记详情 DOM 可能未捕获该条消息。
+
+#### 完成记录：李女士 opened 后无 snapshot 的水位拦截已修复
+
+- 时间：2026-05-17 15:44:18 CST
+- 状态：已完成
+- 已完成：根据用户提供的 Profile 确认李女士列表最新消息时间为 `12:45`，本地已上报水位为 `12:44`，且只产生 `candidate_chat.opened`。根因是手动打开聊天时，详情 DOM 文本快照只解析到 `12:44`，`shouldSubmitChatSnapshot` 用详情文本的 `chat.lastMessageAt` 与本地水位比较，结果被判定为未超过水位，因此没有生成 `candidate_chat.snapshot_captured`。
+- 已完成：新增聊天快照覆盖时间约定。手动从聊天列表打开会记录列表项的最新消息时间；当列表时间晚于详情 DOM 解析出的最后文本时间时，snapshot payload 增加 `coverageLastMessageAt`、`coverageSource: manual_chat_list_open`、`listObservedLastMessageAt`、`listObservedLastMessageTimeText`、`hasUncapturedListMessage: true`。`chat.lastMessageAt` 仍保留详情 DOM 实际解析到的最后一条文本时间。
+- 已完成：本地待补采状态和聊天上报水位改用 snapshot 覆盖时间判定，避免“已手动打开且上传了快照，但 popup 仍红”的情况；Profile 摘要也保留这些覆盖字段，后续可直接判断是否是“列表有更新但详情 DOM 没解析到新文本”的场景。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/diagnostic-profile-analysis.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/chat-report-state.js`
+  - `extension/src/shared/chat-snapshot-coverage.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `extension/src/shared/production-stats.js`
+  - `test/chat-record-probe.test.js`
+  - `test/chat-report-state.test.js`
+  - `test/diagnostic-profile.test.js`
+  - `test/production-stats.test.js`
+- 验证结果：
+  - `node --check extension/src/content/chat-record-probe.js` 通过。
+  - `node --check extension/src/shared/chat-report-state.js` 通过。
+  - `node --check extension/src/shared/chat-snapshot-coverage.js` 通过。
+  - `node --check extension/src/shared/production-stats.js` 通过。
+  - `node --check extension/src/shared/diagnostic-profile.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，19 个测试全部通过。
+  - `node --test test/chat-report-state.test.js` 通过，5 个测试全部通过。
+  - `node --test test/production-stats.test.js` 通过，11 个测试全部通过。
+  - `node --test test/diagnostic-profile.test.js` 通过，2 个测试全部通过。
+  - `npm test` 通过，163 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：尚未对“李女士”本人做重新打开后的真机复验；需要用户重载扩展后在真实聊天页再次点击对应聊天，并重新下载 Profile 或查看 Debug/CLS。全程未使用 CDP / DevTools / 远程调试，未操作 BOSS 业务按钮。
+
+### 任务：打招呼事件补齐候选人基础信息与 ID 关联
+
+- 时间：2026-05-17 15:59:24 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：修复打招呼日志只带孤立候选人 ID、无法与候选人列表曝光和详情打开事件关联的问题；打招呼时按 ID 复用列表/详情已采集的候选人基础信息，输出与详情一致的候选人快照。
+- 当前理解：用户提供新的诊断 Profile，指出当前某个 `candidate_greeting` 事件里的 ID 在列表和详情日志中找不到，说明打招呼探针可能在详情页或按钮上下文里重新用局部文本/URL 生成了候选人 ID，而没有优先继承或按 ID 回查已曝光/已打开详情的候选人快照。需要先从 Profile 确认具体 `stableIdSource` 与最近事件链，再修改打招呼候选人解析策略。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/greeting-probe.js`
+  - `extension/src/content/candidate-card-registry.js`
+  - `test/greeting-probe.test.js`
+  - 视排查结果可能修改诊断 Profile 摘要或日志规范文档
+- 不修改范围：不点击真实 BOSS 打招呼按钮，不发送消息，不采集打招呼话术、聊天正文、联系方式或完整简历正文，不改变上传接口和 CLS 配置，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：读取 Profile 中最近的 `candidate_greeting`、`candidate_list`、`candidate_detail` 事件；补单元测试覆盖打招呼从已注册候选人 ID/详情快照继承基础信息和关联 ID；运行相关 `node --test`、`npm test` 和 `git diff --check`。
+- 当前状态：准备解析 Profile，并阅读候选人 registry、列表、详情和打招呼探针现有 ID 复用逻辑。
+
+#### 完成记录：打招呼候选人快照与 ID 关联已修复
+
+- 时间：2026-05-17 16:03:58 CST
+- 状态：已完成
+- 已完成：解析用户提供的 Profile，确认 `candidate_greeting.clicked/succeeded` 使用了 `bo_candidate_text_fingerprint_card_141jwes_1to1eq1`，而最近的详情和列表候选人“谢蓉”使用 `bo_candidate_text_fingerprint_card_a88ua2_13fagi9`。打招呼事件也没有姓名、年龄、学历等 `profile`，说明点击时只读取了按钮局部文本并重新生成了 fingerprint，未继承刚打开详情的候选人快照。
+- 已完成：扩展候选人 registry，支持按 `candidateId` 回查已知候选人快照，并支持详情打开时把当前详情候选人记入 registry/recent interaction。即使详情候选人不是从列表曝光来的，也能作为后续打招呼的候选人上下文。
+- 已完成：打招呼探针现在会先按 `candidateId` 补齐本地候选人快照；如果点击目标只能读到“打招呼”按钮局部文本，且最近打开的详情候选人仍有效，则继承该详情候选人的 `candidateId`、基础 `profile`、`detailProfile` 和已有 `exposureKey/exposedEventId`，避免产生无法与列表/详情串联的孤立 ID。
+- 已完成：诊断 Profile 的 greeting 摘要增加 `entry`、`clickedEventId`、`elapsedMs`、`greeting.status`、`greeting.detectedBy`、`candidate.exposureKey` 和 `candidate.exposedEventId`，并去掉非聊天事件里误导性的空 `chat/upload` 摘要。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/06-greeting.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/candidate-card-registry.js`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `extension/src/content/greeting-probe.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `test/greeting-probe.test.js`
+  - `test/diagnostic-profile.test.js`
+- 验证结果：
+  - `node --check extension/src/content/candidate-card-registry.js` 通过。
+  - `node --check extension/src/content/candidate-detail-probe.js` 通过。
+  - `node --check extension/src/content/greeting-probe.js` 通过。
+  - `node --check extension/src/shared/diagnostic-profile.js` 通过。
+  - `node --test test/greeting-probe.test.js` 通过，11 个测试全部通过。
+  - `node --test test/candidate-card-registry.test.js` 通过，10 个测试全部通过。
+  - `node --test test/candidate-detail-probe.test.js` 通过，35 个测试全部通过。
+  - `node --test test/diagnostic-profile.test.js` 通过，3 个测试全部通过。
+  - `npm test` 通过，166 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：尚未对真实 BOSS 打招呼按钮重新做真机复验；复验时需要重载扩展后打开候选人详情，再点击真实打招呼按钮。全程未使用 CDP / DevTools / 远程调试，未由 AI 操作真实打招呼按钮。
+
+### 任务：排查 Alone 打招呼成功但按候选人查不到日志
+
+- 时间：2026-05-17 16:09:11 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：排查用户对 Alone 打招呼且页面显示成功后，按 Alone 查不到打招呼日志的问题，并修复打招呼事件仍落到孤立按钮文本指纹 ID 的关联遗漏。
+- 当前理解：新 Profile 显示 `candidate_greeting.clicked` 和 `candidate_greeting.succeeded` 实际存在，并且上传成功、队列为 0；但它们的 `candidateId` 仍是 `bo_candidate_text_fingerprint_card_141jwes_1to1eq1`，没有姓名和基础 profile。Alone 的详情事件分别是 `bo_candidate_text_fingerprint_card_1fd9lb_1x8gbqq` 和 `bo_candidate_text_fingerprint_card_1we1wxj_molbmp`，因此用户按 Alone 或详情 ID 查询时会看不到 greeting。上一个修复依赖最近一次通用 interaction，可能被列表滚动、卡片交互或其它探针覆盖，导致 greeting 没拿到最近详情候选人。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-card-registry.js`
+  - `extension/src/content/greeting-probe.js`
+  - `test/greeting-probe.test.js`
+  - 视实现结果可能同步 `docs/modules/06-greeting.md`
+- 不修改范围：不点击真实 BOSS 打招呼按钮，不发送消息，不采集打招呼话术、聊天正文、联系方式或完整简历正文，不改变上传接口和 CLS 配置，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：补充单元测试覆盖“详情打开后，普通 recent interaction 被其它行为覆盖，但打招呼按钮没有候选人上下文时仍应继承最近详情候选人”；运行 greeting/registry 单测、全量 `npm test` 和 `git diff --check`。
+- 当前状态：准备把最近详情候选人从通用 recent interaction 中拆成单独缓存，避免被非详情交互覆盖。
+
+#### 完成记录：Alone 打招呼日志可见性问题已定位并修复
+
+- 时间：2026-05-17 16:10:12 CST
+- 状态：已完成
+- 已完成：确认用户这次对 Alone 的打招呼日志并非完全没有生成。Profile 中存在 `candidate_greeting.clicked`（`2026-05-17T16:07:39.896+08:00`）和 `candidate_greeting.succeeded`（`2026-05-17T16:07:40.852+08:00`），且 `lastUploadResult.status = 200`、`queueSize = 0`。问题是两条事件仍挂到了孤立按钮文本 ID `bo_candidate_text_fingerprint_card_141jwes_1to1eq1`，没有姓名和基础 profile，因此按 Alone 或详情 ID 查询会看不到。
+- 已完成：修复 registry 的最近详情候选人缓存。新增独立的 `recentDetailInteraction`，详情打开会写入该缓存；普通卡片点击、列表扫描或其它交互可以继续更新通用 recent，但不会覆盖最近详情候选人。打招呼按钮没有候选人上下文时，优先读取独立的最近详情候选人缓存。
+- 已完成：补充单元测试覆盖本次遗漏：先打开详情记录 Alone，再用其它候选人交互覆盖通用 recent，随后点击只有“打招呼”文本的按钮，仍应继承详情候选人的 `candidateId/profile/detailProfile`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-card-registry.js`
+  - `extension/src/content/greeting-probe.js`
+  - `test/greeting-probe.test.js`
+- 验证结果：
+  - `node --check extension/src/content/candidate-card-registry.js` 通过。
+  - `node --check extension/src/content/greeting-probe.js` 通过。
+  - `node --test test/greeting-probe.test.js` 通过，11 个测试全部通过。
+  - `node --test test/candidate-card-registry.test.js` 通过，10 个测试全部通过。
+  - `npm test` 通过，166 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：这次 Profile 中已有的两条 greeting 事件已经以旧错误 ID 上传，无法在本地修改历史 CLS 记录；需要重载扩展后再次对真实候选人操作，新的 greeting 才会挂到最近详情候选人。全程未使用 CDP / DevTools / 远程调试，未由 AI 操作真实打招呼按钮。
+
+### 任务：合并 boss_analysis_viewed 与详情打开事件
+
+- 时间：2026-05-17 16:19:41 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：取消独立的 `candidate_detail.boss_analysis_viewed` 事件，把“牛人分析模块可见”事实合并进 `candidate_detail.opened`。
+- 当前理解：当前 `CandidateDetailProbe` 在详情打开后，如果 payload 中检测到牛人分析信号，会额外发一条 `candidate_detail.boss_analysis_viewed`，导致同一次详情打开拆成两个事件。用户希望合并，因此应让 `candidate_detail.opened` payload 自带 `analysis.module = boss_analysis` 或等价字段；后续不再单独发 `boss_analysis_viewed`。如果详情异步加载后才出现牛人分析，应复用已有“详情变丰富时补发 opened”的机制承载，而不是单独发 view 事件。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `extension/src/shared/event-types.js`
+  - `test/candidate-detail-probe.test.js`
+  - `docs/modules/05-candidate-detail.md`
+  - `docs/modules/12-log-specification.md`
+- 不修改范围：不改变候选人详情正文/摘要采集范围，不采集完整牛人分析正文，不改变上传接口和 CLS 配置，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：调整详情探针单测，确认包含牛人分析信号时只产生 `candidate_detail.opened` 且 payload 带 `analysis.module`；确认没有信号时不带该字段；运行相关 `node --test`、全量 `npm test` 和 `git diff --check`。
+- 当前状态：准备移除独立 boss_analysis 事件发射逻辑，并同步日志规范。
+
+#### 完成记录：boss_analysis_viewed 已并入 detail opened
+
+- 时间：2026-05-17 16:26:03 CST
+- 状态：已完成
+- 已完成：移除独立的 `candidate_detail.boss_analysis_viewed` 事件类型和详情探针里的单独发射逻辑；牛人分析模块可见时，现在由 `candidate_detail.opened` payload 携带 `analysis.module = "boss_analysis"` 表示。
+- 已完成：复用详情变丰富后的补发机制。如果详情刚打开时没有牛人分析，后续异步渲染出有效牛人分析内容，会重新发一条更完整的 `candidate_detail.opened`，不再额外发 `boss_analysis_viewed`。
+- 已完成：修正分析信号判断，只在 `compactBossAnalysis(...)` 有有效内容时才写入 `analysis`，避免空的 `bossAnalysis` 对象误判为已看到牛人分析。
+- 已完成：同步候选人详情文档、日志规范文档和诊断 Profile 摘要；Profile 会保留合并后的 `payload.analysis.module`，方便真机问题回传时确认该详情打开事件是否包含牛人分析可见信号。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/05-candidate-detail.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `extension/src/shared/event-types.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `test/candidate-detail-probe.test.js`
+  - `test/diagnostic-profile.test.js`
+- 验证结果：
+  - `node --check extension/src/content/candidate-detail-probe.js` 通过。
+  - `node --check extension/src/shared/event-types.js` 通过。
+  - `node --check extension/src/shared/diagnostic-profile.js` 通过。
+  - `node --test test/candidate-detail-probe.test.js` 通过，37 个测试全部通过。
+  - `node --test test/diagnostic-profile.test.js` 通过，4 个测试全部通过。
+  - `rg -n "candidate_detail\\.boss_analysis_viewed|boss_analysis_viewed|CANDIDATE_DETAIL_BOSS_ANALYSIS_VIEWED" extension/src test docs/modules` 无剩余引用。
+  - `npm test` 通过，169 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：历史已上传到 CLS 的 `candidate_detail.boss_analysis_viewed` 不会被本地代码改写；重载扩展后新日志才会按合并后的 `candidate_detail.opened` 形态输出。全程未使用 CDP / DevTools / 远程调试，未操作真实 BOSS 业务按钮。
+
+### 任务：排查刘心雨打招呼事件缺少候选人信息
+
+- 时间：2026-05-17 16:36:50 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：排查用户对“刘心雨”成功打招呼后，`candidate_greeting` 打点里仍没有刘心雨候选人信息的问题，并修复打招呼候选人上下文继承遗漏。
+- 当前理解：前两轮已分别修复按 `candidateId` 回查和最近详情候选人缓存，但用户新 Profile 仍显示真实打招呼后缺少姓名，说明实际点击链路可能没有先产生详情 opened，或详情 opened 后未把候选人快照写入 greeting 可读取的上下文，也可能是按钮目标位于详情 frame/弹窗中导致当前 DOM 局部解析仍生成按钮文本指纹。需要先从 Profile 对齐刘心雨的列表、详情、greeting、上传事件，确认 greeting 实际挂到哪个 ID。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/greeting-probe.js`
+  - `extension/src/content/candidate-card-registry.js`
+  - `test/greeting-probe.test.js`
+  - 视排查结果可能修改 `extension/src/content/candidate-detail-probe.js` 或诊断 Profile 摘要
+- 不修改范围：不点击真实 BOSS 打招呼按钮，不发送消息，不采集打招呼话术、聊天正文、联系方式或完整简历正文，不改变上传接口和 CLS 配置，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：解析用户提供的 Profile，补充能复现本次丢失候选人信息的单元测试；修复后运行相关 `node --test`、全量 `npm test` 和 `git diff --check`。
+- 当前状态：准备解析 Profile，并检查候选人 registry、详情探针和打招呼探针当前实现。
+
+#### 完成记录：刘心雨打招呼候选人上下文已修复
+
+- 时间：2026-05-17 16:40:17 CST
+- 状态：已完成
+- 已完成：解析用户提供的 Profile，确认“刘心雨”的列表曝光和详情打开事件存在，候选人 ID 是 `bo_candidate_text_fingerprint_card_c99y1c_122ipj2`，并且详情事件带有姓名、年龄、学历、经验等基础 `profile`。但 16:34 的 `candidate_greeting.clicked/succeeded` 仍落到了孤立按钮文本指纹 `bo_candidate_text_fingerprint_card_141jwes_1to1eq1`，只带 `stableIdSource: text_fingerprint`，没有姓名。
+- 已完成：定位根因是详情候选人兜底上下文只在详情打开时写入一次，默认 30 秒后过期；刘心雨详情打开到打招呼间隔约 6 分钟，且 Profile 中没有刘心雨的 `candidate_detail.closed`，说明详情上下文仍应视为活跃，但 registry 里的 recent detail 已过期。
+- 已完成：详情探针在同一详情持续可见时会刷新候选人快照关联，保持最近详情候选人在 registry 中有效；详情消失或切换时会清理这份最近详情兜底，避免后续按钮局部文本误继承已经关闭的候选人。
+- 已完成：补充单元测试覆盖“详情保持可见超过 30 秒后，recent detail 仍刷新；详情关闭后 recent detail 立即清空”的场景，并同步打招呼模块文档和日志规范中关于详情兜底上下文的描述。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/06-greeting.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/candidate-card-registry.js`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `test/candidate-detail-probe.test.js`
+- 验证结果：
+  - `node --check extension/src/content/candidate-card-registry.js` 通过。
+  - `node --check extension/src/content/candidate-detail-probe.js` 通过。
+  - `node --check extension/src/content/greeting-probe.js` 通过。
+  - `node --test test/candidate-detail-probe.test.js` 通过，38 个测试全部通过。
+  - `node --test test/greeting-probe.test.js` 通过，11 个测试全部通过。
+  - `node --test test/candidate-card-registry.test.js` 通过，10 个测试全部通过。
+  - `npm test` 通过，170 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：Profile 中已经上传的刘心雨两条 greeting 历史事件仍是旧的孤立 ID，无法本地改写；需要重载扩展后重新操作，新的 greeting 才会继承仍可见详情候选人的 `candidateId/profile`。全程未使用 CDP / DevTools / 远程调试，未由 AI 操作真实打招呼按钮。
+
+### 任务：排查肉眼可见牛人分析但 detail.opened 缺少 analysis 字段
+
+- 时间：2026-05-17 16:55:01 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：排查用户确认肉眼可见“牛人分析”模块，但最新 Profile 中 `candidate_detail.opened` 没有 `payload.analysis.module = boss_analysis` 的问题，并修复详情解析遗漏。
+- 当前理解：合并字段代码仍存在，但用户 Profile 中近期 3 条 `candidate_detail.opened` 的 `payloadKeys` 都没有 `analysis`。用户确认页面肉眼可见，说明详情探针的文本读取/分析模块解析没有拿到该模块，而不是字段被正常省略。需要检查 `extractCandidateDetailProfile`、`compactBossAnalysis`、Canvas/DOM 文本来源，以及诊断 Profile 是否能帮助确认分析文本是否进入 payload。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `test/candidate-detail-probe.test.js`
+  - 视排查结果可能修改 `extension/src/shared/diagnostic-profile.js` 或详情模块文档
+- 不修改范围：不采集完整牛人分析正文，不采集完整简历正文/聊天正文/联系方式，不改变上传接口和 CLS 配置，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：补充单元测试覆盖真实页面可能出现的“牛人分析模块可见但没有可压缩详情项/只有标题或按钮”的文本形态；运行相关 `node --test`、全量 `npm test` 和 `git diff --check`。
+- 当前状态：准备阅读详情解析函数，确认当前 `analysis` 是否被绑定到 `compactBossAnalysis` 的有效内容而过于严格。
+
+#### 完成记录：牛人分析可见标记已从摘要内容中解耦
+
+- 时间：2026-05-17 16:56:49 CST
+- 状态：已完成
+- 已完成：确认当前 `analysis.module` 之前依赖 `compactBossAnalysis(candidate.detailProfile.bossAnalysis)`，也就是需要成功提取出可压缩的牛人分析摘要。真实页面中如果详情 iframe 文本不够完整、探针退回到选中候选人卡片识别候选人，但 iframe 里仍能读到“牛人分析/牛人分析器”标题或入口，就会肉眼可见但不输出 `analysis`。
+- 已完成：新增 `analysisVisible` 检测，只要详情 DOM/Canvas 合并文本中出现牛人分析模块信号，就在 `candidate_detail.opened` 上输出 `analysis.module = "boss_analysis"`；这只记录模块可见事实，不要求保存或解析完整分析正文。
+- 已完成：`hasBossAnalysisSignal` 改为优先识别 root payload 的 `analysis.module`，因此牛人分析异步出现时仍会触发更完整的 `candidate_detail.opened` 补发。
+- 已完成：补充单元测试覆盖 `c_resume_selected_card` 兜底场景：详情候选人信息来自选中列表卡片，详情 iframe 只读到“牛人分析器/查看全部8项分析”，payload 仍应带 `analysis.module`，但不输出完整 `detailProfile`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `test/candidate-detail-probe.test.js`
+- 验证结果：
+  - `node --check extension/src/content/candidate-detail-probe.js` 通过。
+  - `node --test test/candidate-detail-probe.test.js` 通过，39 个测试全部通过。
+  - `npm test` 通过，171 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：如果 BOSS 把“牛人分析”完全绘制在无法被当前 DOM/Canvas 文本捕获的区域，仍可能缺少 `analysis`；但本次已覆盖“标题/入口可读但详情摘要不可提取”的主要场景。需要重载扩展后在真机重新打开详情验证。全程未使用 CDP / DevTools / 远程调试。
+
+### 任务：详情打开事件等待异步牛人分析并保证秒关不丢
+
+- 时间：2026-05-17 17:02:41 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：将 `candidate_detail.opened` 改为短暂等待异步详情内容/牛人分析模块后再入队，同时保证用户打开后立即关闭或切换候选人时，打开事件仍会被立即 flush，不丢队列任务。
+- 当前理解：用户判断“牛人分析”模块可能异步渲染是合理的。当前实现第一次识别详情就立即 collect `candidate_detail.opened`，后续异步出现牛人分析会补发更完整的 opened，但这会产生较早的无 analysis 打点。更合适的行为是先保留 pending open，在很短窗口内继续更新 payload；如果等到了 `analysis.module` 或窗口结束，就发 opened。若详情消失、切换或 probe 停止，必须先发 pending opened，再发 closed 或完成清理。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `test/candidate-detail-probe.test.js`
+  - 视行为说明需要可能同步 `docs/modules/05-candidate-detail.md` 或 `docs/modules/12-log-specification.md`
+- 不修改范围：不新增独立 `boss_analysis_viewed` 事件，不采集完整牛人分析正文，不改变上传接口和 CLS 配置，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：补充单元测试覆盖延迟后发 opened、异步出现 analysis 时发单条 opened、秒关时先 flush opened 再 closed、候选人切换时旧 pending 不丢；运行相关 `node --test`、全量 `npm test` 和 `git diff --check`。
+- 当前状态：准备改造 `CandidateDetailProbe` 的 activeDetail 状态，增加 pending open 与强制 flush 逻辑。
+
+#### 完成记录：detail.opened 已支持短暂等待与强制 flush
+
+- 时间：2026-05-17 17:05:29 CST
+- 状态：已完成
+- 已完成：`CandidateDetailProbe` 新增 pending opened 状态。首次识别候选人详情时先暂存 payload 和候选人关联，最多等待约 1.5 秒，让异步详情内容和“牛人分析”模块有机会进入同一条 `candidate_detail.opened`。
+- 已完成：如果 pending 期间已经检测到 `analysis.module = "boss_analysis"`，立即写入 `candidate_detail.opened`，不继续等待；如果等待窗口结束仍没有 analysis，也会写入普通 opened。
+- 已完成：如果详情在 pending 期间消失、切换候选人或探针停止，会先强制 flush pending `candidate_detail.opened`，再写入 `candidate_detail.closed` 或完成清理，保证秒开秒关和快速切换都不会丢打开事实。
+- 已完成：pending 期间仍会刷新候选人详情关联，避免打招呼等后续事件在等待窗口内丢失候选人上下文。
+- 已完成：同步详情模块文档和日志规范，说明 opened 会短暂等待异步模块，但关闭/切换会强制 flush。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/05-candidate-detail.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `test/candidate-detail-probe.test.js`
+- 验证结果：
+  - `node --check extension/src/content/candidate-detail-probe.js` 通过。
+  - `node --test test/candidate-detail-probe.test.js` 通过，43 个测试全部通过。
+  - `npm test` 通过，175 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：这次仍未直接操作真实 BOSS 页面做真机回归；需要重载扩展后重新打开带牛人分析的详情页验证 CLS 中的新 `candidate_detail.opened` 是否带 `analysis.module`。全程未使用 CDP / DevTools / 远程调试。
+
+### 任务：真机回归详情与牛人分析修复
+
+- 时间：2026-05-17 17:08:29 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：在真实 Chrome/BOSS 页面环境中验证前面修复的问题，包括 `candidate_detail.opened` 等待异步牛人分析、`analysis.module = boss_analysis`、秒开秒关 opened 不丢，以及详情候选人上下文刷新。
+- 当前理解：真机验证必须避免 CDP / DevTools / 远程调试。可以使用本机 UI 操作、插件 debug/Profile、CLS 后台或已有本地辅助脚本。真实点击“打招呼”会触达候选人，除非用户明确允许，否则本轮不主动点击打招呼按钮，只验证详情链路和可观察日志。
+- 计划修改文件：原则上不修改代码；只更新 `docs/ai-worklog.md` 记录验证过程。如真机发现新问题，再按最小范围修改相关代码和测试。
+- 不修改范围：不点击真实“打招呼”按钮，不发送消息，不采集额外敏感正文，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：确认扩展已加载最新代码；在真实 BOSS 推荐/详情页打开带牛人分析的候选人详情；通过插件 debug/Profile 或 CLS 检查 `candidate_detail.opened` 是否含 `analysis.module`；尝试快速打开/关闭或切换详情，确认 opened/closed 都入队/上传；记录结果和阻塞。
+- 当前状态：准备检查本机可用的非 CDP 测试工具与当前 Chrome/BOSS 状态。
+
+#### 接手记录：继续真机回归
+
+- 时间：2026-05-17 17:12:05 CST
+- 状态：进行中
+- 已完成：读取最新工作日志和 `git status --short`，确认上一阶段已完成代码与单元测试，当前任务停在真机回归阶段；工作区存在多项未提交改动，本轮只计划更新验证日志，不回退或整理无关 diff。
+- 改动文件：`docs/ai-worklog.md`
+- 当前验证结果：尚未完成本轮真机操作；准备继续使用 Computer Use 操作现有 Chrome/BOSS 页面，并通过插件 debug/Profile 检查事件。
+- 如果此刻中断，下一位 AI 应从 Chrome 中已重载扩展、BOSS 页面已刷新后的状态继续，避免使用 CDP / DevTools / 远程调试，也不要点击真实“打招呼”按钮。
+
+#### 阶段记录：真机详情打开/关闭与上传已验证
+
+- 时间：2026-05-17 17:18:39 CST
+- 状态：已完成本轮真机回归
+- 已完成：通过 Chrome 扩展管理页重载 BOSS Observer，并刷新真实 BOSS 推荐牛人页面；全程使用 Computer Use 和插件自身 Profile，不使用 CDP / DevTools / 远程调试。
+- 已完成：在真实页面打开王先生详情，随后关闭；下载 `/Users/tiny/Downloads/boss-observer-profile-0.1.0-2026-05-17T17-13-20-283+08-00.json`，确认 `candidate_detail.opened` 已落地，payload 带 `candidate.profile.displayName = 王先生`、`candidateId = bo_candidate_text_fingerprint_card_1qcbxnx_nzkxsp`。
+- 已完成：继续打开并关闭吴先生详情；下载 `/Users/tiny/Downloads/boss-observer-profile-0.1.0-2026-05-17T17-15-44-150+08-00.json`，确认吴先生 `candidate_detail.opened` 与 `candidate_detail.closed` 都落地，`closed.openedEventId` 指向同一次 opened，`reason = detail_disappeared`，姓名和 candidateId 一致。
+- 已完成：等待上传周期后下载 `/Users/tiny/Downloads/boss-observer-profile-0.1.0-2026-05-17T17-16-37-377+08-00.json`，确认 `runtime.queueSize = 0`，`runtime.upload.lastUploadResult.status = 200`，`targetType = cls_anonymous`，`batchSize = 2`，说明本轮详情事件已从本地队列上传成功。
+- 已完成：popup 生产状态页可打开，`下载Profile` 可用；刷新后整体状态和候选人详情模块均恢复绿色。曾在刚关闭详情后短暂出现候选人详情红色，刷新后恢复正常，符合刚关闭/上传窗口内的状态抖动。
+- 已完成：popup 的 `打开Debug` 入口可用，能打开独立 `debug-raw/index.html` 页面；Debug 页显示最新 `candidate_detail.closed`，Recent Events 包含本轮多条 opened/closed，Last Upload Result 显示 `status = 200`、`batchSize = 1`、`uploadedAt = 2026-05-17T17:18:49.163+08:00`。
+- 未完成/未命中：本轮打开的王先生、吴先生和后续一条详情，可访问文本与肉眼页面都未出现“牛人分析/牛人分析器”模块，因此无法在真机上证明 `candidate_detail.opened.payload.analysis.module = boss_analysis` 的可见模块路径已命中；代码和单元测试已覆盖该分支，但仍需要用户或下一轮提供/打开一个肉眼可见牛人分析的详情页再验证。
+- 未执行：未点击真实“打招呼”按钮，避免触达候选人；因此本轮没有真机验证 greeting 成功事件继承详情候选人上下文。
+- 改动文件：`docs/ai-worklog.md`
+- 当前验证结果：详情 opened/closed、candidateId/姓名关联、openedEventId 关联、本地队列上传、popup/Profile 下载均通过真机验证；牛人分析可见模块和真实打招呼链路本轮未覆盖。
+- 如果此刻中断，下一位 AI 应从寻找一个真实可见“牛人分析”模块的详情页继续，下载 Profile 后检查 `candidate_detail.opened.payload.analysis.module`；真实打招呼仍需用户明确允许后再操作。
+
+### 任务：排查 canvas 详情仍缺少 boss_analysis
+
+- 时间：2026-05-17 17:29:17 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：排查用户提供的南葵籽 `candidate_detail.opened` 事件仍缺少 `payload.analysis.module = boss_analysis` 的原因，并修复详情探针对 canvas/异步牛人分析模块的漏识别。
+- 当前理解：用户提供事件 `detectedBy = c_resume_canvas_matched_card`，候选人基础信息与 `detailProfile.topSummary` 已能从 Canvas 文本识别，但 payload 没有 `analysis`。这说明候选人详情识别链路正常，漏点更可能在 `hasBossAnalysisModuleSignal` 对真实 Canvas/OCR 文本过于严格，或只检测了当前详情文本，没有把后续异步出现的分析模块信号合并进 pending opened。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `test/candidate-detail-probe.test.js`
+- 不修改范围：不新增独立 `boss_analysis_viewed` 事件，不采集完整牛人分析正文，不改变上传接口和 CLS 配置，不点击真实“打招呼”，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：补充真实 canvas 文本形态的单元测试；运行 `node --check extension/src/content/candidate-detail-probe.js`、`node --test test/candidate-detail-probe.test.js`，必要时运行全量 `npm test` 和 `git diff --check`。
+- 当前状态：准备阅读详情探针中 `analysisVisible`、Canvas 文本合并和 boss analysis signal 判断。
+
+#### 完成记录：canvas 拆字牛人分析信号已修复
+
+- 时间：2026-05-17 17:34:31 CST
+- 状态：已完成
+- 已完成：确认南葵籽事件已经能识别 `c_resume_canvas_matched_card` 候选人，但 `analysisVisible` 依赖 `detectCandidateDetailSignals(normalizeText(text))` 中的 `includes("牛人分析")`。真实 Canvas 文本会把中文拆成 `南 葵 籽`、`离 职 -随 时 到 岗` 这类形态，因此如果标题被捕获为 `牛 人 分 析 器`，旧逻辑会漏掉 `boss_analysis_section`。
+- 已完成：详情段落信号匹配改为“正常文本 + 去空格文本”双通道，能识别 `牛 人 分 析` / `牛 人 分 析 器` 这类 Canvas/OCR 拆字标题；`extractBossAnalysisSummary` 也能从拆字标题提取 `bossAnalysis.title`，并能把 `查 看 全 部 8 项 分 析` 归一为 actionText。
+- 已完成：补充单元测试覆盖 c-resume Canvas 详情中 `牛 人 分 析 器` 被拆字捕获的场景，断言 `detected.analysisVisible = true`、`payload.analysis.module = boss_analysis`、`detailProfile.bossAnalysis.title = 牛人分析器`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `test/candidate-detail-probe.test.js`
+- 验证结果：
+  - `node --check extension/src/content/candidate-detail-probe.js` 通过。
+  - `node --test test/candidate-detail-probe.test.js` 通过，44 个测试全部通过。
+  - `npm test` 通过，176 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：需要重载扩展后重新打开肉眼可见牛人分析模块的真实候选人详情，新的 `candidate_detail.opened` 才会带 `payload.analysis.module = boss_analysis`；旧 CLS 日志无法回填。
+
+### 任务：排查 Profile 有 analysis 但 CLS 暂时看不到
+
+- 时间：2026-05-17 17:47:59 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：分析用户提供的 `boss-observer-profile-0.1.0-2026-05-17T17-43-45-526+08-00.json`，确认为什么用户仍认为没有 `boss_analysis`，并修复详情事件上传滞后导致的验证误判。
+- 当前理解：Profile 中最新 `candidate_detail.opened` 发生在 `2026-05-17T17:43:25.993+08:00`，候选人“诗曼”，payload 已有 `analysis.module = boss_analysis`；但最近一次上传是 `2026-05-17T17:43:23.280+08:00`，早于该事件，且 `queueSize = 1`、`candidate_detail.pendingCount = 1`，说明这条详情事件还在本地队列里未上传到 CLS。当前 `shouldFlushImmediately` 只覆盖聊天快照和微信，详情打开/关闭依赖 Chrome alarm 或批量阈值，容易造成刚打开详情后查 CLS 看不到。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/shared/upload-policy.js`
+  - `test/upload-policy.test.js`
+- 不修改范围：不改变事件 payload，不改变 CLS topic/region，不扩大敏感文本采集，不点击真实“打招呼”，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：把即时上传策略抽成可测试的 shared 纯函数；让候选人详情 opened/closed、打招呼结果和聊天快照都即时 flush；运行新增单测、service worker 语法检查、`npm test` 和 `git diff --check`。
+- 当前状态：准备小步修改上传策略。
+
+#### 完成记录：高价值事件即时上传策略已补齐
+
+- 时间：2026-05-17 17:53:12 CST
+- 状态：已完成
+- 已完成：确认用户提供的 Profile 中“诗曼”的 `candidate_detail.opened` 已经包含 `payload.analysis.module = boss_analysis`，本次“还是没有”的原因不是详情识别漏报，而是该事件产生在最近一次上传之后，Profile 里仍处于 `runtime.queueSize = 1` / `candidate_detail.pendingCount = 1` 的本地待上传状态。
+- 已完成：将即时上传判断抽到 `extension/src/shared/upload-policy.js`，把 `candidate_detail.opened`、`candidate_detail.closed`、`candidate_greeting.clicked`、`candidate_greeting.succeeded`、`candidate_greeting.failed`、`candidate_chat.snapshot_captured`、`candidate_chat.wechat_captured` 纳入即时 flush，避免详情/打招呼这类用户动作事件只等 Chrome alarm 或批量阈值。
+- 已完成：`extension/src/background/service-worker.js` 改为复用 shared upload policy，原先只覆盖聊天快照/微信的本地判断已移除。
+- 已完成：新增 `test/upload-policy.test.js`，覆盖高价值事件即时上传，以及列表曝光、聊天补采提示、职位上下文等被动/噪声事件继续批量上传。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/shared/upload-policy.js`
+  - `test/upload-policy.test.js`
+- 验证结果：
+  - `node --check extension/src/shared/upload-policy.js` 通过。
+  - `node --check extension/src/background/service-worker.js` 通过。
+  - `node --test test/upload-policy.test.js` 通过，2 个测试全部通过。
+  - `npm test` 通过，178 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：需要重载扩展后重新打开候选人详情或重新触发打招呼，新版本才会对后续事件即时上传；已经在旧版本里排队的事件如果不重载会随下一次 alarm/flush 上传，但不应作为新版本验证依据，重载后请重新触发一次。
+
+### 任务：新增操作员配置与采集门禁
+
+- 时间：2026-05-17 18:24:51 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：插件必须先配置操作员信息才能采集；字段为操作员 id 和账号姓名；账号姓名需要与 BOSS 页面展示姓名对照，不一致时给出严重提示并禁止采集；每一次打点都带上操作员信息；配置入口放在 popup。
+- 当前理解：该能力属于采集前置门禁和事件 envelope 级元数据，应由后台统一判断是否允许入队，并由 popup 展示/保存配置与阻断原因。BOSS 展示姓名需要由 content script 在页面上保守识别后上报给后台；如果未配置、页面姓名未知或姓名不一致，采集链路不能产生正式业务事件。严重提示应在 popup 上明确展示，不向 BOSS 页面插入可见 DOM。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/debug/index.html`
+  - `extension/debug/debug.js`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/index.js` 或页面会话相关 content 入口
+  - `extension/src/shared/config.js`
+  - `extension/src/shared/debug-state.js`
+  - 新增共享用户门禁模块与对应测试
+  - 视需要更新 `docs/modules/09-log-system-integration.md` / `docs/modules/12-log-specification.md`
+- 不修改范围：不采集额外敏感正文，不在 BOSS 页面插入用户提示 DOM，不改变 CLS topic/region，不使用 CDP / DevTools / 远程调试连接 BOSS 页面，不实现员工绩效或质量判断。
+- 验证计划：先阅读现有 popup、config、debug state、content 入口和事件入队逻辑；抽出纯函数测试用户配置校验、姓名匹配和事件补充；运行相关 `node --check`、新增/相关 `node --test`、`npm test`、`git diff --check`。
+- 当前状态：准备阅读现有配置、popup、后台入队和 content 启动结构。
+
+#### 完成记录：操作员配置、账号对照与采集门禁已实现
+
+- 时间：2026-05-17 18:34:05 CST
+- 状态：已完成
+- 已完成：新增共享 `operator-identity` 逻辑，统一校验 `operatorId`、`accountName`、BOSS 页面展示账号姓名；未配置、未检测到页面姓名或姓名不一致时，门禁状态为 `critical`，不允许正式业务事件入队。
+- 已完成：background 的 `handleEvent` 在唯一入队口执行门禁；通过门禁后给每条事件补充 `operator.operatorId`、`operator.accountName`、`operator.bossAccountName`、`operator.bossAccountMatched`；未通过时只更新 debug state 的 `collectionGate` / `lastCollectionBlock`，不写本地队列、不上传。
+- 已完成：content 入口新增 `AccountIdentityProbe`，只读观察页面顶部账号姓名并通过 runtime message 上报给 background；使用短 debounce，避免页面频繁渲染时重复扫描。
+- 已完成：popup 新增账号配置区，可保存操作员 ID 和账号姓名；整体状态会把采集门禁纳入红绿判断，并在未配置、未检测到页面账号或姓名不一致时显示严重红色提示。
+- 已完成：CLS 扁平字段增加 `operator_id`、`operator_account_name`、`boss_account_name`、`boss_account_matched`；诊断 Profile 和 debug-raw 也会带出门禁状态，方便真机问题定位。
+- 已完成：同步日志系统对接文档、日志规范和总览设计，明确操作员门禁、事件根部 `operator` 字段和 CLS 索引建议。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/overview-design.md`
+  - `docs/modules/09-log-system-integration.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/debug/index.html`
+  - `extension/debug/debug.js`
+  - `extension/debug-raw/debug.js`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/main.js`
+  - `extension/src/content/account-identity-probe.js`
+  - `extension/src/shared/config.js`
+  - `extension/src/shared/debug-state.js`
+  - `extension/src/shared/cls-log-format.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `extension/src/shared/operator-identity.js`
+  - `test/account-identity-probe.test.js`
+  - `test/operator-identity.test.js`
+  - `test/config.test.js`
+  - `test/debug-state.test.js`
+  - `test/cls-log-format.test.js`
+- 验证结果：
+  - `node --check extension/src/shared/operator-identity.js` 通过。
+  - `node --check extension/src/content/account-identity-probe.js` 通过。
+  - `node --check extension/src/background/service-worker.js` 通过。
+  - `node --check extension/debug/debug.js` 通过。
+  - `node --check extension/debug-raw/debug.js` 通过。
+  - `node --check extension/src/shared/config.js` 通过。
+  - `node --check extension/src/shared/debug-state.js` 通过。
+  - `node --check extension/src/shared/cls-log-format.js` 通过。
+  - `node --check extension/src/shared/diagnostic-profile.js` 通过。
+  - `node --check extension/src/content/main.js` 通过。
+  - `node --test test/operator-identity.test.js` 通过，5 个测试全部通过。
+  - `node --test test/account-identity-probe.test.js` 通过，4 个测试全部通过。
+  - `node --test test/config.test.js test/debug-state.test.js test/cls-log-format.test.js test/diagnostic-profile.test.js` 通过，12 个测试全部通过。
+  - `npm test` 通过，187 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：尚未重载真实 Chrome 扩展做真机验证；BOSS 顶部账号姓名选择器是保守启发式，若真实页面展示方式不同，popup 会显示“未检测到 BOSS 页面展示的账号姓名”并阻断采集，需要下载 Profile 或打开 debug-raw 查看 `collectionGate.bossAccount` 后再补选择器。
+
+### 任务：排查聊天页误判为候选人详情
+
+- 时间：2026-05-17 18:42:10 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：分析用户提供的 `boss-observer-profile-0.1.0-2026-05-17T18-41-19-526+08-00.json`，确认为什么点击聊天记录后出现 `candidate_detail.opened`，并修复聊天页详情探针误判。
+- 当前理解：Profile 显示 `candidate_chat.opened` for Alone 后约 0.5 秒产生了 `candidate_detail.opened` for Alone，但事件上下文仍是 `pageType = chat`、`pageUrl = https://www.zhipin.com/web/chat/index`。这说明不是页面真实跳到了详情 URL，而是 `CandidateDetailProbe` 在普通聊天页读取到候选人姓名/牛人分析等文本后误判为详情打开。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `test/candidate-detail-probe.test.js`
+- 不修改范围：不改变聊天快照采集逻辑，不改变打招呼/详情已有 payload 结构，不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：补充聊天页含“牛人分析/候选人姓名”的误判回归测试；让详情探针只在候选人详情 URL、c-resume iframe、推荐/搜索/管理列表页详情浮层等允许页面运行，排除普通 `/web/chat/index` 聊天页；运行详情探针测试、全量 `npm test` 和 `git diff --check`。
+- 当前状态：准备阅读详情探针的页面范围与检测逻辑。
+
+#### 完成记录：聊天页误判详情已修复
+
+- 时间：2026-05-17 18:43:58 CST
+- 状态：已完成
+- 已完成：Profile 里确认 `Alone` 在 `candidate_chat.opened` 后 0.5 秒误发 `candidate_detail.opened`，但事件上下文仍为 `pageType = chat`、`pageUrl = /web/chat/index`，因此根因是详情探针在普通聊天页把 profile/牛人分析样式面板误判为候选人详情。
+- 已完成：`findActiveCandidateDetail` 的 inline detail container 检测增加页面范围限制，只允许在候选人推荐、搜索、有意向、互动和管理等候选人列表页面扫描浮层详情；普通聊天页不再扫描这类容器。详情 URL / c-resume iframe 的识别链路保持不变。
+- 已完成：新增回归测试，构造普通聊天页中含候选人姓名、求职期望、牛人分析、个人优势、工作经历和详情动作文本的 profile-like 面板，断言不会产生 active detail。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `test/candidate-detail-probe.test.js`
+- 验证结果：
+  - `node --check extension/src/content/candidate-detail-probe.js` 通过。
+  - `node --test test/candidate-detail-probe.test.js` 通过，45 个测试全部通过。
+  - `npm test` 通过，188 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：需要重载扩展后重新在真实 BOSS 聊天页点击聊天记录验证；旧 Profile/CLS 中已经误发的 `candidate_detail.opened` 不会被回滚，新版本应不再新增这类 chat page 上下文的详情事件。
+
+### 任务：分析全量真机回归 Profile 与 ID 链路
+
+- 时间：2026-05-17 18:52:00 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：分析用户提供的 `boss-observer-profile-0.1.0-2026-05-17T18-50-07-964+08-00.json`，验证核心流程、上传状态和全链路 ID 是否能对接，并整理数据分析报告。
+- 当前理解：这是重载修复后的一轮核心流程回归 Profile，需要重点检查 operator 门禁、队列/上传、模块健康、候选人列表曝光 -> 详情打开/关闭 -> 打招呼点击/成功 -> 聊天打开/快照/补采状态，以及 `candidateId`、`exposedEventId`、`openedEventId`、`clickedEventId`、`conversationKey` 等关联字段。
+- 计划修改文件：只更新 `docs/ai-worklog.md` 记录分析过程；原则上不修改源码。如分析发现链路问题，再另开修复。
+- 不修改范围：不重载扩展、不操作真实 BOSS 页面、不修改采集逻辑、不使用 CDP / DevTools / 远程调试连接 BOSS 页面。
+- 验证计划：用本地脚本读取 Profile，按事件时间、类型、候选人、关联 ID 分组；核对生产统计和最近上传；确认是否存在待上传、上传失败、未补采聊天、姓名门禁异常、详情误判或 ID 断链；最终给出结论和分析报告。
+- 当前状态：已读取基础运行状态，准备展开事件链路。
+
+#### 完成记录：Profile 链路分析完成
+
+- 时间：2026-05-17 18:55:07 CST
+- 状态：已完成
+- 已完成：解析 Profile 基础运行状态，确认 `queueSize = 0`、最近上传 HTTP 200、所有模块 `moduleHealth.status = ok`、所有模块 `pendingCount = 0`、`unreportedChats = []`。
+- 已完成：确认采集门禁当前为 `ok`，操作员 `operatorId = 1001`、配置姓名和 BOSS 展示姓名均为“谢女士”，recent events 中每条事件都带 `operator` 且 `bossAccountMatched = true`。
+- 已完成：逐条核对 50 条 recent events 的关联 ID，未发现悬空引用；`candidate_detail.opened.payload.candidate.exposedEventId` 能指向谭玉林的 `candidate_list.card_exposed`，`candidate_greeting.succeeded.clickedEventId` 能指向 `candidate_greeting.clicked`，`candidate_detail.closed.openedEventId` 能指向 `candidate_detail.opened`。
+- 已完成：确认聊天页误判详情修复生效；本 Profile 中没有 `pageType = chat` 的 `candidate_detail.opened/closed`。
+- 已完成：整理数据报告口径：本轮可证明“聊天补采链路”和“推荐曝光 -> 详情 -> 打招呼 -> 关闭详情链路”各自 ID 贯通；但未覆盖“同一推荐候选人打招呼后进入聊天”的跨模块同人链路，因为聊天事件候选人为“抹茶/刘心雨”，推荐详情/打招呼候选人为“谭玉林”。
+- 改动文件：`docs/ai-worklog.md`
+- 验证结果：本轮为 Profile 数据分析，未修改源码，未运行自动化测试；使用本地 Node 脚本完成事件分组和 ID 引用检查。
+- 风险/阻塞：`candidate_filter.applied` 在同一个 `openedEventId` 下出现两次，可能是用户实际点了两次应用，也可能需要后续做短时间去重；不影响本轮主链路 ID 对接。初始 `lastCollectionBlock` 是门禁配置前的历史阻断记录，当前门禁已经恢复 `ok`。

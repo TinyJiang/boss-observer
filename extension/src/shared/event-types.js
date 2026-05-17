@@ -13,7 +13,6 @@ export const EVENT_TYPES = Object.freeze({
   CANDIDATE_CARD_EXPOSED: "candidate_list.card_exposed",
   CANDIDATE_DETAIL_OPENED: "candidate_detail.opened",
   CANDIDATE_DETAIL_CLOSED: "candidate_detail.closed",
-  CANDIDATE_DETAIL_BOSS_ANALYSIS_VIEWED: "candidate_detail.boss_analysis_viewed",
   CANDIDATE_GREETING_CLICKED: "candidate_greeting.clicked",
   CANDIDATE_GREETING_SUCCEEDED: "candidate_greeting.succeeded",
   CANDIDATE_GREETING_FAILED: "candidate_greeting.failed",

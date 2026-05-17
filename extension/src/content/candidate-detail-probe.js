@@ -9,10 +9,12 @@ import {
 } from "./candidate-card.js";
 import { readCanvasTextForDocument } from "./canvas-text-capture.js";
 import {
+  clearRecentCandidateDetailAssociation as clearRecentDetailAssociation,
   getCandidateCardAssociationByExposure,
   getCandidateCardAssociationFromElement,
   getRecentCandidateCardAssociation as readRecentCandidateCardAssociation,
   mergeCandidateSnapshotWithAssociation,
+  rememberCandidateSnapshotAssociation as rememberSnapshotAssociation,
   recordCandidateCardInteraction
 } from "./candidate-card-registry.js";
 import { classifyPage } from "../shared/page-classifier.js";
@@ -29,6 +31,7 @@ const DETAIL_SUMMARY_MAX_CHARS = 160;
 const DETAIL_SECTION_ITEM_LIMIT = 3;
 const BOSS_ANALYSIS_ITEM_LIMIT = 8;
 const DETAIL_RICHNESS_REOPEN_THRESHOLD = 4;
+const DETAIL_OPEN_DEFER_MS = 1500;
 const BOSS_ANALYSIS_SIGNAL = "boss_analysis_section";
 const AUXILIARY_TEXT_ELEMENT_LIMIT = 300;
 const MAX_SELECTED_CARD_ANCESTOR_STEPS = 8;
@@ -79,6 +82,13 @@ const COMMON_DETAIL_MATCH_TOKENS = new Set([
   "直播",
   "有图片作品",
   "性格开朗"
+]);
+const INLINE_DETAIL_CONTAINER_PAGE_TYPES = new Set([
+  "candidate_recommend",
+  "candidate_search",
+  "candidate_intention",
+  "candidate_interaction",
+  "candidate_manage"
 ]);
 
 const DETAIL_SECTION_SIGNAL_RULES = [
@@ -167,19 +177,25 @@ export class CandidateDetailProbe {
     collector,
     sessionContext,
     scanIntervalMs = SCAN_INTERVAL_MS,
+    openDeferMs = DETAIL_OPEN_DEFER_MS,
     detectActiveDetail = findActiveCandidateDetail,
     readCanvasText = readCanvasTextForDocument,
     getRecentCandidateCardAssociation = readRecentCandidateCardAssociation,
     rememberCandidateCardInteraction = recordCandidateCardInteraction,
+    rememberCandidateSnapshotAssociation = rememberSnapshotAssociation,
+    clearRecentCandidateDetailAssociation = clearRecentDetailAssociation,
     now = () => Date.now()
   }) {
     this.collector = collector;
     this.sessionContext = sessionContext;
     this.scanIntervalMs = scanIntervalMs;
+    this.openDeferMs = Math.max(0, Number(openDeferMs) || 0);
     this.detectActiveDetail = detectActiveDetail;
     this.readCanvasText = readCanvasText;
     this.getRecentCandidateCardAssociation = getRecentCandidateCardAssociation;
     this.rememberCandidateCardInteraction = rememberCandidateCardInteraction;
+    this.rememberCandidateSnapshotAssociation = rememberCandidateSnapshotAssociation;
+    this.clearRecentCandidateDetailAssociation = clearRecentCandidateDetailAssociation;
     this.now = now;
     this.started = false;
     this.pollHandle = null;
@@ -247,27 +263,29 @@ export class CandidateDetailProbe {
     const key = buildCandidateDetailKey(payload);
 
     if (this.activeDetail?.key === key) {
+      if (this.activeDetail.pendingOpen) {
+        this.updatePendingOpenedDetail(payload, key);
+        return;
+      }
       if (this.shouldEmitRicherDetailOpened(payload)) {
-        this.emitOpenedDetail(payload, key, {
-          bossAnalysisViewed: this.activeDetail.bossAnalysisViewed
-        });
-        this.emitBossAnalysisViewedIfNeeded(payload);
+        this.emitOpenedDetail(payload, key);
         return;
       }
       this.activeDetail = {
         ...this.activeDetail,
         payload
       };
-      this.emitBossAnalysisViewedIfNeeded(payload);
+      this.rememberDetailAssociation(payload);
       return;
     }
 
     if (this.shouldTreatAsSameLoadingDetail(payload)) {
+      if (this.activeDetail.pendingOpen) {
+        this.updatePendingOpenedDetail(payload, key);
+        return;
+      }
       if (this.shouldEmitRicherDetailOpened(payload)) {
-        this.emitOpenedDetail(payload, key, {
-          bossAnalysisViewed: this.activeDetail.bossAnalysisViewed
-        });
-        this.emitBossAnalysisViewedIfNeeded(payload);
+        this.emitOpenedDetail(payload, key);
         return;
       }
       this.activeDetail = {
@@ -275,7 +293,7 @@ export class CandidateDetailProbe {
         key,
         payload
       };
-      this.emitBossAnalysisViewedIfNeeded(payload);
+      this.rememberDetailAssociation(payload);
       return;
     }
 
@@ -283,13 +301,10 @@ export class CandidateDetailProbe {
       this.closeActiveDetail(source, "candidate_switched");
     }
 
-    this.emitOpenedDetail(payload, key);
-    this.emitBossAnalysisViewedIfNeeded(payload);
+    this.startPendingOpenedDetail(payload, key);
   }
 
-  emitOpenedDetail(payload, key, {
-    bossAnalysisViewed = false
-  } = {}) {
+  emitOpenedDetail(payload, key) {
     const openedEvent = this.collector.collect(EVENT_TYPES.CANDIDATE_DETAIL_OPENED, payload);
     this.activeDetail = {
       key,
@@ -297,36 +312,76 @@ export class CandidateDetailProbe {
       openedAtMs: this.now(),
       openedEventId: openedEvent?.id || "",
       lastOpenedRichnessScore: scoreDetailRichness(payload),
-      bossAnalysisViewed
+      pendingOpen: false
     };
     this.rememberDetailAssociation(payload);
   }
 
-  emitBossAnalysisViewedIfNeeded(payload) {
-    if (!this.activeDetail || this.activeDetail.bossAnalysisViewed || !hasBossAnalysisSignal(payload)) {
+  startPendingOpenedDetail(payload, key) {
+    this.activeDetail = {
+      key,
+      payload,
+      openedAtMs: this.now(),
+      openedEventId: "",
+      lastOpenedRichnessScore: scoreDetailRichness(payload),
+      pendingOpen: true
+    };
+    this.rememberDetailAssociation(payload);
+    this.flushPendingOpenedDetailIfReady();
+  }
+
+  updatePendingOpenedDetail(payload, key) {
+    this.activeDetail = {
+      ...this.activeDetail,
+      key,
+      payload,
+      lastOpenedRichnessScore: scoreDetailRichness(payload)
+    };
+    this.rememberDetailAssociation(payload);
+    this.flushPendingOpenedDetailIfReady();
+  }
+
+  flushPendingOpenedDetailIfReady({ force = false } = {}) {
+    if (!this.activeDetail?.pendingOpen) {
+      return;
+    }
+    if (!force && !this.shouldFlushPendingOpenedDetail()) {
       return;
     }
 
-    const event = this.collector.collect(EVENT_TYPES.CANDIDATE_DETAIL_BOSS_ANALYSIS_VIEWED, {
-      source: payload.source,
-      detailUrl: payload.detailUrl,
-      detectedBy: payload.detectedBy,
-      candidate: payload.candidate,
-      openedEventId: this.activeDetail.openedEventId,
-      analysis: {
-        module: "boss_analysis"
-      }
-    });
+    const openedEvent = this.collector.collect(
+      EVENT_TYPES.CANDIDATE_DETAIL_OPENED,
+      this.activeDetail.payload
+    );
     this.activeDetail = {
       ...this.activeDetail,
-      bossAnalysisViewed: true,
-      bossAnalysisViewedEventId: event?.id || ""
+      openedEventId: openedEvent?.id || "",
+      pendingOpen: false
     };
+  }
+
+  shouldFlushPendingOpenedDetail() {
+    if (!this.activeDetail?.pendingOpen) {
+      return false;
+    }
+    return this.openDeferMs <= 0 ||
+      hasBossAnalysisSignal(this.activeDetail.payload) ||
+      this.now() - this.activeDetail.openedAtMs >= this.openDeferMs;
   }
 
   rememberDetailAssociation(payload) {
     const cardId = payload?.candidate?.candidateId || "";
     if (!cardId) {
+      return;
+    }
+
+    const remembered = this.rememberCandidateSnapshotAssociation?.({
+      candidate: payload.candidate,
+      interactionType: "candidate_detail_opened",
+      sourceUrl: payload.detailUrl,
+      now: this.now
+    });
+    if (remembered) {
       return;
     }
 
@@ -357,6 +412,10 @@ export class CandidateDetailProbe {
       return false;
     }
 
+    if (!hasBossAnalysisSignal(this.activeDetail.payload) && hasBossAnalysisSignal(payload)) {
+      return true;
+    }
+
     const previousScore = this.activeDetail.lastOpenedRichnessScore ??
       scoreDetailRichness(this.activeDetail.payload);
     const currentScore = scoreDetailRichness(payload);
@@ -384,14 +443,19 @@ export class CandidateDetailProbe {
     }
 
     const active = this.activeDetail;
+    this.flushPendingOpenedDetailIfReady({ force: true });
+    const flushedActive = this.activeDetail || active;
     this.activeDetail = null;
+    this.clearRecentCandidateDetailAssociation?.({
+      candidateId: flushedActive.payload?.candidate?.candidateId || ""
+    });
     this.collector.collect(EVENT_TYPES.CANDIDATE_DETAIL_CLOSED, {
       source,
       reason,
-      detailUrl: active.payload.detailUrl,
-      candidate: active.payload.candidate,
-      durationMs: Math.max(0, this.now() - active.openedAtMs),
-      openedEventId: active.openedEventId
+      detailUrl: flushedActive.payload.detailUrl,
+      candidate: flushedActive.payload.candidate,
+      durationMs: Math.max(0, this.now() - flushedActive.openedAtMs),
+      openedEventId: flushedActive.openedEventId
     });
   }
 }
@@ -406,6 +470,7 @@ export function buildCandidateDetailPayload({
   dataset = {},
   links = [],
   detectedBy = "unknown",
+  analysisVisible = false,
   candidateAssociation = null
 } = {}) {
   const normalizedText = normalizeText(text);
@@ -437,6 +502,9 @@ export function buildCandidateDetailPayload({
     detectedBy,
     candidate: compactDetailCandidatePayload(associatedCandidate, {
       payloadDetailUrl: publicDetailUrl
+    }),
+    ...buildDetailAnalysisPayload(associatedCandidate, {
+      analysisVisible
     })
   };
 }
@@ -506,6 +574,18 @@ function compactDetailProfile(detailProfile = {}) {
   }
 
   return Object.keys(result).length > 0 ? result : null;
+}
+
+function buildDetailAnalysisPayload(candidate = {}, {
+  analysisVisible = false
+} = {}) {
+  return (analysisVisible || compactBossAnalysis(candidate?.detailProfile?.bossAnalysis))
+    ? {
+        analysis: {
+          module: "boss_analysis"
+        }
+      }
+    : {};
 }
 
 function compactItemsSummary(summary = {}) {
@@ -594,6 +674,7 @@ export function findActiveCandidateDetail(rootDocument, currentPage = null, {
     const canvasText = readCandidateDetailCanvasText(currentDocument, sourceUrl, readCanvasText);
     const bodyText = mergeDetailText(domText, canvasText);
     const hasCanvasText = normalizeText(canvasText).length > 0;
+    const analysisVisible = hasBossAnalysisModuleSignal(bodyText);
     const bodyLinks = readLinks(detailRoot);
     const hasLoadedDetailContent = bodyText.length >= MIN_DETAIL_TEXT_LENGTH ||
       currentDocument.readyState !== "loading";
@@ -626,6 +707,7 @@ export function findActiveCandidateDetail(rootDocument, currentPage = null, {
         text: candidateText,
         dataset: candidateDataset,
         links: candidateLinks,
+        analysisVisible,
         textSources: buildDetailTextSources({
           domText,
           canvasText,
@@ -642,7 +724,9 @@ export function findActiveCandidateDetail(rootDocument, currentPage = null, {
       });
     }
 
-    const container = isDetailUrlPage ? null : findCandidateDetailContainer(currentDocument);
+    const container = !isDetailUrlPage && shouldScanInlineDetailContainer(sourcePage, currentPage) ?
+      findCandidateDetailContainer(currentDocument) :
+      null;
     if (container && isDocumentFrameVisible(frameElement)) {
       const text = readElementText(container);
       const links = readLinks(container);
@@ -654,6 +738,7 @@ export function findActiveCandidateDetail(rootDocument, currentPage = null, {
         text,
         dataset: readMergedDataset(container),
         links,
+        analysisVisible: hasBossAnalysisModuleSignal(text),
         textSources: buildDetailTextSources({
           domText: text,
           canvasText: "",
@@ -668,6 +753,11 @@ export function findActiveCandidateDetail(rootDocument, currentPage = null, {
 
   candidates.sort((left, right) => right.score - left.score);
   return candidates[0] || null;
+}
+
+function shouldScanInlineDetailContainer(sourcePage = {}, currentPage = {}) {
+  return INLINE_DETAIL_CONTAINER_PAGE_TYPES.has(sourcePage?.pageType) ||
+    INLINE_DETAIL_CONTAINER_PAGE_TYPES.has(currentPage?.pageType);
 }
 
 function findCandidateListCards(accessibleDocuments) {
@@ -1105,12 +1195,25 @@ export function detectCandidateDetailSignals(normalizedText = "", detailUrl = ""
   }
 
   DETAIL_SECTION_SIGNAL_RULES.forEach(([signal, labels]) => {
-    if (labels.some((label) => normalizedText.includes(label))) {
+    if (labels.some((label) => normalizedTextIncludesLabel(normalizedText, label))) {
       signals.push(signal);
     }
   });
 
   return Array.from(new Set(signals));
+}
+
+function normalizedTextIncludesLabel(normalizedText = "", label = "") {
+  const normalizedLabel = normalizeText(label);
+  if (!normalizedLabel) {
+    return false;
+  }
+  return normalizedText.includes(normalizedLabel) ||
+    compactSignalText(normalizedText).includes(compactSignalText(normalizedLabel));
+}
+
+function compactSignalText(text = "") {
+  return normalizeText(text).replace(/\s+/g, "");
 }
 
 function shouldExtractDetailProfileForDetectedSource(detectedBy = "") {
@@ -1211,8 +1314,9 @@ function extractBossAnalysisSummary(lines) {
     if (!line) {
       continue;
     }
-    if (/^查看全部\s*\d+\s*项分析$/.test(line)) {
-      actionText = line;
+    const nextActionText = normalizeBossAnalysisActionText(line);
+    if (nextActionText) {
+      actionText = nextActionText;
       continue;
     }
     if (isBossAnalysisStopLine(line)) {
@@ -1237,15 +1341,29 @@ function findBossAnalysisStartLine(lines) {
   for (let index = 0; index < lines.length; index += 1) {
     const line = normalizeText(lines[index]);
     const match = line.match(/牛人分析器?/);
-    if (!match) {
-      continue;
+    if (match) {
+      return {
+        index,
+        title: match[0] === "牛人分析器" ? "牛人分析器" : "牛人分析",
+        content: line.slice(match.index + match[0].length).replace(/^[：:\s]+/, "")
+      };
     }
 
-    return {
-      index,
-      title: match[0] === "牛人分析器" ? "牛人分析器" : "牛人分析",
-      content: line.slice(match.index + match[0].length).replace(/^[：:\s]+/, "")
-    };
+    const compactLine = compactSignalText(line);
+    if (compactLine.includes("牛人分析器")) {
+      return {
+        index,
+        title: "牛人分析器",
+        content: ""
+      };
+    }
+    if (compactLine.includes("牛人分析")) {
+      return {
+        index,
+        title: "牛人分析",
+        content: ""
+      };
+    }
   }
 
   return null;
@@ -1306,7 +1424,12 @@ function scoreDetailRichness(payload) {
 }
 
 function hasBossAnalysisSignal(payload) {
-  return Boolean(payload?.candidate?.detailProfile?.bossAnalysis);
+  return payload?.analysis?.module === "boss_analysis" ||
+    Boolean(compactBossAnalysis(payload?.candidate?.detailProfile?.bossAnalysis));
+}
+
+function hasBossAnalysisModuleSignal(text = "") {
+  return detectCandidateDetailSignals(normalizeText(text)).includes(BOSS_ANALYSIS_SIGNAL);
 }
 
 function countDetailProfileItems(detailProfile) {
@@ -1766,6 +1889,16 @@ function normalizeBossAnalysisLine(line) {
       .replace(/\s+/g, " ")
       .trim()
   );
+}
+
+function normalizeBossAnalysisActionText(line) {
+  const normalized = normalizeText(line);
+  if (/^查看全部\s*\d+\s*项分析$/.test(normalized)) {
+    return normalized;
+  }
+  const compact = compactSignalText(normalized);
+  const match = compact.match(/^查看全部(\d+)项分析$/);
+  return match ? `查看全部${match[1]}项分析` : "";
 }
 
 function isBossAnalysisStopLine(line) {

@@ -1,4 +1,5 @@
 import { readConfig } from "../shared/config.js";
+import { AccountIdentityProbe } from "./account-identity-probe.js";
 import { CandidateDetailProbe } from "./candidate-detail-probe.js";
 import { CandidateListProbe } from "./candidate-list-probe.js";
 import { ChatRecordProbe } from "./chat-record-probe.js";
@@ -17,6 +18,7 @@ async function bootstrap() {
 
   const sessionContext = new SessionContext();
   const collector = new EventCollector({ config, sessionContext });
+  const accountIdentityProbe = new AccountIdentityProbe({ config });
   const pageSessionProbe = new PageSessionProbe({ collector, sessionContext, config });
   const jobContextProbe = new JobContextProbe({ collector, sessionContext });
   const filterProbe = new FilterProbe({ collector, sessionContext });
@@ -24,6 +26,7 @@ async function bootstrap() {
   const candidateListProbe = new CandidateListProbe({ collector, sessionContext });
   const chatRecordProbe = new ChatRecordProbe({ collector, sessionContext });
   const greetingProbe = new GreetingProbe({ collector, sessionContext });
+  accountIdentityProbe.start();
   pageSessionProbe.start();
   jobContextProbe.start();
   filterProbe.start();

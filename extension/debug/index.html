@@ -1,273 +1,246 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>BOSS Observer Debug</title>
+    <title>BOSS Observer 状态</title>
     <style>
       :root {
         color-scheme: light;
-        --bg: #f6f7fb;
+        --bg: #f7f8fb;
         --panel: #ffffff;
-        --border: #d8deea;
+        --line: #d9e0ea;
         --text: #1f2937;
         --muted: #6b7280;
-        --accent: #1d4ed8;
-        --good: #047857;
-        --bad: #b91c1c;
+        --ok: #047857;
+        --ok-bg: #ecfdf5;
+        --ok-line: #a7f3d0;
+        --problem: #b91c1c;
+        --problem-bg: #fff1f2;
+        --problem-line: #fecdd3;
+        --focus: #2563eb;
       }
-      * { box-sizing: border-box; }
+      * {
+        box-sizing: border-box;
+      }
       body {
+        width: 390px;
         margin: 0;
-        font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: var(--bg);
         color: var(--text);
+        font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
       header {
-        position: sticky;
-        top: 0;
-        z-index: 2;
-        background: rgba(246, 247, 251, 0.94);
-        backdrop-filter: blur(10px);
-        border-bottom: 1px solid var(--border);
-        padding: 16px 20px;
+        padding: 14px 16px 10px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
       }
       h1 {
-        margin: 0 0 4px;
-        font-size: 18px;
+        margin: 0 0 3px;
+        font-size: 17px;
+        font-weight: 700;
       }
       .meta {
         color: var(--muted);
         font-size: 12px;
       }
       main {
-        padding: 20px;
         display: grid;
-        gap: 16px;
+        gap: 10px;
+        padding: 12px;
       }
-      .grid {
+      .toolbar {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 12px;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 8px;
+      }
+      button {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--text);
+        padding: 6px 10px;
+        cursor: pointer;
+        font: inherit;
+        white-space: nowrap;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.65;
+      }
+      label {
+        display: grid;
+        gap: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      input {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #ffffff;
+        color: var(--text);
+        padding: 7px 9px;
+        font: inherit;
+      }
+      input:focus {
+        border-color: var(--focus);
+        outline: 2px solid #bfdbfe;
+      }
+      .primary-action {
+        border-color: #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
       }
       section {
-        background: var(--panel);
-        border: 1px solid var(--border);
+        border: 1px solid var(--line);
         border-radius: 8px;
-        padding: 14px;
+        background: var(--panel);
+        padding: 12px;
       }
       h2 {
         margin: 0 0 10px;
-        font-size: 13px;
-        text-transform: uppercase;
-        letter-spacing: 0.02em;
         color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .overall {
+        border-radius: 8px;
+        padding: 14px;
+        font-size: 18px;
+        font-weight: 800;
+      }
+      .overall.ok,
+      .status-row.ok,
+      .chat-row.ok {
+        border: 1px solid var(--ok-line);
+        background: var(--ok-bg);
+        color: var(--ok);
+      }
+      .overall.problem,
+      .status-row.problem,
+      .chat-row.problem,
+      .gate-status.problem {
+        border: 1px solid var(--problem-line);
+        background: var(--problem-bg);
+        color: var(--problem);
+      }
+      .gate-status.ok {
+        border: 1px solid var(--ok-line);
+        background: var(--ok-bg);
+        color: var(--ok);
+      }
+      .operator-form {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .operator-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .operator-actions button {
+        flex: 0 0 auto;
+      }
+      .save-status {
+        min-width: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .gate-status {
+        margin-top: 10px;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+      .status-list,
+      .chat-list {
+        display: grid;
+        gap: 8px;
+      }
+      .status-row,
+      .chat-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 8px;
+        gap: 10px;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-weight: 700;
       }
-      .kv {
-        display: grid;
-        gap: 8px;
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+        background: currentColor;
       }
-      .row {
-        display: grid;
-        grid-template-columns: 150px 1fr;
-        gap: 8px;
-        align-items: start;
-      }
-      .key {
-        color: var(--muted);
-        word-break: break-word;
-      }
-      .value {
-        word-break: break-word;
-        white-space: pre-wrap;
-      }
-      .status-good { color: var(--good); }
-      .status-bad { color: var(--bad); }
-      pre {
-        margin: 0;
-        overflow: auto;
-        white-space: pre-wrap;
-        word-break: break-word;
-        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      }
-      ul {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        display: grid;
-        gap: 8px;
-      }
-      li {
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 10px;
-        background: #fafbff;
-      }
-      .toolbar {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        margin-bottom: 12px;
-        flex-wrap: wrap;
-      }
-      button {
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        background: #fff;
-        color: var(--text);
-        padding: 8px 12px;
-        cursor: pointer;
-      }
-      button:hover {
-        border-color: #b7c3d8;
-      }
-      button:disabled {
-        cursor: not-allowed;
-        opacity: 0.55;
-      }
-      select {
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        background: #fff;
-        color: var(--text);
-        padding: 7px 10px;
-        min-width: 180px;
-      }
-      .notice {
-        margin: 0 0 10px;
-        color: var(--muted);
-        font-size: 12px;
-      }
-      .capture-status {
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        padding: 6px 10px;
-        font-size: 12px;
-        font-weight: 600;
-      }
-      .capture-status.on {
-        border-color: #86efac;
-        background: #ecfdf5;
-        color: var(--good);
-      }
-      .capture-status.off {
-        border-color: #fecaca;
-        background: #fff7f7;
-        color: var(--bad);
-      }
-      .copy-button {
-        padding: 4px 8px;
-        font-size: 12px;
-        font-weight: 500;
-        text-transform: none;
-        letter-spacing: 0;
-      }
-      .copy-button.copied {
-        border-color: #86efac;
-        color: var(--good);
-      }
-      .copy-button.failed {
-        border-color: #fecaca;
-        color: var(--bad);
-      }
-      .request-filter {
+      .row-main {
         display: flex;
         align-items: center;
         gap: 8px;
-        flex-wrap: wrap;
-        margin-bottom: 10px;
+        min-width: 0;
       }
-      .request-filter label {
-        color: var(--muted);
-        font-size: 12px;
+      .label {
+        overflow-wrap: anywhere;
       }
-      .filter-summary {
-        color: var(--muted);
-        font-size: 12px;
+      .state-text {
+        flex: 0 0 auto;
+      }
+      .chat-row {
+        justify-content: flex-start;
       }
     </style>
   </head>
   <body>
     <header>
-      <h1>BOSS Observer Debug</h1>
-      <div class="meta" id="updatedAt">Loading...</div>
+      <h1>BOSS Observer 状态</h1>
+      <div class="meta">绿色表示正常，红色表示需要处理</div>
     </header>
     <main>
       <div class="toolbar">
-        <button id="refreshButton" type="button">Refresh</button>
-        <button id="startNetworkButton" type="button">Start Network Capture</button>
-        <button id="stopNetworkButton" type="button">Stop Network Capture</button>
-        <button id="clearNetworkButton" type="button">Clear Network Capture</button>
-        <span class="capture-status off" id="networkCaptureStatus">Network Capture: OFF</span>
-      </div>
-
-      <div class="grid">
-        <section>
-          <h2>
-            <span>Summary</span>
-            <button class="copy-button" data-copy-panel="summary" type="button">复制</button>
-          </h2>
-          <div class="kv" id="summary"></div>
-        </section>
-        <section>
-          <h2>
-            <span>Latest Event</span>
-            <button class="copy-button" data-copy-panel="lastEvent" type="button">复制</button>
-          </h2>
-          <pre id="lastEvent">No event yet.</pre>
-        </section>
+        <button class="primary-action" id="downloadProfileButton" type="button">下载Profile</button>
+        <button id="openDebugButton" type="button">打开Debug</button>
+        <button id="refreshButton" type="button">刷新</button>
       </div>
 
       <section>
-        <h2>
-          <span>Recent Events</span>
-          <button class="copy-button" data-copy-panel="recentEvents" type="button">复制</button>
-        </h2>
-        <ul id="recentEvents"></ul>
-      </section>
-
-      <section>
-        <h2>
-          <span>Network Debug Requests</span>
-          <button class="copy-button" data-copy-panel="networkRequests" type="button">复制</button>
-        </h2>
-        <p class="notice">
-          Local debug only. Start capture, refresh the BOSS page if needed, trigger the target action, then copy these request samples.
-        </p>
-        <div class="request-filter">
-          <label for="networkRequestFilter">Request filter</label>
-          <select id="networkRequestFilter"></select>
-          <span class="filter-summary" id="networkRequestFilterSummary">Showing 0 of 0</span>
+        <h2>账号配置</h2>
+        <div class="operator-form">
+          <label>
+            操作员ID
+            <input id="operatorIdInput" autocomplete="off" />
+          </label>
+          <label>
+            账号姓名
+            <input id="accountNameInput" autocomplete="off" />
+          </label>
         </div>
-        <pre id="networkRequests">No captured requests.</pre>
+        <div class="operator-actions">
+          <button class="primary-action" id="saveOperatorButton" type="button">保存配置</button>
+          <span class="save-status" id="operatorSaveStatus"></span>
+        </div>
+        <div class="gate-status problem" id="collectionGateStatus">采集已停止</div>
       </section>
 
       <section>
-        <h2>
-          <span>Last Upload Error</span>
-          <button class="copy-button" data-copy-panel="lastUploadError" type="button">复制</button>
-        </h2>
-        <pre id="lastUploadError">None.</pre>
+        <h2>整体状态</h2>
+        <div class="overall ok" id="overallStatus">正常</div>
       </section>
 
       <section>
-        <h2>
-          <span>Last Upload Result</span>
-          <button class="copy-button" data-copy-panel="lastUploadResult" type="button">复制</button>
-        </h2>
-        <pre id="lastUploadResult">None.</pre>
+        <h2>数据状态</h2>
+        <div class="status-list" id="moduleStatus"></div>
       </section>
 
       <section>
-        <h2>
-          <span>Raw State</span>
-          <button class="copy-button" data-copy-panel="rawState" type="button">复制</button>
-        </h2>
-        <pre id="rawState"></pre>
+        <h2>需要补采的聊天</h2>
+        <div class="chat-list" id="unreportedChats"></div>
       </section>
     </main>
     <script type="module" src="./debug.js"></script>

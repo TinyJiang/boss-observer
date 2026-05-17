@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildChatCandidatePayload,
   buildChatReportPrompt,
   buildChatSnapshotPayload,
   ChatRecordProbe,
@@ -47,6 +48,13 @@ test("chat list parser ignores non-today time labels", () => {
   );
   assert.equal(
     parseClearlyTodayChatListTime("05-14 李艳妮 【8000+】居家黑板主播 对的", { now: FIXED_NOW }),
+    null
+  );
+});
+
+test("chat list parser ignores active chat position timeline rows", () => {
+  assert.equal(
+    parseChatListItemText("09:54 5月16日 沟通的职位-【8000+】居家黑板主播（时薪40+可兼职）", { now: FIXED_NOW }),
     null
   );
 });
@@ -138,7 +146,7 @@ test("chat list prompt event dedupes when low confidence id changes during rende
   );
 });
 
-test("chat report prompt renders outside the list item text flow", async () => {
+test("chat report required event does not render into the BOSS page DOM", async () => {
   const events = [];
   const card = createListElement("09:54 桂儿 【8000+】居家黑板主播（时薪40+可兼职） 哦");
   const root = createListRoot([card]);
@@ -168,11 +176,15 @@ test("chat report prompt renders outside the list item text flow", async () => {
 
   assert.equal(card.children.length, 0);
   assert.equal(card.textContent.includes(CHAT_REPORT_PROMPT_TEXT), false);
-  assert.equal(root.body.children.length, 1);
-  assert.equal(root.body.children[0].textContent, CHAT_REPORT_PROMPT_TEXT);
+  assert.equal(card.getAttribute("data-boss-observer-chat-report-required"), null);
+  assert.equal(root.body.children.length, 0);
   assert.equal(
     events.filter((event) => event.type === EVENT_TYPES.CANDIDATE_CHAT_REPORT_REQUIRED).length,
     1
+  );
+  assert.equal(
+    events.find((event) => event.type === EVENT_TYPES.CANDIDATE_CHAT_REPORT_REQUIRED).payload.listItem.displayName,
+    "桂儿"
   );
 });
 
@@ -278,6 +290,71 @@ test("chat snapshot skips submit when successful upload watermark already covers
     events.filter((event) => event.type === EVENT_TYPES.CANDIDATE_CHAT_SNAPSHOT_CAPTURED).length,
     0
   );
+});
+
+test("manual chat open submits snapshot when list latest message is newer than visible DOM text", async () => {
+  const events = [];
+  const card = createListElement([
+    "12:45 李女士 【8000+】居家黑板主播（时薪40+可兼职）",
+    "👌"
+  ].join("\n"));
+  const panel = createListElement([
+    "李女士",
+    "今日活跃",
+    "在线简历",
+    "附件简历",
+    "沟通职位： 【8000+】居家黑板主播（时薪40+可兼职）",
+    "12:44",
+    "已读 好的",
+    "发送"
+  ].join("\n"));
+  const panelPayload = buildChatSnapshotPayload(panel, {
+    source: "test",
+    chatPageUrl: "https://www.zhipin.com/web/chat/index",
+    now: FIXED_NOW
+  });
+  const root = createListRoot([card, panel]);
+  const probe = new ChatRecordProbe({
+    collector: {
+      collect(type, currentPayload) {
+        events.push({ type, payload: currentPayload });
+      }
+    },
+    sessionContext: {
+      page: {
+        isBossPage: true,
+        pageType: "chat",
+        url: "https://www.zhipin.com/web/chat/index"
+      }
+    },
+    now: FIXED_NOW,
+    readReportState: () => ({
+      candidates: {
+        [panelPayload.candidate.candidateId]: {
+          lastReportedMessageAt: "2026-05-15T12:44:00.000+08:00"
+        }
+      }
+    })
+  });
+  const originalDocument = globalThis.document;
+  try {
+    globalThis.document = root;
+    assert.equal(probe.recordChatListOpenAttempt(card), true);
+    await probe.scan("chat_list_click");
+  } finally {
+    globalThis.document = originalDocument;
+  }
+
+  const snapshot = events.find((event) =>
+    event.type === EVENT_TYPES.CANDIDATE_CHAT_SNAPSHOT_CAPTURED
+  );
+  assert.ok(snapshot);
+  assert.equal(snapshot.payload.chat.lastMessageAt, "2026-05-15T12:44:00.000+08:00");
+  assert.equal(snapshot.payload.chat.coverageLastMessageAt, "2026-05-15T12:45:00.000+08:00");
+  assert.equal(snapshot.payload.chat.listObservedLastMessageAt, "2026-05-15T12:45:00.000+08:00");
+  assert.equal(snapshot.payload.chat.listObservedLastMessageTimeText, "12:45");
+  assert.equal(snapshot.payload.chat.hasUncapturedListMessage, true);
+  assert.equal(snapshot.payload.chat.messageCount, 1);
 });
 
 test("chat snapshot parser captures rendered text messages and skips media urls", () => {
@@ -418,6 +495,23 @@ test("chat fallback candidate id includes job title to reduce same-name collisio
   assert.equal(firstPayload.candidate.stableIdSource, "chat_name_job_fingerprint");
   assert.equal(secondPayload.candidate.stableIdSource, "chat_name_job_fingerprint");
   assert.notEqual(firstPayload.candidate.candidateId, secondPayload.candidate.candidateId);
+});
+
+test("chat fallback candidate id matches list and active panel identity variants", () => {
+  const listCandidate = buildChatCandidatePayload({
+    displayName: "蒋姜",
+    jobTitle: "【8000+】居家黑板主播（时薪40+可兼职）",
+    sourceUrl: "https://www.zhipin.com/web/chat/index"
+  });
+  const panelCandidate = buildChatCandidatePayload({
+    displayName: "蒋姜",
+    jobTitle: "兼职·【8000+】 居家黑板主播（时薪40+可兼职）",
+    sourceUrl: "https://www.zhipin.com/web/chat/index?_security_check=1_1778940420467"
+  });
+
+  assert.equal(listCandidate.stableIdSource, "chat_name_job_fingerprint");
+  assert.equal(panelCandidate.stableIdSource, "chat_name_job_fingerprint");
+  assert.equal(listCandidate.candidateId, panelCandidate.candidateId);
 });
 
 test("chat message parser extracts wechat account only with explicit context", () => {

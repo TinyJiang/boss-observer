@@ -69,9 +69,10 @@
 - 推荐页场景下，如果 `c-resume` 详情 iframe 自身没有姓名头部，但正文里的公司/岗位词能和左侧推荐列表某张候选人卡片明显重合，探针会把那张卡片作为候选人来源，`detectedBy` 记为 `c_resume_matched_card`。
 - 如果 `c-resume` iframe 的 DOM 正文为空但 Canvas 捕获文本具备候选人详情信号，详情打开事件会使用该 Canvas 可见文本解析核心字段，`detectedBy` 记为 `c_resume_canvas`；如果同时与左侧卡片重合匹配，记为 `c_resume_canvas_matched_card`。
 - 同一个候选人详情保持打开期间不会重复发出 opened；切换到另一个候选人时会先发出上一位的 closed，再发出新候选人的 opened。
+- 初次识别到详情打开后，探针会短暂等待异步详情内容和“牛人分析”模块渲染，再把 `candidate_detail.opened` 写入队列；如果详情在等待期间消失、切换候选人或探针停止，会先立即写入 pending opened，再写入 closed 或完成清理，避免秒开秒关丢失打开事实。
 - 对没有稳定候选人 ID 的详情，打开后的前 5 秒内如果只是详情文本继续异步加载，会更新内存中的详情快照，不额外发出 closed/opened。
 - 如果 BOSS 先渲染了可识别但内容很浅的详情占位，随后加载出个人优势、工作经历、教育经历等核心详情项，探针会补发一次 `candidate_detail.opened`，避免用户真正打开详情时被早期占位状态静默吞掉。
-- 当前第一版会把可见到的“牛人分析”信号记录成 `candidate_detail.boss_analysis_viewed` 事实事件，表示模块被看见，不保存分析正文或分析结论。
+- 当前第一版会把可见到的“牛人分析”信号合并进 `candidate_detail.opened.analysis.module = boss_analysis`，表示模块被看见，不保存完整分析正文，也不表示插件端认可 BOSS 的分析结论。
 
 当前第一版详情识别仍是保守启发式：
 
@@ -105,7 +106,7 @@ MVP 需要完成：
 
 - 能识别候选人详情打开。（已完成第一版）
 - 能识别候选人详情关闭。（已完成第一版）
-- 能识别“牛人分析”模块曝光。（待后续单独实现）
+- 能识别“牛人分析”模块曝光。（已合并到 `candidate_detail.opened.analysis.module`）
 - 能将候选人详情日志与当前职位上下文一起记录。（职位上下文第一版已完成；筛选上下文待后续实现）
 
 ## 7. 真机验证点

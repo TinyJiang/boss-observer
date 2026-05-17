@@ -42,6 +42,12 @@ test("maps a plugin event into cls log contents", () => {
         payload: {
           source: "poll"
         },
+        operator: {
+          operatorId: "op-1",
+          accountName: "张三",
+          bossAccountName: "张三",
+          bossAccountMatched: true
+        },
         sourceTabId: 100,
         sourceWindowId: 200,
         sourceTabUrl: "https://www.zhipin.com/web/chat/recommend"
@@ -65,6 +71,10 @@ test("maps a plugin event into cls log contents", () => {
     is_boss_page: "true",
     job_id: "job-1",
     job_status: "0",
+    operator_id: "op-1",
+    operator_account_name: "张三",
+    boss_account_name: "张三",
+    boss_account_matched: "true",
     source_tab_id: "100",
     source_window_id: "200",
     source_tab_url: "https://www.zhipin.com/web/chat/recommend",
@@ -82,4 +92,58 @@ test("maps a plugin event into cls log contents", () => {
       startedAt: "2026-05-11T16:03:35.997+08:00"
     })
   });
+});
+
+test("serializes chat snapshot messages into cls payload_json", () => {
+  const body = buildClsAnonymousTracklogBody([
+    {
+      id: "evt_chat_snapshot",
+      type: "candidate_chat.snapshot_captured",
+      occurredAt: "2026-05-16T22:21:08.125+08:00",
+      pluginVersion: "0.1.0",
+      context: {
+        sessionId: "session_1",
+        pageType: "chat",
+        pageUrl: "https://www.zhipin.com/web/chat/index",
+        pageTitle: "BOSS直聘",
+        isBossPage: true
+      },
+      payload: {
+        candidate: {
+          profile: {
+            displayName: "蒋姜"
+          }
+        },
+        chat: {
+          conversationKey: "conversation-1",
+          messageCount: 2,
+          messages: [
+            {
+              messageIndex: 0,
+              text: "刚刚看了您发布的这个职位",
+              direction: "unknown"
+            },
+            {
+              messageIndex: 1,
+              text: "你好，可以聊一聊啊",
+              direction: "recruiter"
+            }
+          ]
+        }
+      }
+    }
+  ]);
+
+  const contents = body.logs[0].contents;
+  assert.equal(contents.event_type, "candidate_chat.snapshot_captured");
+  assert.equal(contents.operator_id, "");
+  assert.equal(contents.payload, undefined);
+  assert.equal(typeof contents.payload_json, "string");
+
+  const payload = JSON.parse(contents.payload_json);
+  assert.equal(payload.chat.messageCount, 2);
+  assert.deepEqual(payload.chat.messages.map((message) => message.text), [
+    "刚刚看了您发布的这个职位",
+    "你好，可以聊一聊啊"
+  ]);
 });

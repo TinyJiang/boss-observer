@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BOSS Observer Debug</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7fb;
+        --panel: #ffffff;
+        --border: #d8deea;
+        --text: #1f2937;
+        --muted: #6b7280;
+        --accent: #1d4ed8;
+        --good: #047857;
+        --bad: #b91c1c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: rgba(246, 247, 251, 0.94);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--border);
+        padding: 16px 20px;
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 18px;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      main {
+        padding: 20px;
+        display: grid;
+        gap: 16px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+      }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .kv {
+        display: grid;
+        gap: 8px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 8px;
+        align-items: start;
+      }
+      .key {
+        color: var(--muted);
+        word-break: break-word;
+      }
+      .value {
+        word-break: break-word;
+        white-space: pre-wrap;
+      }
+      .status-good { color: var(--good); }
+      .status-bad { color: var(--bad); }
+      pre {
+        margin: 0;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 8px;
+      }
+      li {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px;
+        background: #fafbff;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      button {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #fff;
+        color: var(--text);
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #b7c3d8;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+      select {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #fff;
+        color: var(--text);
+        padding: 7px 10px;
+        min-width: 180px;
+      }
+      .notice {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .capture-status {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .capture-status.on {
+        border-color: #86efac;
+        background: #ecfdf5;
+        color: var(--good);
+      }
+      .capture-status.off {
+        border-color: #fecaca;
+        background: #fff7f7;
+        color: var(--bad);
+      }
+      .copy-button {
+        padding: 4px 8px;
+        font-size: 12px;
+        font-weight: 500;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+      .copy-button.copied {
+        border-color: #86efac;
+        color: var(--good);
+      }
+      .copy-button.failed {
+        border-color: #fecaca;
+        color: var(--bad);
+      }
+      .request-filter {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      .request-filter label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .filter-summary {
+        color: var(--muted);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>BOSS Observer Debug</h1>
+      <div class="meta" id="updatedAt">Loading...</div>
+    </header>
+    <main>
+      <div class="toolbar">
+        <button id="refreshButton" type="button">Refresh</button>
+        <button id="startNetworkButton" type="button">Start Network Capture</button>
+        <button id="stopNetworkButton" type="button">Stop Network Capture</button>
+        <button id="clearNetworkButton" type="button">Clear Network Capture</button>
+        <span class="capture-status off" id="networkCaptureStatus">Network Capture: OFF</span>
+      </div>
+
+      <div class="grid">
+        <section>
+          <h2>
+            <span>Summary</span>
+            <button class="copy-button" data-copy-panel="summary" type="button">复制</button>
+          </h2>
+          <div class="kv" id="summary"></div>
+        </section>
+        <section>
+          <h2>
+            <span>Latest Event</span>
+            <button class="copy-button" data-copy-panel="lastEvent" type="button">复制</button>
+          </h2>
+          <pre id="lastEvent">No event yet.</pre>
+        </section>
+      </div>
+
+      <section>
+        <h2>
+          <span>Recent Events</span>
+          <button class="copy-button" data-copy-panel="recentEvents" type="button">复制</button>
+        </h2>
+        <ul id="recentEvents"></ul>
+      </section>
+
+      <section>
+        <h2>
+          <span>Network Debug Requests</span>
+          <button class="copy-button" data-copy-panel="networkRequests" type="button">复制</button>
+        </h2>
+        <p class="notice">
+          Local debug only. Start capture, refresh the BOSS page if needed, trigger the target action, then copy these request samples.
+        </p>
+        <div class="request-filter">
+          <label for="networkRequestFilter">Request filter</label>
+          <select id="networkRequestFilter"></select>
+          <span class="filter-summary" id="networkRequestFilterSummary">Showing 0 of 0</span>
+        </div>
+        <pre id="networkRequests">No captured requests.</pre>
+      </section>
+
+      <section>
+        <h2>
+          <span>Last Upload Error</span>
+          <button class="copy-button" data-copy-panel="lastUploadError" type="button">复制</button>
+        </h2>
+        <pre id="lastUploadError">None.</pre>
+      </section>
+
+      <section>
+        <h2>
+          <span>Last Upload Result</span>
+          <button class="copy-button" data-copy-panel="lastUploadResult" type="button">复制</button>
+        </h2>
+        <pre id="lastUploadResult">None.</pre>
+      </section>
+
+      <section>
+        <h2>
+          <span>Raw State</span>
+          <button class="copy-button" data-copy-panel="rawState" type="button">复制</button>
+        </h2>
+        <pre id="rawState"></pre>
+      </section>
+    </main>
+    <script type="module" src="./debug.js"></script>
+  </body>
+</html>
