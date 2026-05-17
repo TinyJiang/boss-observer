@@ -160,6 +160,7 @@
 说明：
 
 - 当前实现已经定义了这些枚举；部分事件可能在后续阶段才真正发出。
+- `queue.write_failed`、`upload.started`、`upload.succeeded`、`upload.failed` 当前属于预留运行链路事件类型；现阶段上传成功/失败主要记录在 debug state、诊断 profile 和 popup 生产统计中，不作为正式业务事件流主动上报。
 - 后端应把 `type` 当成稳定分组键，不要把它映射成数字编码后丢掉原值。
 
 ## 7. 常见 payload 约定
@@ -303,6 +304,8 @@
 
 `candidate_filter.applied` 只在“确定 / 确认 / 应用 / 完成 / 搜索 / 查看结果”等动作出现在可识别筛选面板上下文里时发出，避免把普通搜索或其他确认动作误记为筛选。摘要优先来自 `aria-selected`、`aria-checked`、`aria-pressed`、`input:checked` 或常见 `selected/active/checked/current` 样式标记的控件；真实 BOSS 面板中只通过 chip 背景色标记已选项时，会按筛选字段行读取有明显选中背景的短选项，并补充可读到的年龄滑块范围。年龄滑块除普通文本和 `aria` / `data` / `value` 属性外，也会读取年龄行内滑块元素的 `::before` / `::after` 文本内容，因为真实页面可能用 CSS 伪元素渲染数值。如果真实页面没有可识别选中态，宁可输出 `conditionCount: 0`，也不把面板所有可见候选项当作已选条件。`关键词`、`关键字`、`搜索关键词`、`姓名`、`手机`、`电话`、`微信`、`联系方式` 等自由输入或敏感字段只记录为“已填写”，不保存原始值；手机号、邮箱会做脱敏兜底。
 
+当前会把每次可识别的筛选确认动作当作事实事件记录。如果用户重复点击确认，或 BOSS DOM 在一次操作中触发多次确认点击，可能出现同一 `openedEventId` 下多条 `candidate_filter.applied`；后端如需把“一次筛选操作”聚合为单条，应按 `openedEventId`、筛选摘要和时间窗口做分析侧去重，不要要求插件端吞掉事实点击。
+
 当前第一版会在探针内保留最近一次确认的筛选摘要，但尚未把筛选上下文写入候选人列表、详情或打招呼事件；后续待真机确认字段稳定后再接入跨事件上下文。
 
 ### 7.9 `candidate_list.list_viewed`
@@ -428,7 +431,7 @@
 
 - `detailUrl`: 当前识别到的详情 URL。弹窗/抽屉场景无法识别时可能为空字符串。
 - `detectedBy`: 当前常见值为 `detail_url`、`detail_dom`、`c_resume_frame`、`c_resume_selected_card`、`c_resume_recent_card`、`c_resume_matched_card`、`c_resume_canvas` 或 `c_resume_canvas_matched_card`。
-- `analysis.module`: 当详情打开时已经可见“牛人分析”模块，固定输出 `boss_analysis`；没有看见该模块时省略 `analysis`。该字段只表示模块可见，不表示插件端认可 BOSS 的分析结论。
+- `analysis.module`: 当详情打开等待窗口内可见“牛人分析”模块，固定输出 `boss_analysis`；没有看见该模块时省略 `analysis`。该字段只表示模块可见，不表示插件端认可 BOSS 的分析结论。
 - `candidate_detail.opened` 会在初次识别后短暂等待异步详情内容和牛人分析模块渲染；如果等待期间详情关闭、候选人切换或探针停止，会先立即写入 pending opened，再写入 closed 或完成清理，保证秒开秒关也有打开事实。
 - `candidate`: 与候选人卡片曝光共用候选人身份和 `profile` 快照结构。
 - 当详情来自最近点击或当前选中的已曝光卡片时，`candidate` 会继承卡片曝光事件中的 `candidateId`、`exposureKey` 和 `exposedEventId`。这三个字段优先用于后端计算曝光点击率，详情 DOM/Canvas 解析失败不应阻断漏斗关联。
@@ -437,7 +440,7 @@
 - `candidate.detailProfile`: 从详情页可见文本提取的受限结构化摘要。没有有效详情摘要时整个字段省略；普通 section 只保留有摘要条目的 `jobExpectation`、`advantage`、`workExperience`、`educationExperience`、`projectExperience`、`certificates` 等键。
 - `page`、`detailPageType`、`detail.textSources`、`detail.matchedSignals` 等重复或诊断字段不进入正式事件 payload；页面上下文看事件根部 `context`。
 
-当前第一版会把 `/web/frame/c-resume` 作为 BOSS 详情 iframe 的强识别信号；普通候选人列表文本不会仅凭多个卡片内容触发详情事件。详情页 DOM/辅助文本不可读时，插件会使用同一详情 frame 中短期捕获的 Canvas 可见渲染文字作为解析输入，但不会把完整 Canvas 文本或完整简历正文写入 payload。事件不会把完整简历正文、完整工作/教育经历正文、聊天内容、手机号或微信号写入 payload；详情摘要会过滤包含微信、手机号、电话、联系方式等关键词的行，并对手机号、邮箱做脱敏兜底。
+当前第一版会把 `/web/frame/c-resume` 作为 BOSS 详情 iframe 的强识别信号；普通候选人列表文本不会仅凭多个卡片内容触发详情事件。普通 `/web/chat/index` 聊天页不会扫描内联详情 DOM，避免把聊天页里的资料卡片或“牛人分析”样式内容误判为 `candidate_detail.opened`；真实详情 URL 和 c-resume 详情 frame 不受影响。详情页 DOM/辅助文本不可读时，插件会使用同一详情 frame 中短期捕获的 Canvas 可见渲染文字作为解析输入，但不会把完整 Canvas 文本或完整简历正文写入 payload。事件不会把完整简历正文、完整工作/教育经历正文、聊天内容、手机号或微信号写入 payload；详情摘要会过滤包含微信、手机号、电话、联系方式等关键词的行，并对手机号、邮箱做脱敏兜底。
 
 ### 7.12 `candidate_detail.closed`
 
@@ -678,6 +681,14 @@
 ## 10. CLS 直传落地建议
 
 当前选定方案是插件端直传腾讯云 CLS。插件仍然先写本地队列，再由 background service worker 批量上传到 CLS。
+
+上传触发策略：
+
+- 所有正式事件都先进入本地队列；即时上传只影响 flush 时机，不绕过本地队列。
+- `candidate_detail.opened`、`candidate_detail.closed`、`candidate_greeting.clicked`、`candidate_greeting.succeeded`、`candidate_greeting.failed`、`candidate_chat.snapshot_captured`、`candidate_chat.wechat_captured` 入队后会立即尝试 flush，减少详情、打招呼和聊天快照这类关键事件的等待时间。
+- 其他事件达到 `uploadBatchSize` 或后台 alarm 触发时批量上传。Chrome alarm 当前最小周期约 1 分钟，因此 `flushIntervalMs` 配置低于 1 分钟时不会得到更短的定时 flush。
+- 上传成功后从队列删除；上传失败时保留在队列并增加重试计数，上传结果进入 debug state、诊断 profile 和 popup 生产统计。
+- 当前不把 `upload.started`、`upload.succeeded`、`upload.failed` 作为正式业务事件写入 CLS；这些类型是运行链路事件预留值。
 
 上传目标使用 CLS 匿名上传的 HTTP 入口：
 

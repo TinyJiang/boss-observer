@@ -3812,3 +3812,100 @@
 - 改动文件：`docs/ai-worklog.md`
 - 验证结果：本轮为 Profile 数据分析，未修改源码，未运行自动化测试；使用本地 Node 脚本完成事件分组和 ID 引用检查。
 - 风险/阻塞：`candidate_filter.applied` 在同一个 `openedEventId` 下出现两次，可能是用户实际点了两次应用，也可能需要后续做短时间去重；不影响本轮主链路 ID 对接。初始 `lastCollectionBlock` 是门禁配置前的历史阻断记录，当前门禁已经恢复 `ok`。
+
+### 任务：打包 Chrome 插件
+
+- 时间：2026-05-17 19:06:05 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：在核心流程 Profile 分析通过后，生成可分发的 BOSS Observer Chrome 插件 zip 包。
+- 当前理解：当前 `git status --short` 为空，说明前面改动已经被整理到工作区基线；manifest 版本为 `0.1.0`。打包应只包含 `extension/` 下运行时文件，不包含测试、工作日志和项目根目录开发文件。
+- 计划修改文件：`docs/ai-worklog.md`；生成 `dist/boss-observer-0.1.0.zip` 打包产物。
+- 不修改范围：不修改插件源码、不改版本号、不操作真实 BOSS 页面、不使用 CDP / DevTools / 远程调试。
+- 验证计划：运行 `npm test`、`git diff --check`；创建 `dist/`；从 `extension/` 目录生成 zip；检查 zip 内容包含 `manifest.json`、background/content/debug 文件，并确认不包含 `node_modules`、`test`、`docs`。
+- 当前状态：准备运行最终验证和打包命令。
+
+#### 完成记录：插件 zip 已生成
+
+- 时间：2026-05-17 19:06:47 CST
+- 状态：已完成
+- 已完成：打包前运行全量测试和 diff 空白检查，均通过；从 `extension/` 目录生成 Chrome 插件 zip 包 `dist/boss-observer-0.1.0.zip`。
+- 已完成：使用 `unzip -t` 校验压缩包完整性，结果为 `No errors detected`；使用 `unzip -l` 检查包内容，包含 `manifest.json`、`debug/`、`debug-raw/`、`src/background/`、`src/content/`、`src/shared/` 等运行文件，不包含项目根目录 `docs/`、`test/`、`node_modules/`。
+- 产物信息：
+  - 路径：`/Users/tiny/work/projects/boss-observer/dist/boss-observer-0.1.0.zip`
+  - 大小：约 96K
+  - SHA-256：`a646c9e3034aa1cc659594e2a7e796fa42e558332b31408b2ad48892c2947434`
+- 改动/生成文件：
+  - `docs/ai-worklog.md`
+  - `dist/boss-observer-0.1.0.zip`
+- 验证结果：
+  - `npm test` 通过，188 个测试全部通过。
+  - `git diff --check` 通过。
+  - `unzip -t dist/boss-observer-0.1.0.zip` 通过。
+  - `unzip -l dist/boss-observer-0.1.0.zip` 已检查包内容。
+- 风险/阻塞：本次生成的是 Chrome 扩展 zip 包，不是带私钥签名的 `.crx`；如要上架或固定扩展 ID，需要按目标分发渠道再做签名/发布流程。
+
+### 任务：核对并更新打点说明文档
+
+- 时间：2026-05-17 19:35:18 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：根据当前最新打点规则，核对打点说明和模块文档是否仍准确，并更新会误导后续开发或数据使用方的旧口径。
+- 当前理解：源码里的事件类型和近期真机回归已经稳定到新口径：操作员门禁必须通过后才采集；`boss_analysis_viewed` 已并入 `candidate_detail.opened.payload.analysis.module` 和 `candidate.detailProfile.bossAnalysis`；普通聊天页不应被详情探针误判；高价值事件会触发即时上传；上传结果主要进入运行状态/Profile，而不是作为正式业务事件打点。
+- 计划修改文件：
+  - `docs/overview-design.md`
+  - `docs/modules/05-candidate-detail.md`
+  - `docs/modules/08-local-queue-upload.md`
+  - `docs/modules/11-runtime-monitoring-alert.md`
+  - `docs/modules/12-log-specification.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改插件源码、不重新打包、不操作真实 BOSS 页面、不改变事件结构。
+- 验证计划：对照 `extension/src/shared/event-types.js` 和相关实现修正文档；运行 `git diff --check` 确认文档 diff 没有空白错误。
+- 当前状态：已完成初步核对，准备修改文档。
+
+#### 完成记录：打点说明文档已同步最新规则
+
+- 时间：2026-05-17 19:39:30 CST
+- 状态：已完成
+- 已完成：核对 `EVENT_TYPES`、上传策略、详情探针和操作员门禁实现后，确认打点说明需要更新；已同步当前最新口径。
+- 已完成：把“牛人分析模块曝光”从独立事件口径改为 `candidate_detail.opened` 内的可见标记，说明 `boss_analysis_viewed` 不再单独发出；补充普通 `/web/chat/index` 聊天页不会扫描内联详情 DOM，避免聊天资料卡误判详情。
+- 已完成：补充高价值事件即时 flush 策略，明确所有正式事件仍先进入本地队列；上传成功/失败主要进入 debug/profile 和 popup 生产统计，`upload.*`、`queue.write_failed` 目前是预留事件类型，不主动进入正式业务事件流。
+- 已完成：更新运行监控中的身份表述为操作员门禁，包括操作员 ID、账号姓名和 BOSS 页面展示姓名对照；更新总览中的 MVP 和模块描述。
+- 改动文件：
+  - `docs/overview-design.md`
+  - `docs/modules/05-candidate-detail.md`
+  - `docs/modules/08-local-queue-upload.md`
+  - `docs/modules/11-runtime-monitoring-alert.md`
+  - `docs/modules/12-log-specification.md`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `rg -n "牛人分析模块曝光日志|身份未绑定|日志上传开始日志|日志上传成功日志|日志上传失败日志|上传链路日志记录|用户身份是否已绑定" docs/overview-design.md docs/modules docs/diagnostic-profile-analysis.md` 无结果。
+  - `git diff --check` 通过。
+- 风险/阻塞：本轮只改文档，不修改插件源码、不重新打包；历史工作日志中仍保留旧事件名作为过程记录，不代表当前打点规则。
+
+### 任务：调研 CLS 实时日志流接入分析系统
+
+- 时间：2026-05-17 19:43:09 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：为后续分析系统确认如何从腾讯云 CLS 获取实时日志流，并把可落地的接入方式记录到分析消费模块文档。
+- 当前理解：插件已经把业务事实事件写入 `ap-shanghai` 的 CLS topic，分析系统下一步需要从 CLS 拉取或消费这些事件；优先寻找真正实时的流式入口，SearchLog API 只适合作为补数或排障兜底。
+- 计划修改文件：
+  - `docs/modules/10-analysis-consumer.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改插件源码、不新增分析系统代码、不配置真实腾讯云资源、不写入或暴露 SecretId/SecretKey。
+- 验证计划：仅使用腾讯云官方文档确认 Kafka 协议消费、自定义消费 SDK、SearchLog API 和 CKafka 投递的能力与限制；更新设计文档后运行 `git diff --check`。
+- 当前状态：已开始查阅官方文档和本地 CLS 字段映射。
+
+#### 完成记录：CLS 实时消费入口已确认
+
+- 时间：2026-05-17 19:43:52 CST
+- 状态：已完成
+- 已完成：确认 CLS 的实时日志流首选入口是 Kafka 协议消费，可把日志主题当作 Kafka Topic，使用 consumer group 持续消费；控制台入口为日志主题的 `投递和消费 > Kafka 协议消费`。
+- 已完成：确认备选方案包括 CLS 自定义消费 SDK，适合 Python 快速消费 worker；SearchLog API 适合补数、排障和对账，不适合作为主实时流；投递 CKafka 有 5 秒级时延能力，但需要额外维护 CKafka，不作为第一版首选。
+- 已完成：把接入路线、消费端参数、字段解析要求和 MVP 验证点写入 `docs/modules/10-analysis-consumer.md`。
+- 改动文件：
+  - `docs/modules/10-analysis-consumer.md`
+  - `docs/ai-worklog.md`
+- 验证结果：`git diff --check` 通过。
+- 风险/阻塞：尚未在真实 CLS 控制台开启 Kafka 协议消费，也未创建腾讯云子账号密钥；下一步需要用户在 CLS 控制台开启该 topic 的 Kafka 协议消费，并提供分析服务端使用的最小权限 SecretId/SecretKey 或让我们只用本机环境变量读取。

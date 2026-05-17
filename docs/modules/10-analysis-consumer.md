@@ -4,7 +4,7 @@
 
 后续分析消费模块用于消费日志系统导出的数据，支撑策略分析和员工监督。
 
-该模块当前不作为产品功能实现，但需要在设计上明确未来会如何使用日志，避免插件采集阶段遗漏关键数据。
+该模块从分析系统启动阶段开始进入实现前设计。当前优先目标是稳定消费 CLS 中的实时事实事件，再在分析侧做关联、聚合和报表。
 
 ## 2. 核心目标
 
@@ -84,22 +84,85 @@
 
 具体字段设计在真机验证后确定。
 
-## 5. MVP 范围
+## 5. CLS 实时日志流入口
+
+当前插件已经把正式事件写入腾讯云 CLS，分析系统从 CLS 读取日志时优先考虑以下入口。
+
+### 5.1 首选：Kafka 协议消费
+
+CLS 支持把一个日志主题当作 Kafka Topic 消费。分析系统可以作为 Kafka consumer 持续消费当前业务日志主题，把事件写入自己的原始事件表或消息处理流水线。
+
+控制台路径：
+
+1. 进入 CLS 日志主题。
+2. 打开 `投递和消费 > Kafka 协议消费`。
+3. 启用消费，数据范围优先选择 `历史+最新`，消费格式选择 `JSON`。
+4. 按分析服务部署位置选择内网或外网消费；如果分析服务部署在同地域 VPC，优先使用内网消费。
+5. 复制控制台提供的 `Topic`、`Host+Port`、日志集 ID 和消费配置。
+
+消费端参数约定：
+
+- `hosts`: 内网形如 `kafkaconsumer-${region}.cls.tencentyun.com:9095`，外网形如 `kafkaconsumer-${region}.cls.tencentcs.com:9096`。
+- `topic`: CLS 日志主题 ID。
+- `username`: CLS 日志集 ID。
+- `password`: `${SecretId}#${SecretKey}`，必须使用服务端密钥，不能进入浏览器插件或前端仓库。
+- 认证方式：`SASL_PLAINTEXT`。
+- 消费格式：优先 JSON，并消费我们写入 CLS 的扁平字段，例如 `event_id`、`event_type`、`occurred_at`、`operator_id`、`job_id`、`payload_json`、`context_json`。
+
+分析系统读取后需要把 `payload_json` 和 `context_json` 解析回对象，并保留原始字符串用于排障。消费 offset 由 Kafka consumer group 管理；同一个分析环境使用稳定的 consumer group 名称，重跑历史或做实验时使用新的 consumer group。
+
+### 5.2 可选：CLS 自定义消费 SDK
+
+CLS 也提供自定义消费 SDK，基于消费组、心跳、分区分配和 offset 管理从 CLS 拉取日志。该方案适合用 Python 快速搭一个单进程或多进程消费 worker。
+
+关键参数：
+
+- `endpoint`、`region`
+- `access_key_id`、`access_key`
+- `logset_id`
+- `topic_ids`
+- `consumer_group_name`
+- `consumer_name`
+- `offset_start_time`: 可用 `begin`、`end` 或指定 Unix 秒级时间戳。
+- `query`: 可选预过滤，例如只消费某些 `event_type`。
+
+如果第一版分析服务用 Python，且不想先引入 Kafka 客户端，可以先用这个方案做最小可用消费；如果后续要接 Flink、Logstash、Oceanus 或更标准的流处理链路，仍建议迁回 Kafka 协议消费。
+
+### 5.3 兜底：SearchLog API 轮询
+
+`SearchLog` API 适合做后台补数、排障、按时间范围重放和对账，不适合作为主实时流入口。
+
+使用约束：
+
+- 单次原始日志默认返回 100 条，最大 1000 条。
+- 单日志主题查询并发不能超过 15。
+- 可以通过 `Context` 或 `Offset` 继续取后续结果。
+- 需要依赖 CLS 索引和检索语法，实时性和消费语义不如 Kafka consumer group 明确。
+
+### 5.4 不作为第一选择：投递至 CKafka
+
+CLS 可以把实时日志投递到 CKafka，官方说明 99.9% 的投递延迟在 5 秒内。但这需要额外维护 CKafka 实例和投递任务。除非后续已有统一 CKafka 总线，第一版分析系统不需要为了实时消费单独引入 CKafka；直接使用 CLS Kafka 协议消费即可。
+
+## 6. 分析系统 MVP 范围
 
 MVP 阶段需要保证日志采集结果能支持后续分析消费。
 
 重点是：
 
+- 从 CLS 实时消费正式事件。
+- 保留原始事件和解析后的结构化字段。
 - 核心事件完整。
 - 事件时间准确。
 - 候选人可以在曝光、详情、打招呼之间被关联。
 - 职位和筛选上下文可以随日志导出。
 - 聊天记录采集方案经过验证。
 
-## 6. 真机验证点
+## 7. 真机验证点
 
 - 候选人标识是否足以跨模块关联。
 - 曝光、详情、打招呼事件之间是否能在导出数据中串起来。
 - 职位和筛选上下文是否稳定。
 - 聊天快照是否足以计算回复速度。
 - 日志量是否适合后续 AI 分析。
+- Kafka 协议消费启用后，分析服务是否能在 5 秒级别收到新事件。
+- 分析服务重启后，consumer group offset 是否能继续消费且不丢数据。
