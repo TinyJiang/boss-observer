@@ -19,7 +19,6 @@ export const EVENT_TYPES = Object.freeze({
   CANDIDATE_CHAT_OPENED: "candidate_chat.opened",
   CANDIDATE_CHAT_SNAPSHOT_CAPTURED: "candidate_chat.snapshot_captured",
   CANDIDATE_CHAT_WECHAT_CAPTURED: "candidate_chat.wechat_captured",
-  CANDIDATE_CHAT_REPORT_REQUIRED: "candidate_chat.report_required",
   CANDIDATE_CHAT_CAPTURE_FAILED: "candidate_chat.capture_failed",
   QUEUE_WRITE_FAILED: "queue.write_failed",
   UPLOAD_STARTED: "upload.started",

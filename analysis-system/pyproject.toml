@@ -1,0 +1,10 @@
+[project]
+name = "boss-analysis-system"
+version = "0.1.0"
+description = "Independent backend analysis system for BOSS Observer CLS events."
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

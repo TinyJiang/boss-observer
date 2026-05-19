@@ -1,0 +1,199 @@
+export type ActiveOperator = {
+  operator_id: string;
+  last_active_at: string;
+  minutes_since_active: number;
+  last_action: string;
+  job_id: string | null;
+  display_name?: string | null;
+  account_name?: string | null;
+};
+
+export type OperatorProfile = {
+  operator_id: string;
+  display_name: string;
+  account_name: string | null;
+  enabled: boolean;
+  role: string | null;
+  note: string | null;
+};
+
+export type DailyActiveDuration = {
+  metric_name: string;
+  active_date: string;
+  operator_id: string;
+  active_minutes: number;
+  active_seconds: number;
+  first_active_minute: string | null;
+  last_active_minute: string | null;
+  source_minute_count: number;
+  source_row_count: number;
+  recorded_at: string | null;
+};
+
+export type DashboardPayload = {
+  dashboard: {
+    active_count: number;
+    active_operators?: ActiveOperator[];
+    observed_operator_count: number;
+    generated_at: string;
+    configured_operators?: OperatorProfile[];
+    daily_active_durations?: DailyActiveDuration[];
+  };
+  health: {
+    status?: HealthStatus;
+    raw_event_count?: number;
+    parse_error_count?: number;
+    projection_error_count?: number;
+    unknown_event_type_count?: number;
+    summary_record_count?: number;
+    summary_missing_operator_count?: number;
+    summary_latest_minute?: string | null;
+    daily_summary_record_count?: number;
+    daily_summary_latest_date?: string | null;
+    log_quality_status?: HealthStatus;
+    log_quality_record_count?: number;
+    log_quality_latest_window_start?: string | null;
+    log_quality_window_minutes?: number;
+    log_quality_raw_event_count?: number;
+    log_quality_checked_event_count?: number;
+    log_quality_finding_count?: number;
+    log_quality_finding_rate?: number;
+    log_quality_missing_operator_count?: number;
+    log_quality_sensitive_leak_signal_count?: number;
+    log_quality_version_summaries?: LogQualityVersionSummary[];
+    log_quality_event_summaries?: LogQualityEventSummary[];
+  };
+  source?: {
+    kind: string;
+    label: string;
+    detail: string | null;
+    record_count: number;
+    loaded_at: string;
+  };
+  summary_source?: {
+    kind: string;
+    label: string;
+    detail: string | null;
+    record_count: number;
+    loaded_at: string;
+  } | null;
+  daily_summary_source?: {
+    kind: string;
+    label: string;
+    detail: string | null;
+    record_count: number;
+    loaded_at: string;
+  } | null;
+  log_quality_source?: {
+    kind: string;
+    label: string;
+    detail: string | null;
+    record_count: number;
+    loaded_at: string;
+  } | null;
+};
+
+export type HealthStatus = "ok" | "warning" | "critical" | "unknown";
+
+export type DataSourceInfo = {
+  kind: string;
+  label: string;
+  detail: string | null;
+  record_count: number;
+  loaded_at: string;
+};
+
+export type LogQualityIssueCounter = {
+  key: string;
+  label: string;
+  count: number;
+};
+
+export type LogQualityVersionSummary = {
+  plugin_version: string;
+  status: HealthStatus;
+  raw_event_count: number;
+  checked_event_count: number;
+  finding_count: number;
+  finding_rate: number;
+  affected_event_type_count: number;
+  latest_window_start: string | null;
+  top_issues: LogQualityIssueCounter[];
+};
+
+export type LogQualityEventSummary = {
+  plugin_version: string;
+  event_type: string;
+  status: HealthStatus;
+  raw_event_count: number;
+  checked_event_count: number;
+  finding_count: number;
+  finding_rate: number;
+  latest_window_start: string | null;
+  top_issues: LogQualityIssueCounter[];
+};
+
+export type LogQualityPayload = {
+  quality: {
+    status: HealthStatus;
+    operator_id: string | null;
+    plugin_version: string | null;
+    source_record_count: number;
+    record_count: number;
+    latest_window_start: string | null;
+    window_minutes: number;
+    raw_event_count: number;
+    checked_event_count: number;
+    finding_count: number;
+    finding_rate: number;
+    missing_operator_count: number;
+    sensitive_leak_signal_count: number;
+    version_summaries: LogQualityVersionSummary[];
+    event_summaries: LogQualityEventSummary[];
+  };
+  log_quality_source?: DataSourceInfo | null;
+};
+
+export type OperatorsPayload = {
+  operators: OperatorProfile[];
+};
+
+export type OperatorPayload = {
+  operator: {
+    operator_id: string;
+    minute_points?: OperatorMinutePoint[];
+    daily_active_duration?: DailyActiveDuration | null;
+    funnel: {
+      card_exposed: number;
+      detail_opened: number;
+      greeting_clicked: number;
+      greeting_succeeded: number;
+      greeting_failed: number;
+      chat_opened: number;
+      chat_snapshots: number;
+      wechat_captured: number;
+    };
+    chat: {
+      chat_opened: number;
+      snapshot_captured: number;
+      wechat_captured: number;
+      capture_failed: number;
+      visible_message_count: number;
+      may_be_incomplete_count: number;
+    };
+    job_ids: string[];
+  };
+};
+
+export type OperatorMinutePoint = {
+  minute: string;
+  card_exposed: number;
+  detail_opened: number;
+  greeting_clicked: number;
+  greeting_succeeded: number;
+  chat_opened: number;
+  chat_snapshots: number;
+  wechat_captured: number;
+  capture_failed: number;
+  event_count: number;
+};

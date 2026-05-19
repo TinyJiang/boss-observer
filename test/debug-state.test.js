@@ -19,7 +19,6 @@ test("debug state starts empty", () => {
   assert.equal(state.networkDebug.enabled, false);
   assert.deepEqual(state.networkDebug.recentRequests, []);
   assert.equal(state.productionStats.modules.candidate_chat.pendingCount, 0);
-  assert.deepEqual(state.productionStats.unreportedChats, []);
 });
 
 test("debug state initialization clears previous runtime state", () => {
@@ -44,7 +43,6 @@ test("debug state initialization clears previous runtime state", () => {
   assert.deepEqual(nextState.recentEvents, []);
   assert.equal(nextState.networkDebug.enabled, false);
   assert.equal(nextState.productionStats.modules.candidate_chat.producedCount, 0);
-  assert.deepEqual(nextState.productionStats.unreportedChats, []);
   assert.deepEqual(nextState.config, {
     clsRegion: "ap-shanghai",
     clsTopicId: "5407c0a7-3e37-4c45-a204-bf5d40f157a1"

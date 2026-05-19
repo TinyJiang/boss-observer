@@ -3909,3 +3909,334 @@
   - `docs/ai-worklog.md`
 - 验证结果：`git diff --check` 通过。
 - 风险/阻塞：尚未在真实 CLS 控制台开启 Kafka 协议消费，也未创建腾讯云子账号密钥；下一步需要用户在 CLS 控制台开启该 topic 的 Kafka 协议消费，并提供分析服务端使用的最小权限 SecretId/SecretKey 或让我们只用本机环境变量读取。
+
+### 任务：分析系统详细设计
+
+- 时间：2026-05-17 19:50:23 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：在不操作 CLS、不写实现代码的前提下，补充分析系统详细设计，明确架构、数据模型、处理链路、指标口径、权限和 MVP 阶段。
+- 当前理解：上一轮已确认 CLS 实时流首选 Kafka 协议消费；本轮需要把分析系统从“后续分析消费模块”扩展为可实施的详细设计，重点围绕实时消费、原始事件落库、事实表/聚合表、候选人链路关联、聊天快照分析和管理端查询。
+- 计划修改文件：
+  - `docs/modules/10-analysis-consumer.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不新增源码、不新增依赖、不连接真实 CLS、不创建数据库、不配置云资源、不保存任何密钥。
+- 验证计划：只做文档编辑；完成后运行 `git diff --check`。
+- 当前状态：准备重写分析消费模块的详细设计。
+
+#### 完成记录：分析系统详细设计已补充
+
+- 时间：2026-05-17 19:53:21 CST
+- 状态：已完成
+- 已完成：将 `docs/modules/10-analysis-consumer.md` 从后续消费说明扩展为分析系统详细设计，覆盖模块边界、总体架构、CLS Kafka 消费、输入字段、原始事件表、解析错误表、候选人身份表、曝光/详情/打招呼/聊天/筛选事实表、事件处理规则、关联链路、指标口径、查询页面、权限、部署建议、MVP 阶段和验证计划。
+- 已完成：明确第一版建议使用 PostgreSQL 起步，所有原始事件先落 `raw_events`，事实表和聚合可由原始事件重放生成；聊天正文默认敏感受控，低置信候选人身份不强行跨页面合并。
+- 已完成：全程未操作 CLS 控制台、未连接真实消费流、未新增源码或依赖、未写入任何密钥。
+- 改动文件：
+  - `docs/modules/10-analysis-consumer.md`
+  - `docs/ai-worklog.md`
+- 验证结果：`git diff --check` 通过。
+- 风险/阻塞：数据库选型、服务部署位置、团队组织来源、聊天方向置信度、聊天正文保留周期和是否需要历史回放仍待确认。
+
+### 任务：调研腾讯云分析系统基础设施方案
+
+- 时间：2026-05-17 20:10:00 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：围绕分析系统后端，从腾讯云官方方案中调研数据库、服务器部署、网络、安全、监控、对象存储、密钥和备份等基础设施选型，尽量使用腾讯云产品，并考虑用户已经购买服务器的前提。
+- 当前理解：后端技术栈倾向 Python/FastAPI + Kafka consumer + PostgreSQL；本轮不写实现、不操作云资源，只确认腾讯云上应该用哪些产品承载这些能力，以及第一版和后续升级路线。
+- 计划修改文件：
+  - `docs/modules/10-analysis-consumer.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不连接腾讯云控制台、不登录服务器、不创建数据库或 VPC、不新增代码、不保存任何密钥。
+- 验证计划：只引用腾讯云官方文档做调研；更新设计文档后运行 `git diff --check`。
+- 当前状态：准备查阅腾讯云官方文档并整理方案。
+
+#### 完成记录：腾讯云基础设施调研完成
+
+- 时间：2026-05-17 20:13:45 CST
+- 状态：已完成
+- 已完成：基于腾讯云官方文档调研分析系统基础设施选型，确定第一版优先使用已购买服务器承载应用进程，数据库使用 TencentDB for PostgreSQL，实时日志源使用 CLS Kafka 协议消费，网络使用 VPC/安全组，监控使用云监控，导出归档使用 COS，密钥与权限使用 CAM + KMS/凭据管理。
+- 已完成：补充 `docs/modules/10-analysis-consumer.md` 的腾讯云部署建议，包括产品选型表、第一版拓扑、分阶段云资源路线和当前需要确认的问题。
+- 已完成：明确 CLB、WAF、TCR 不作为 MVP 必买项；当管理后台公网多人访问、需要健康检查/证书托管/多实例或镜像发布时再补充。
+- 改动文件：
+  - `docs/modules/10-analysis-consumer.md`
+  - `docs/ai-worklog.md`
+- 验证结果：`git diff --check` 通过。
+- 风险/阻塞：需要确认用户已购买服务器的产品类型、地域、VPC 情况和是否已有域名；如果服务器不是 `ap-shanghai` 或无法与 TencentDB 走内网，需要调整部署拓扑。
+
+### 任务：创建独立分析系统子项目
+
+- 时间：2026-05-17 20:22:10 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：为后端分析系统单独创建独立目录，明确它与 Chrome 插件前台之间只通过日志规范契约交流，避免代码、依赖和运行时耦合。
+- 当前理解：分析系统应作为仓库中的独立子项目存在，拥有自己的 README、协作规范、pyproject、源码/测试目录和边界文档；它只能消费 CLS 中符合 `docs/modules/12-log-specification.md` 的日志，不能 import 或复用 `extension/` 中的代码。
+- 计划修改文件：
+  - `analysis-system/`
+  - `docs/modules/10-analysis-consumer.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不实现业务逻辑、不连接 CLS、不创建数据库、不修改插件源码、不引入前台共享运行时代码。
+- 验证计划：检查新增目录结构；运行 `git diff --check`。
+- 当前状态：准备创建分析系统目录骨架。
+
+#### 完成记录：独立分析系统目录已创建
+
+- 时间：2026-05-17 20:24:38 CST
+- 状态：已完成
+- 已完成：新增 `analysis-system/` 独立子项目目录，包含自己的 `README.md`、`AGENTS.md`、`pyproject.toml`、`.env.example`、`.gitignore`、边界文档、运行方案文档、源码目录和测试目录。
+- 已完成：在 `analysis-system/README.md` 和 `analysis-system/docs/boundary.md` 中明确边界：分析系统只消费符合 `docs/modules/12-log-specification.md` 的 CLS 日志，不依赖 `extension/` 源码、debug 页、popup Profile、Chrome storage、DOM 选择器或前台内部 helper。
+- 已完成：在 `docs/modules/10-analysis-consumer.md` 中补充实现子项目位置和唯一共享契约说明。
+- 改动文件：
+  - `analysis-system/`
+  - `docs/modules/10-analysis-consumer.md`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `find analysis-system -maxdepth 4 -type f | sort` 已确认目录骨架。
+  - `git diff --check` 通过。
+- 风险/阻塞：当前只创建独立骨架和边界文档，尚未实现 API、consumer、数据库迁移或测试样例；后续实现时仍需遵守不从 `extension/` 导入运行时代码的边界。
+
+### 任务：清理根目录分析系统设计并加子项目保护约束
+
+- 时间：2026-05-17 20:39:44 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：把根目录中分析系统相关详细设计清理干净，将后续维护入口收敛到 `analysis-system/`，并在根项目协作规范中加入强约束：除非用户明确授权，不允许修改 `analysis-system/` 下任何文件。
+- 当前理解：`analysis-system/` 已经有自己的 README、AGENTS、overview、模块文档和工作日志。根项目应该只维护 Chrome 插件和日志规范契约；分析系统设计、计划、进度、实现文档都应进入 `analysis-system/docs/`。本轮用户明确授权整理子目录，因此可以修正子项目中指向旧根目录分析文档的引用。
+- 计划修改文件：
+  - `AGENTS.md`
+  - `docs/overview-design.md`
+  - `docs/modules/10-analysis-consumer.md`
+  - `analysis-system/AGENTS.md`
+  - `analysis-system/docs/overview-design.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不改插件源码、不实现分析系统功能、不连接 CLS、不创建数据库、不改日志规范字段。
+- 验证计划：用 `rg` 检查根目录不再维护分析系统详细设计入口；运行 `git diff --check`。
+- 当前状态：已开始清理根目录文档并修正子项目引用。
+
+#### 完成记录：根目录分析系统设计已迁出
+
+- 时间：2026-05-17 20:40:54 CST
+- 状态：已完成
+- 已完成：删除根目录 `docs/modules/10-analysis-consumer.md`，根项目不再维护分析系统详细设计文档。
+- 已完成：更新 `docs/overview-design.md`，移除后续分析消费模块链接和详细分析方向，只保留独立分析系统边界说明：分析系统已迁入 `analysis-system/`，插件与分析系统只通过 `docs/modules/12-log-specification.md` 交流。
+- 已完成：更新根 `AGENTS.md`，加入 `analysis-system/` 子项目保护强约束：除非用户明确授权修改后端分析系统或明确点名 `analysis-system/`，任何任务都不得新增、修改、删除 `analysis-system/` 下文件；如获授权进入子项目，必须先读 `analysis-system/AGENTS.md` 并按子项目 worklog 记录。
+- 已完成：修正 `analysis-system/AGENTS.md` 和 `analysis-system/docs/overview-design.md` 中对旧根目录分析文档的引用；把腾讯云产品选型、已有域名入口、分阶段云资源路线补进 `analysis-system/docs/runtime-plan.md`，确保迁出的设计内容由子项目承接。
+- 改动文件：
+  - `AGENTS.md`
+  - `docs/overview-design.md`
+  - `docs/modules/10-analysis-consumer.md`
+  - `analysis-system/AGENTS.md`
+  - `analysis-system/docs/overview-design.md`
+  - `analysis-system/docs/runtime-plan.md`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `rg -n "docs/modules/10-analysis-consumer|modules/10-analysis-consumer" analysis-system` 无结果。
+  - `rg -n "docs/modules/10-analysis-consumer|modules/10-analysis-consumer|后续分析消费模块|分析系统详细设计|CLS Kafka 协议消费|TencentDB for PostgreSQL|FastAPI|api-server|cls-consumer|ClickHouse" AGENTS.md docs -g '!docs/ai-worklog.md'` 仅剩 `docs/overview-design.md` 的边界提示。
+  - `find analysis-system -maxdepth 5 -type f | sort` 已确认子项目文档和目录。
+  - `git diff --check` 通过。
+- 风险/阻塞：`analysis-system/` 当前仍是未跟踪目录；后续若提交，需要把整个子项目作为独立边界一起纳入版本控制。本轮已获用户明确授权修改子目录，后续默认不得再修改该目录，除非用户再次明确授权。
+
+### 任务：分析 profile 中聊天未上报重复项
+
+- 时间：2026-05-17 23:26:47 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：分析用户提供的 `boss-observer-profile-0.1.0-2026-05-17T23-24-15-106+08-00.json`，解释聊天数据中两个候选人始终消不掉、且在列表里重复出现多次的原因。
+- 当前理解：本轮只做日志/profile 分析，不修改插件实现；重点检查聊天列表补采统计、候选人身份键、水位状态、事件队列和生产统计中的重复模式。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改插件源码、不修改 `analysis-system/`、不新增测试、不接触 BOSS 真机页面、不采集额外敏感信息。
+- 验证计划：读取相关聊天模块文档、源码和 profile JSON，使用本地脚本只做结构化统计；如发现实现缺陷，只在最终回复给出定位和建议。
+- 当前状态：已完成接手阅读，准备解析 profile JSON。
+
+#### 完成记录：聊天重复项原因已定位
+
+- 时间：2026-05-17 23:35:40 CST
+- 状态：已完成
+- 已完成：解析 profile 顶层 runtime、productionStats 和 recentEvents，确认最终 `unreportedChats` 有 6 条但只对应 2 个显示名：一个显示名 2 条、另一个显示名 4 条；上传链路正常，聊天模块 208 条事件中 207 条已上传，队列只剩 1 条最新 `candidate_chat.opened`。
+- 已完成：定位重复原因是聊天列表单行解析把最近消息预览或微信号拼进 `listItem.jobTitle`，而 fallback candidateId 使用“姓名 + 职位”生成；同一候选人每次最近消息变化都会变成新的 `candidateId` 和新的 popup 未上报项。
+- 已完成：定位“点开后仍消不掉”的原因是手动打开列表项时保存的 `jobTitle` 已被预览污染，和聊天窗口快照中的纯职位标题不完全相等，`doesManualOpenAttemptMatchSnapshot()` 无法匹配，`coverageLastMessageAt` 不会补到快照；如果快照 DOM 本身最后消息时间没有超过旧水位，就不会生成可推进水位的 `snapshot_captured`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - 使用 Node 结构化解析 `/Users/tiny/Downloads/boss-observer-profile-0.1.0-2026-05-17T23-24-15-106+08-00.json`。
+  - `git diff --check -- docs/ai-worklog.md` 通过。
+- 风险/阻塞：本轮只分析，不修改源码；profile 中 `jobTitle` 已暴露最近消息预览和联系方式文本，后续修复时应同时处理解析稳定性和诊断导出脱敏。
+- 中断续写入口：如继续修复，优先改 `extension/src/content/chat-record-probe.js` 的列表职位解析/手动打开匹配，并补 `test/chat-record-probe.test.js` 和 `test/production-stats.test.js` 覆盖单行“职位 + 消息预览/微信号”场景。
+
+### 任务：修复聊天未上报列表重复身份
+
+- 时间：2026-05-17 23:39:00 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：修复聊天列表把最近消息预览混入职位导致同一候选人重复出现、点开后未上报项消不掉的问题。
+- 当前理解：根因在聊天列表单行解析、fallback 身份键和手动打开匹配；需要把列表中的职位标题和消息预览拆开，并让历史污染数据在生产统计归一化时尽量合并。
+- 计划修改文件：
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/production-stats.js`
+  - `test/chat-record-probe.test.js`
+  - `test/production-stats.test.js`
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改 `analysis-system/`、不改上传链路、不引入依赖、不采集新的敏感字段、不做真机自动操作。
+- 验证计划：补充聊天列表解析和生产统计去重单测，运行相关测试；必要时运行 `npm test`。
+- 当前状态：准备实现解析和去重修复。
+
+#### 完成记录：聊天列表职位预览拆分修复完成
+
+- 时间：2026-05-17 23:42:42 CST
+- 状态：已完成
+- 已完成：新增共享聊天职位标题归一化工具，把 `沟通职位：`、`兼职·`、聊天列表最近消息预览等从职位身份中剥离；聊天列表单行解析现在能把 `jobTitle` 和 `lastMessagePreview` 分开。
+- 已完成：聊天窗口快照、列表候选人 fallback identity、手动打开列表项与快照匹配、popup 未上报列表去重统一使用同一套职位标题归一化逻辑。
+- 已完成：生产统计归一化会清理历史污染的 `unreportedChats.jobTitle`，并按清理后的姓名+职位合并重复项；用用户提供的 profile 复算后，6 条未上报项收敛为 2 条。
+- 改动文件：
+  - `extension/src/shared/chat-job-title.js`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/production-stats.js`
+  - `test/chat-record-probe.test.js`
+  - `test/production-stats.test.js`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `node --test test/chat-record-probe.test.js` 通过，21 个测试全部通过。
+  - `node --test test/production-stats.test.js` 通过，12 个测试全部通过。
+  - 使用 `/Users/tiny/Downloads/boss-observer-profile-0.1.0-2026-05-17T23-24-15-106+08-00.json` 复算：`unreportedChats` 从 6 条归并为 2 条。
+  - `npm test` 通过，191 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：尚未在真实 BOSS 页面重新加载插件验证；无括号且标题本身包含空格的职位，列表单行兜底会把第一个空格后的内容视作预览，需要后续真机样本继续校准。
+- 中断续写入口：重新加载 Chrome 插件后打开聊天页，观察 popup 未上报聊天是否只保留每人每职位一条；若仍重复，抓新的 profile 对比 `listItem.jobTitle` 和 `chat.jobTitle`。
+
+### 任务：移除 candidate_chat.report_required 打点
+
+- 时间：2026-05-17 23:44:34 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：按用户要求去掉 `candidate_chat.report_required` 这个打点，避免聊天列表“需要补采”产生无价值事件和统计噪音。
+- 当前理解：保留聊天窗口打开、快照采集和上传成功水位；保留用户点击聊天列表时用列表最近时间补充快照覆盖范围的能力；移除定时扫描聊天列表并产生 `report_required` 事件、popup/debug 未上报聊天统计和对应文档契约。
+- 计划修改文件：
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/event-types.js`
+  - `extension/src/shared/production-stats.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `extension/debug/debug.js`
+  - `extension/debug/index.html`
+  - `docs/overview-design.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - 相关测试文件
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改 `analysis-system/`、不改 CLS 上传接口、不改聊天正文快照字段、不新增依赖、不做真机自动操作。
+- 验证计划：更新或删除相关单测后运行聊天、生产统计、诊断 profile、上传策略测试，最后运行 `npm test` 和 `git diff --check`。
+- 当前状态：准备移除打点和未上报聊天统计链路。
+
+#### 完成记录：report_required 已移除
+
+- 时间：2026-05-17 23:51:03 CST
+- 状态：已完成
+- 已完成：从事件枚举中删除 `candidate_chat.report_required`；聊天探针不再定时扫描列表并生成该事件，只保留点击聊天列表后将列表最近时间带入下一次快照覆盖字段的能力。
+- 已完成：移除生产统计中的 `unreportedChats` 维护、诊断 profile 中的未上报聊天摘要、debug 页“需要补采的聊天”区块和聊天模块健康状态对未上报聊天的依赖。
+- 已完成：同步更新聊天记录模块文档、概要设计和日志规范，删除 `report_required` 契约，明确聊天列表只作为快照覆盖辅助来源，不作为独立事件上报。
+- 改动文件：
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/event-types.js`
+  - `extension/src/shared/production-stats.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `extension/debug/debug.js`
+  - `extension/debug/index.html`
+  - `docs/overview-design.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `test/chat-record-probe.test.js`
+  - `test/production-stats.test.js`
+  - `test/debug-state.test.js`
+  - `test/diagnostic-profile.test.js`
+  - `test/upload-policy.test.js`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `node --test test/chat-record-probe.test.js` 通过，19 个测试全部通过。
+  - `node --test test/production-stats.test.js` 通过，7 个测试全部通过。
+  - `node --test test/diagnostic-profile.test.js test/debug-state.test.js test/upload-policy.test.js` 通过，8 个测试全部通过。
+  - `rg -n "REPORT_REQUIRED|candidate_chat\\.report_required|report_required" extension/src extension/debug test docs/overview-design.md docs/modules` 无结果。
+  - `npm test` 通过，184 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：尚未重新加载真实 Chrome 插件验证；如果需要清理浏览器本地旧 `productionStats.unreportedChats`，当前读取时会自动归一化丢弃旧字段，但旧 storage 原始值可能要等下次状态写入后自然覆盖。
+- 中断续写入口：重新加载插件后导出 profile，确认 `candidate_chat.report_required` 不再出现在 recentEvents，`runtime.productionStats.unreportedChats` 不再输出。
+
+### 任务：新增插件 build 打包命令
+
+- 时间：2026-05-18 15:38:03 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：按用户要求新增打包命令，支持按当前插件版本生成 Chrome 插件 zip，且不删除旧版本产物。
+- 当前理解：仓库当前已有未提交改动；`package.json` 版本为 `0.1.1`，但 Chrome 插件实际版本仍来自 `extension/manifest.json` 的 `0.1.0`。打包命令应以 manifest 版本作为 Chrome 插件当前版本来源，只打包 `extension/` 内容。
+- 计划修改文件：
+  - `package.json`
+  - `scripts/build-extension.js`
+  - `test/build-extension.test.js`
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改 `analysis-system/`，不清理或删除 `dist/` 里的旧 zip，不修改插件采集逻辑，不操作真实 BOSS 页面。
+- 验证计划：新增打包脚本单测，运行相关测试；执行 `npm run build` 检查生成包名、zip 完整性和 zip 根目录内容。
+- 当前状态：准备实现打包脚本和 npm script。
+
+#### 完成记录：build 命令已新增并打包验证
+
+- 时间：2026-05-18 15:41:02 CST
+- 状态：已完成
+- 已完成：新增 `npm run build`，由 `scripts/build-extension.js` 读取 `extension/manifest.json` 的当前插件版本生成 zip 包名；只从 `extension/` 目录打包运行时文件。
+- 已完成：打包脚本不会清理 `dist/`，如果同版本 zip 已存在，会追加时间戳生成新文件，避免覆盖旧产物。本次执行时 manifest 版本为 `0.1.1`，生成 `dist/boss-observer-0.1.1.zip`，并保留已有 `dist/boss-observer-0.1.0.zip`。
+- 已完成：新增 `test/build-extension.test.js`，覆盖 manifest 版本作为包名来源、同版本包已存在时不覆盖旧包、时间戳文件名安全。
+- 改动/生成文件：
+  - `package.json`
+  - `scripts/build-extension.js`
+  - `test/build-extension.test.js`
+  - `docs/ai-worklog.md`
+  - `dist/boss-observer-0.1.1.zip`
+- 验证结果：
+  - `node --test test/build-extension.test.js` 通过，3 个测试全部通过。
+  - `node --test test/manifest.test.js` 通过。
+  - `npm run build` 通过，生成 `dist/boss-observer-0.1.1.zip`。
+  - `unzip -t dist/boss-observer-0.1.1.zip` 通过。
+  - `unzip -l dist/boss-observer-0.1.1.zip` 已检查包内容，根目录包含 `manifest.json`、`debug/`、`debug-raw/`、`src/`，不包含项目根目录 `docs/`、`test/`、`node_modules/`。
+  - `npm test` 通过，187 个测试全部通过。
+  - `git diff --check` 通过。
+- 风险/阻塞：打包依赖系统 `zip` 命令；当前产物是 Chrome 扩展 zip，不是签名 `.crx`。
+
+### 任务：检查上报事件是否包含插件版本号
+
+- 时间：2026-05-18 21:25:19 CST
+- 执行者：AI
+- 状态：检查中
+- 任务目标：确认当前插件上报到日志系统的事件/envelope 或上传请求中是否带有 Chrome 插件版本号。
+- 当前理解：用户只要求确认现状，不要求修改实现；优先追踪事件构造、队列入队、上传 payload、诊断 profile 和日志规范。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改 `analysis-system/`、不改采集/上传逻辑、不新增事件字段、不重新打包插件。
+- 验证计划：阅读相关模块和测试，使用 `rg` 搜索版本字段、manifest 读取、上传 payload 构造；如仅检查现状则不运行全量测试。
+- 当前状态：准备检查事件构造与上传链路。
+
+#### 完成记录：插件版本号上报现状已确认
+
+- 时间：2026-05-18 21:28:12 CST
+- 状态：已完成
+- 已完成：确认正式事件由 `EventCollector.collect()` 构造，根字段 `pluginVersion` 来自 `chrome.runtime.getManifest().version`；当前 `extension/manifest.json` 版本为 `0.1.1`。
+- 已完成：确认 background 入队时只补充 operator 和 tab 来源字段，不会移除 `pluginVersion`；普通 HTTP endpoint 上传时会把完整事件数组放入 `events`，因此每条事件保留 `pluginVersion`。
+- 已完成：确认当前默认 CLS 匿名上传会将 `event.pluginVersion` 映射为扁平字段 `plugin_version`，日志规范也把 `pluginVersion` / `plugin_version` 列为契约字段。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `rg -n "version|manifest|plugin|extensionVersion|pluginVersion|plugin_version" extension docs/modules test package.json` 已确认字段来源和映射。
+  - `rg -n "bossObserver\\.event|new EventCollector|\\.collect\\(|collect\\(" extension/src test` 已确认正式业务事件走 collector。
+  - `node --test test/cls-log-format.test.js` 通过，4 个测试全部通过。
+- 风险/阻塞：未连接真实 CLS 控制台查询线上日志；本结论基于当前代码和单测。CLS 里字段名应查 `plugin_version`，兼容 HTTP endpoint 原始事件时字段名是 `pluginVersion`。
+
+### 任务：新增招聘策略经验文档
+
+- 时间：2026-05-19 17:55 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：按用户要求建立一个策略 Markdown 文档，用于沉淀招聘筛选、打招呼、聊天跟进等经验，后续逐步优化。
+- 当前理解：策略文档属于经验和分析假设沉淀，不应成为 Chrome 插件运行逻辑依赖；插件仍只记录事实日志。文档应放在根项目 `docs/` 下，避开独立后端分析系统子项目。
+- 计划修改文件：
+  - `docs/recruiting-strategy.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改 `analysis-system/`、不修改插件源码、不新增事件类型、不改日志契约、不新增依赖。
+- 验证计划：文档新增后运行 `git diff --check -- docs/recruiting-strategy.md docs/ai-worklog.md`。
+- 当前状态：已完成接手阅读和范围确认，准备新增策略文档。

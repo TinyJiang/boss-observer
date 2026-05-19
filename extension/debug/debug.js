@@ -12,7 +12,6 @@ import {
 
 const overallStatusEl = document.getElementById("overallStatus");
 const moduleStatusEl = document.getElementById("moduleStatus");
-const unreportedChatsEl = document.getElementById("unreportedChats");
 const downloadProfileButton = document.getElementById("downloadProfileButton");
 const openDebugButton = document.getElementById("openDebugButton");
 const refreshButton = document.getElementById("refreshButton");
@@ -57,10 +56,8 @@ async function render() {
   const collectionGate = evaluateCollectionGate(config, state.collectionGate?.bossAccount);
   const productionStats = state.productionStats || {};
   const modules = productionStats.modules || {};
-  const unreportedChats = productionStats.unreportedChats || [];
   const rows = buildStatusRows({
     modules,
-    unreportedChats,
     uploadEnabled: config.uploadEnabled === true,
     hasUploadError: Boolean(state.lastUploadError)
   });
@@ -71,7 +68,6 @@ async function render() {
   renderOperatorConfig(config, collectionGate);
   renderOverallStatus(overallStatus);
   renderStatusRows(rows);
-  renderUnreportedChats(unreportedChats);
 }
 
 async function saveOperatorConfig() {
@@ -166,12 +162,11 @@ function buildCollectionGateText(collectionGate) {
   return "严重：请先配置操作员ID和账号姓名，采集已停止";
 }
 
-function buildStatusRows({ modules = {}, unreportedChats = [], uploadEnabled = false, hasUploadError = false } = {}) {
+function buildStatusRows({ modules = {}, uploadEnabled = false, hasUploadError = false } = {}) {
   return MODULE_REPORT_DEFINITIONS.map((definition) => {
     const status = getRowStatus({
       definition,
       moduleStats: modules[definition.id] || {},
-      unreportedChats,
       uploadEnabled,
       hasUploadError
     });
@@ -183,13 +178,11 @@ function buildStatusRows({ modules = {}, unreportedChats = [], uploadEnabled = f
   });
 }
 
-function getRowStatus({ definition, moduleStats, unreportedChats, uploadEnabled, hasUploadError }) {
+function getRowStatus({ definition, moduleStats, uploadEnabled, hasUploadError }) {
   if (definition.id === "queue_upload" && (!uploadEnabled || hasUploadError)) {
     return "problem";
   }
-  return getModuleHealthStatus(moduleStats, {
-    hasUnreportedChats: definition.id === "candidate_chat" && unreportedChats.length > 0
-  });
+  return getModuleHealthStatus(moduleStats);
 }
 
 function renderOverallStatus(status) {
@@ -210,30 +203,6 @@ function renderStatusRows(rows) {
       <span class="state-text">${row.status === "ok" ? "正常" : "需处理"}</span>
     `;
     moduleStatusEl.appendChild(rowEl);
-  });
-}
-
-function renderUnreportedChats(chats) {
-  unreportedChatsEl.innerHTML = "";
-  if (!chats.length) {
-    const row = document.createElement("div");
-    row.className = "chat-row ok";
-    row.innerHTML = `
-      <span class="dot" aria-hidden="true"></span>
-      <span class="label">暂无需要补采的聊天</span>
-    `;
-    unreportedChatsEl.appendChild(row);
-    return;
-  }
-
-  chats.forEach((chat) => {
-    const row = document.createElement("div");
-    row.className = "chat-row problem";
-    row.innerHTML = `
-      <span class="dot" aria-hidden="true"></span>
-      <span class="label">${escapeHtml(chat.displayName || "未识别候选人")}</span>
-    `;
-    unreportedChatsEl.appendChild(row);
   });
 }
 

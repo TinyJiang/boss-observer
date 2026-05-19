@@ -56,11 +56,9 @@ export function buildDiagnosticProfileFilename(profile = {}) {
 function buildModuleHealth(productionStats, { uploadEnabled, hasUploadError }) {
   return Object.fromEntries(MODULE_REPORT_DEFINITIONS.map((definition) => {
     const moduleStats = productionStats.modules[definition.id] || {};
-    const hasUnreportedChats = definition.id === "candidate_chat" &&
-      productionStats.unreportedChats.length > 0;
     const status = definition.id === "queue_upload" && (!uploadEnabled || hasUploadError)
       ? "problem"
-      : getModuleHealthStatus(moduleStats, { hasUnreportedChats });
+      : getModuleHealthStatus(moduleStats);
     return [definition.id, {
       label: definition.label,
       status
@@ -70,17 +68,7 @@ function buildModuleHealth(productionStats, { uploadEnabled, hasUploadError }) {
 
 function summarizeProductionStats(productionStats) {
   return {
-    modules: productionStats.modules,
-    unreportedChats: productionStats.unreportedChats.map((chat) => ({
-      candidateId: chat.candidateId || "",
-      displayName: chat.displayName || "",
-      jobTitle: chat.jobTitle || "",
-      lastMessageAt: chat.lastMessageAt || "",
-      lastMessageTimeText: chat.lastMessageTimeText || "",
-      lastReportedMessageAt: chat.lastReportedMessageAt || "",
-      reportRequiredEventId: chat.reportRequiredEventId || "",
-      updatedAt: chat.updatedAt || ""
-    }))
+    modules: productionStats.modules
   };
 }
 

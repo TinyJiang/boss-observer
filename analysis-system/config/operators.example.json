@@ -1,0 +1,74 @@
+{
+  "operators": [
+    {
+      "operatorId": "zhouxinyu",
+      "displayName": "周心语",
+      "accountName": "谢女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    },
+    {
+      "operatorId": "mock_liangchen",
+      "displayName": "梁晨",
+      "accountName": "梁女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    },
+    {
+      "operatorId": "mock_suxiao",
+      "displayName": "苏晓",
+      "accountName": "苏女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    },
+    {
+      "operatorId": "mock_linran",
+      "displayName": "林然",
+      "accountName": "林女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    },
+    {
+      "operatorId": "mock_qiaomu",
+      "displayName": "乔木",
+      "accountName": "乔女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    },
+    {
+      "operatorId": "mock_yeyun",
+      "displayName": "叶云",
+      "accountName": "叶女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    },
+    {
+      "operatorId": "mock_chenxi",
+      "displayName": "陈曦",
+      "accountName": "陈女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    },
+    {
+      "operatorId": "mock_tangning",
+      "displayName": "唐宁",
+      "accountName": "唐女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    },
+    {
+      "operatorId": "mock_xiahe",
+      "displayName": "夏禾",
+      "accountName": "夏女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    },
+    {
+      "operatorId": "mock_luyu",
+      "displayName": "陆雨",
+      "accountName": "陆女士",
+      "enabled": true,
+      "role": "招聘操作员"
+    }
+  ]
+}

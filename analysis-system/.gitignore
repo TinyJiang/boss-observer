@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+config/operators.local.json
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.npm-cache/
+.dev/
+dist/
+build/
+*.egg-info/
+frontend/node_modules/
+frontend/dist/

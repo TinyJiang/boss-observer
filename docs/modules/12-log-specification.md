@@ -150,7 +150,6 @@
 | `candidate_chat.opened` | 候选人聊天窗口打开 |
 | `candidate_chat.snapshot_captured` | 候选人聊天文本快照已采集 |
 | `candidate_chat.wechat_captured` | 已换微信候选人的微信信息已采集 |
-| `candidate_chat.report_required` | 聊天列表发现需要打开补采，并进入 popup 未上报统计 |
 | `candidate_chat.capture_failed` | 聊天采集异常 |
 | `queue.write_failed` | 本地队列写入失败 |
 | `upload.started` | 开始上传 |
@@ -613,29 +612,7 @@
 - 普通“换微信”按钮不触发该事件。
 - 图片中的微信号不采集，除非 BOSS 页面已经转写成可见文本。
 
-### 7.19 `candidate_chat.report_required`
-
-```json
-{
-  "source": "chat_list",
-  "chatPageUrl": "https://www.zhipin.com/web/chat/index",
-  "candidate": {},
-  "listItem": {
-    "lastMessageAt": "2026-05-15T09:54:00.000+08:00",
-    "lastMessageTimeText": "09:54",
-    "displayName": "桂儿",
-    "jobTitle": "【8000+】居家黑板主播",
-    "lastReportedMessageAt": "2026-05-15T09:20:00.000+08:00"
-  }
-}
-```
-
-- 事件表示插件已经把该聊天窗口写入扩展 popup 的未上报聊天统计。
-- 插件不会向 BOSS 页面插入 badge、overlay、属性标记或其他可见 DOM 提示。
-- 插件不会自动打开该会话，不会阻止员工操作。
-- 列表只检查明显今天的时间文本，例如 `HH:mm`、`今天 HH:mm`、`刚刚`、`N分钟前`；`昨天`、旧日期和不确定文本会忽略。
-
-### 7.20 `candidate_chat.capture_failed`
+### 7.19 `candidate_chat.capture_failed`
 
 ```json
 {

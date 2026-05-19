@@ -10,6 +10,16 @@
 
 插件端只负责观察、记录、缓存、上传事实。策略判断、转化分析、员工评估、话术质量判断等逻辑应放在后续分析系统中。
 
+### analysis-system 子项目保护
+
+`analysis-system/` 是独立后端分析系统子项目，不属于本 Chrome 插件项目的默认修改范围。
+
+- 除非用户明确授权修改后端分析系统或明确点名 `analysis-system/`，否则任何任务都不得新增、修改、删除 `analysis-system/` 下的文件。
+- 插件项目不得从 `analysis-system/` 导入代码、复制配置或依赖其运行时状态。
+- `analysis-system/` 与插件之间唯一共享契约是 `docs/modules/12-log-specification.md`。
+- 根目录文档只维护插件、日志采集和日志契约；分析系统设计、计划、进度和实现文档维护在 `analysis-system/docs/`。
+- 如果用户明确授权进入 `analysis-system/` 工作，必须先阅读 `analysis-system/AGENTS.md`，并按子项目自己的 `analysis-system/docs/ai-worklog.md` 记录任务。
+
 ## 2. AI 接手前必须先读
 
 开始改代码前，先按顺序阅读：

@@ -3,10 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   buildChatCandidatePayload,
-  buildChatReportPrompt,
   buildChatSnapshotPayload,
   ChatRecordProbe,
-  CHAT_REPORT_PROMPT_TEXT,
   collectChatMessagesFromText,
   extractWechatAccountsFromText,
   findChatListItems,
@@ -16,6 +14,7 @@ import {
 import { EVENT_TYPES } from "../extension/src/shared/event-types.js";
 
 const FIXED_NOW = () => new Date(2026, 4, 15, 14, 20, 0, 0);
+const LEGACY_CHAT_REPORT_PROMPT_TEXT = "今日聊天未上报，请点开补采";
 
 test("chat list parser treats plain clock time as today", () => {
   const parsed = parseChatListItemText(
@@ -26,6 +25,8 @@ test("chat list parser treats plain clock time as today", () => {
   assert.equal(parsed.lastMessageAt, "2026-05-15T09:54:00.000+08:00");
   assert.equal(parsed.lastMessageTimeText, "09:54");
   assert.equal(parsed.displayName, "桂儿");
+  assert.equal(parsed.jobTitle, "【8000+】居家黑板主播（时薪40+可兼职）");
+  assert.equal(parsed.lastMessagePreview, "哦");
 });
 
 test("chat list parser keeps multiline job title separate from preview", () => {
@@ -39,6 +40,30 @@ test("chat list parser keeps multiline job title separate from preview", () => {
 
   assert.equal(parsed.jobTitle, "【8000+】居家黑板主播（时薪40+可兼职）");
   assert.equal(parsed.lastMessagePreview, "哦");
+});
+
+test("chat list parser keeps one candidate identity when single-line preview changes", () => {
+  const firstRoot = createListRoot([
+    createListElement("09:54 陈月雨 【8000+】居家黑板主播（时薪40+可兼职）")
+  ]);
+  const secondRoot = createListRoot([
+    createListElement("09:55 陈月雨 【8000+】居家黑板主播（时薪40+可兼职） 陈月雨的微信号：19072460958")
+  ]);
+  const thirdRoot = createListRoot([
+    createListElement("09:56 陈月雨 【8000+】居家黑板主播（时薪40+可兼职） [抠鼻][发呆]")
+  ]);
+
+  const [first] = findChatListItems(firstRoot, { now: FIXED_NOW });
+  const [second] = findChatListItems(secondRoot, { now: FIXED_NOW });
+  const [third] = findChatListItems(thirdRoot, { now: FIXED_NOW });
+
+  assert.equal(first.jobTitle, "【8000+】居家黑板主播（时薪40+可兼职）");
+  assert.equal(second.jobTitle, "【8000+】居家黑板主播（时薪40+可兼职）");
+  assert.equal(third.jobTitle, "【8000+】居家黑板主播（时薪40+可兼职）");
+  assert.equal(second.lastMessagePreview, "陈月雨的微信号：19072460958");
+  assert.equal(third.lastMessagePreview, "[抠鼻][发呆]");
+  assert.equal(first.candidate.candidateId, second.candidate.candidateId);
+  assert.equal(second.candidate.candidateId, third.candidate.candidateId);
 });
 
 test("chat list parser ignores non-today time labels", () => {
@@ -57,31 +82,6 @@ test("chat list parser ignores active chat position timeline rows", () => {
     parseChatListItemText("09:54 5月16日 沟通的职位-【8000+】居家黑板主播（时薪40+可兼职）", { now: FIXED_NOW }),
     null
   );
-});
-
-test("chat report prompt compares list time with last successful report watermark", () => {
-  const item = {
-    lastMessageAt: "2026-05-15T09:54:00.000+08:00",
-    candidate: {
-      candidateId: "candidate_1"
-    }
-  };
-
-  assert.equal(buildChatReportPrompt(item, { candidates: {} }).required, true);
-  assert.equal(buildChatReportPrompt(item, {
-    candidates: {
-      candidate_1: {
-        lastReportedMessageAt: "2026-05-15T09:20:00.000+08:00"
-      }
-    }
-  }).required, true);
-  assert.equal(buildChatReportPrompt(item, {
-    candidates: {
-      candidate_1: {
-        lastReportedMessageAt: "2026-05-15T10:00:00.000+08:00"
-      }
-    }
-  }).required, false);
 });
 
 test("chat list finder keeps one prompt target per visible conversation", () => {
@@ -105,7 +105,7 @@ test("chat list finder keeps one prompt target per visible conversation", () => 
   assert.equal(items.find((item) => item.displayName === "桂儿").element, card);
 });
 
-test("chat list prompt event dedupes when low confidence id changes during render", async () => {
+test("chat list scan does not emit report required events", async () => {
   const events = [];
   const probe = new ChatRecordProbe({
     collector: {
@@ -129,63 +129,11 @@ test("chat list prompt event dedupes when low confidence id changes during rende
       createListElement("09:54 桂儿 【8000+】居家黑板主播（时薪40+可兼职） 哦")
     ]);
     await probe.scan("test");
-    globalThis.document = createListRoot([
-      createListElement([
-        "09:54 桂儿 【8000+】居家黑板主播（时薪40+可兼职）",
-        "哦"
-      ].join("\n"))
-    ]);
-    await probe.scan("test");
   } finally {
     globalThis.document = originalDocument;
   }
 
-  assert.equal(
-    events.filter((event) => event.type === EVENT_TYPES.CANDIDATE_CHAT_REPORT_REQUIRED).length,
-    1
-  );
-});
-
-test("chat report required event does not render into the BOSS page DOM", async () => {
-  const events = [];
-  const card = createListElement("09:54 桂儿 【8000+】居家黑板主播（时薪40+可兼职） 哦");
-  const root = createListRoot([card]);
-  const probe = new ChatRecordProbe({
-    collector: {
-      collect(type, payload) {
-        events.push({ type, payload });
-      }
-    },
-    sessionContext: {
-      page: {
-        isBossPage: true,
-        pageType: "chat",
-        url: "https://www.zhipin.com/web/chat/index"
-      }
-    },
-    now: FIXED_NOW,
-    readReportState: () => ({ candidates: {} })
-  });
-  const originalDocument = globalThis.document;
-  try {
-    globalThis.document = root;
-    await probe.scan("test");
-  } finally {
-    globalThis.document = originalDocument;
-  }
-
-  assert.equal(card.children.length, 0);
-  assert.equal(card.textContent.includes(CHAT_REPORT_PROMPT_TEXT), false);
-  assert.equal(card.getAttribute("data-boss-observer-chat-report-required"), null);
-  assert.equal(root.body.children.length, 0);
-  assert.equal(
-    events.filter((event) => event.type === EVENT_TYPES.CANDIDATE_CHAT_REPORT_REQUIRED).length,
-    1
-  );
-  assert.equal(
-    events.find((event) => event.type === EVENT_TYPES.CANDIDATE_CHAT_REPORT_REQUIRED).payload.listItem.displayName,
-    "桂儿"
-  );
+  assert.deepEqual(events, []);
 });
 
 test("chat snapshot emits again on repeated manual open until upload watermark advances", async () => {
@@ -357,6 +305,67 @@ test("manual chat open submits snapshot when list latest message is newer than v
   assert.equal(snapshot.payload.chat.messageCount, 1);
 });
 
+test("manual chat open matches snapshot when single-line list preview follows job title", async () => {
+  const events = [];
+  const card = createListElement(
+    "12:45 李女士 【8000+】居家黑板主播（时薪40+可兼职） 李女士的微信号：19072460958"
+  );
+  const panel = createListElement([
+    "李女士",
+    "今日活跃",
+    "在线简历",
+    "附件简历",
+    "沟通职位： 兼职·【8000+】居家黑板主播（时薪40+可兼职）",
+    "12:44",
+    "已读 好的",
+    "发送"
+  ].join("\n"));
+  const panelPayload = buildChatSnapshotPayload(panel, {
+    source: "test",
+    chatPageUrl: "https://www.zhipin.com/web/chat/index",
+    now: FIXED_NOW
+  });
+  const root = createListRoot([card, panel]);
+  const probe = new ChatRecordProbe({
+    collector: {
+      collect(type, currentPayload) {
+        events.push({ type, payload: currentPayload });
+      }
+    },
+    sessionContext: {
+      page: {
+        isBossPage: true,
+        pageType: "chat",
+        url: "https://www.zhipin.com/web/chat/index"
+      }
+    },
+    now: FIXED_NOW,
+    readReportState: () => ({
+      candidates: {
+        [panelPayload.candidate.candidateId]: {
+          lastReportedMessageAt: "2026-05-15T12:44:00.000+08:00"
+        }
+      }
+    })
+  });
+  const originalDocument = globalThis.document;
+  try {
+    globalThis.document = root;
+    assert.equal(probe.recordChatListOpenAttempt(card), true);
+    await probe.scan("chat_list_click");
+  } finally {
+    globalThis.document = originalDocument;
+  }
+
+  const snapshot = events.find((event) =>
+    event.type === EVENT_TYPES.CANDIDATE_CHAT_SNAPSHOT_CAPTURED
+  );
+  assert.ok(snapshot);
+  assert.equal(snapshot.payload.candidate.candidateId, panelPayload.candidate.candidateId);
+  assert.equal(snapshot.payload.chat.coverageLastMessageAt, "2026-05-15T12:45:00.000+08:00");
+  assert.equal(snapshot.payload.chat.listObservedJobTitle, "【8000+】居家黑板主播（时薪40+可兼职）");
+});
+
 test("chat snapshot parser captures rendered text messages and skips media urls", () => {
   const panel = createElement({
     text: [
@@ -453,8 +462,8 @@ test("chat snapshot parser keeps live innerText line breaks", () => {
 test("chat message parser ignores boss observer prompt text", () => {
   const messages = collectChatMessagesFromText([
     "09:54",
-    CHAT_REPORT_PROMPT_TEXT,
-    `哦 ${CHAT_REPORT_PROMPT_TEXT}`,
+    LEGACY_CHAT_REPORT_PROMPT_TEXT,
+    `哦 ${LEGACY_CHAT_REPORT_PROMPT_TEXT}`,
     "发送"
   ].join("\n"), { now: FIXED_NOW });
 

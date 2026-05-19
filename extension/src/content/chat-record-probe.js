@@ -6,6 +6,11 @@ import {
 } from "./candidate-card.js";
 import { buildCandidateId } from "./candidate-card-registry.js";
 import { EVENT_TYPES } from "../shared/event-types.js";
+import {
+  normalizeChatIdentityJobTitle,
+  sanitizeChatListJobTitle,
+  splitChatJobTitleAndPreview
+} from "../shared/chat-job-title.js";
 import { readChatReportState } from "../shared/chat-report-state.js";
 import {
   getChatSnapshotCoverageLastMessageAt,
@@ -14,7 +19,7 @@ import {
 import { toLocalIsoString } from "../shared/time.js";
 
 const LEGACY_CHAT_REPORT_PROMPT_ATTRIBUTE = "data-boss-observer-chat-report-required";
-export const CHAT_REPORT_PROMPT_TEXT = "今日聊天未上报，请点开补采";
+const LEGACY_CHAT_REPORT_PROMPT_TEXT = "今日聊天未上报，请点开补采";
 
 const SCAN_INTERVAL_MS = 2500;
 const CHAT_PAGE_TYPES = new Set(["chat"]);
@@ -43,7 +48,7 @@ const MESSAGE_CONTROL_TEXTS = new Set([
 
 // Responsibilities:
 // - capture already-rendered chat text when a recruiter opens a conversation
-// - mark visible chat list items that need manual full snapshot refresh
+// - use recruiter list clicks to carry list freshness into the next snapshot
 // - never click, send, scroll, or upload media URLs/binaries
 export class ChatRecordProbe {
   constructor({
@@ -63,7 +68,6 @@ export class ChatRecordProbe {
     this.activeConversationKey = "";
     this.lastObservedSnapshotKeyByConversation = new Map();
     this.pendingManualOpenKeys = new Map();
-    this.promptedReportKeys = new Set();
     this.wechatReportKeys = new Set();
     this.handleDocumentClick = (event) => {
       if (this.recordChatListOpenAttempt(event?.target)) {
@@ -106,38 +110,8 @@ export class ChatRecordProbe {
     }
 
     const reportState = await this.readReportState();
-    this.scanChatListPrompts({ source, reportState });
-    this.scanActiveChatSnapshot({ source, reportState });
-  }
-
-  scanChatListPrompts({ reportState }) {
     removeLegacyChatReportPrompts(globalThis.document);
-    const listItems = findChatListItems(globalThis.document, { now: this.now });
-    listItems.forEach((item) => {
-      const prompt = buildChatReportPrompt(item, reportState);
-      if (!prompt.required) {
-        return;
-      }
-
-      const promptKey = buildChatListReportKey(item);
-      if (this.promptedReportKeys.has(promptKey)) {
-        return;
-      }
-
-      this.promptedReportKeys.add(promptKey);
-      this.collector.collect(EVENT_TYPES.CANDIDATE_CHAT_REPORT_REQUIRED, compactPayloadObject({
-        source: "chat_list",
-        chatPageUrl: this.sessionContext.page.url,
-        candidate: item.candidate,
-        listItem: {
-          lastMessageAt: item.lastMessageAt,
-          lastMessageTimeText: item.lastMessageTimeText,
-          displayName: item.displayName,
-          jobTitle: item.jobTitle,
-          lastReportedMessageAt: prompt.lastReportedMessageAt
-        }
-      }));
-    });
+    this.scanActiveChatSnapshot({ source, reportState });
   }
 
   scanActiveChatSnapshot({ source, reportState }) {
@@ -358,7 +332,7 @@ function parseChatListItemLines(lines = [], { now = () => new Date() } = {}) {
   const normalizedLines = lines
     .map((line) => normalizeText(line))
     .filter(Boolean)
-    .filter((line) => line !== CHAT_REPORT_PROMPT_TEXT);
+    .filter((line) => line !== LEGACY_CHAT_REPORT_PROMPT_TEXT);
   if (normalizedLines.length <= 1) {
     return null;
   }
@@ -435,26 +409,6 @@ export function parseClearlyTodayChatListTime(text = "", { now = () => new Date(
   }
 
   return null;
-}
-
-export function buildChatReportPrompt(item, reportState = {}) {
-  const record = reportState?.candidates?.[item?.candidate?.candidateId] || null;
-  if (!item?.lastMessageAt || !item?.candidate?.candidateId) {
-    return { required: false };
-  }
-  if (!record?.lastReportedMessageAt) {
-    return {
-      required: true,
-      lastReportedMessageAt: ""
-    };
-  }
-
-  const listTime = Date.parse(item.lastMessageAt);
-  const reportedTime = Date.parse(record.lastReportedMessageAt);
-  return {
-    required: Number.isFinite(listTime) && Number.isFinite(reportedTime) && listTime > reportedTime,
-    lastReportedMessageAt: record.lastReportedMessageAt
-  };
 }
 
 export function shouldSubmitChatSnapshot(payload, reportState = {}) {
@@ -718,11 +672,11 @@ function parseChatListIdentityText(text = "") {
   if (bracketIndex >= 0) {
     const displayName = withoutStatus.slice(0, bracketIndex).trim();
     const afterName = withoutStatus.slice(bracketIndex).trim();
-    const jobTitle = extractBracketJobTitle(afterName);
+    const { jobTitle, lastMessagePreview } = splitChatJobTitleAndPreview(afterName);
     return compactPayloadObject({
       displayName,
       jobTitle,
-      lastMessagePreview: jobTitle ? afterName.slice(jobTitle.length).trim() : ""
+      lastMessagePreview
     });
   }
 
@@ -736,8 +690,8 @@ function parseChatListIdentityText(text = "") {
 function extractListPreviewFromLines(lines = []) {
   for (const line of lines) {
     const normalized = normalizeText(line);
-    if (!normalized ||
-      normalized === CHAT_REPORT_PROMPT_TEXT ||
+      if (!normalized ||
+      normalized === LEGACY_CHAT_REPORT_PROMPT_TEXT ||
       normalized === "[已读]" ||
       normalized === "[送达]" ||
       normalized === "[未读]") {
@@ -747,15 +701,6 @@ function extractListPreviewFromLines(lines = []) {
     return normalized.replace(/^\[(?:已读|送达|未读)\]\s*/, "").trim();
   }
   return "";
-}
-
-function extractBracketJobTitle(text = "") {
-  const match = text.match(/^(【[^】]+】[^[]*?)(?:\s{2,}|\s+(?:已读|送达|未读)\s+|$)/);
-  if (match?.[1]) {
-    return match[1].trim();
-  }
-  const conservative = text.match(/^(【[^】]+】[^，。！？!?]*)/);
-  return conservative?.[1]?.trim() || "";
 }
 
 function extractActiveChatDisplayName(lines = []) {
@@ -774,7 +719,7 @@ function extractActiveChatDisplayName(lines = []) {
 
 function extractChatJobTitle(lines = []) {
   const line = lines.find((current) => current.includes("沟通职位："));
-  return normalizeText(line?.replace(/^.*?沟通职位：/, "") || "");
+  return sanitizeChatListJobTitle(line || "");
 }
 
 function parseMessageLine(line = "") {
@@ -800,7 +745,7 @@ function shouldIgnoreChatMessageLine(line = "") {
   if (!normalized || MESSAGE_CONTROL_TEXTS.has(normalized)) {
     return true;
   }
-  return normalized === CHAT_REPORT_PROMPT_TEXT ||
+  return normalized === LEGACY_CHAT_REPORT_PROMPT_TEXT ||
     normalized.includes("沟通的职位-") ||
     normalized.startsWith("沟通职位：") ||
     normalized.startsWith("期望：") ||
@@ -883,7 +828,7 @@ function readElementTextExcludingPluginNodes(element) {
 }
 
 function stripPluginPromptText(text = "") {
-  return String(text).split(CHAT_REPORT_PROMPT_TEXT).join(" ");
+  return String(text).split(LEGACY_CHAT_REPORT_PROMPT_TEXT).join(" ");
 }
 
 function buildSnapshotDedupKey(payload = {}) {
@@ -958,14 +903,6 @@ function stripLeadingUnreadCount(text = "") {
 
 function normalizeCandidateName(value = "") {
   return normalizeText(value).replace(/\s+/g, "");
-}
-
-function normalizeChatIdentityJobTitle(value = "") {
-  return normalizeText(value)
-    .replace(/^.*?沟通职位：/, "")
-    .replace(/^\d{1,2}月\d{1,2}日\s*沟通的职位-/, "")
-    .replace(/^[^【]{1,20}·(?=【)/, "")
-    .replace(/\s+/g, "");
 }
 
 function isValidChatListDisplayName(value = "") {

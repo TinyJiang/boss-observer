@@ -23,11 +23,8 @@ test("diagnostic profile summarizes runtime state without chat messages or reque
   assert.equal(profile.runtime.config.uploadTargetType, "cls_anonymous");
   assert.equal(profile.runtime.config.clsTopicConfigured, true);
   assert.equal(profile.runtime.config.clsTopicId, undefined);
-  assert.equal(profile.runtime.moduleHealth.candidate_chat.status, "problem");
-  assert.deepEqual(
-    profile.runtime.productionStats.unreportedChats.map((chat) => chat.displayName),
-    ["蒋姜"]
-  );
+  assert.equal(profile.runtime.moduleHealth.candidate_chat.status, "ok");
+  assert.equal(profile.runtime.productionStats.unreportedChats, undefined);
   assert.equal(profile.runtime.recentEvents[0].payload.candidate.profile.displayName, "蒋姜");
   assert.equal(profile.runtime.recentEvents[0].payload.chat.messageCount, 2);
   assert.equal(profile.runtime.recentEvents[0].payload.chat.coverageLastMessageAt, "2026-05-17T14:40:00.000+08:00");
@@ -169,16 +166,7 @@ function createDebugState() {
           uploadedCount: 1,
           uploadFailedCount: 0
         }
-      },
-      unreportedChats: [
-        {
-          candidateId: "bo_candidate_1",
-          displayName: "蒋姜",
-          jobTitle: "【8000+】居家黑板主播",
-          lastMessageAt: "2026-05-17T14:39:00.000+08:00",
-          reportRequiredEventId: "evt_required"
-        }
-      ]
+      }
     },
     networkDebug: {
       enabled: true,

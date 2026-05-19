@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BOSS Observer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Collects factual recruiting workflow logs on BOSS Zhipin pages.",
   "action": {
     "default_title": "BOSS Observer Stats",

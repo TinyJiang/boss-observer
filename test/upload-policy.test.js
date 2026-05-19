@@ -22,7 +22,6 @@ test("upload policy keeps noisy passive events batched", () => {
   [
     EVENT_TYPES.PAGE_CHANGED,
     EVENT_TYPES.CANDIDATE_CARD_EXPOSED,
-    EVENT_TYPES.CANDIDATE_CHAT_REPORT_REQUIRED,
     EVENT_TYPES.JOB_CONTEXT_CHANGED
   ].forEach((type) => {
     assert.equal(shouldFlushImmediately({ type }), false, type);
