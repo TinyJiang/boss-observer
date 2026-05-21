@@ -59,6 +59,15 @@ const SUCCESS_SIGNAL_RULES = [
   ["communication_started", ["沟通已发起", "已发起沟通", "等待对方回复", "继续沟通", "开聊"]]
 ];
 
+const NON_ACTION_GREETING_TEXT_RULES = [
+  "已打招呼",
+  "打招呼成功",
+  "打招呼失败",
+  "今日打招呼",
+  "打招呼人数",
+  "已达上限"
+];
+
 // Responsibilities:
 // - observe greet button clicks in top page and same-origin frames
 // - emit factual click/success/failure events only when the page exposes them
@@ -325,6 +334,7 @@ export function isGreetingActionText(text = "") {
   return normalizedText.length > 0 &&
     normalizedText.length <= 40 &&
     normalizedText.includes("打招呼") &&
+    !NON_ACTION_GREETING_TEXT_RULES.some((keyword) => normalizedText.includes(keyword)) &&
     !hasCandidateProfileSignals(normalizedText) &&
     !normalizedText.includes("招呼语") &&
     !normalizedText.includes("打招呼设置");

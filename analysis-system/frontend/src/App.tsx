@@ -37,14 +37,14 @@ const ACTION_LABELS: Record<string, string> = {
 type MinuteMetricKey =
   | "card_exposed"
   | "detail_opened"
-  | "greeting_clicked"
+  | "greeting_succeeded"
   | "chat_snapshots"
   | "wechat_captured";
 
 const CHART_SERIES: Array<{ key: MinuteMetricKey; label: string; color: string }> = [
   { key: "card_exposed", label: "卡片", color: "#0f766e" },
   { key: "detail_opened", label: "详情", color: "#2563eb" },
-  { key: "greeting_clicked", label: "打招呼", color: "#9333ea" },
+  { key: "greeting_succeeded", label: "招呼成功", color: "#9333ea" },
   { key: "chat_snapshots", label: "聊天", color: "#ea580c" },
   { key: "wechat_captured", label: "微信", color: "#16a34a" }
 ];
@@ -422,12 +422,14 @@ function OperatorDetail({
   const dailyDuration = payload?.operator.daily_active_duration ?? null;
   const detailOpened = funnel?.detail_opened ?? 0;
   const bossLikeDetailOpened = detailOpened + (chat?.chat_opened ?? funnel?.chat_opened ?? 0);
+  const greetingClicked = funnel?.greeting_clicked ?? 0;
+  const greetingSucceeded = funnel?.greeting_succeeded ?? 0;
   const values = [
     ["卡片曝光", funnel?.card_exposed ?? 0],
     ["详情打开", detailOpened],
     ["后台近似", bossLikeDetailOpened],
-    ["打招呼点击", funnel?.greeting_clicked ?? 0],
-    ["打招呼成功", funnel?.greeting_succeeded ?? 0],
+    ["打招呼点击", greetingClicked],
+    ["打招呼成功", greetingSucceeded],
     ["聊天快照", funnel?.chat_snapshots ?? 0],
     ["微信获取", funnel?.wechat_captured ?? 0]
   ] as const;
@@ -460,7 +462,7 @@ function OperatorDetail({
         <FunnelCell label="卡片" value={funnel?.card_exposed ?? 0} />
         <FunnelCell label="详情" value={detailOpened} />
         <FunnelCell label="后台口径" value={bossLikeDetailOpened} />
-        <FunnelCell label="打招呼" value={funnel?.greeting_clicked ?? 0} />
+        <FunnelCell label="招呼成功" value={greetingSucceeded} />
         <FunnelCell label="聊天" value={(funnel?.chat_snapshots ?? 0) + (funnel?.chat_opened ?? 0)} />
         <FunnelCell label="微信" value={funnel?.wechat_captured ?? 0} />
       </div>

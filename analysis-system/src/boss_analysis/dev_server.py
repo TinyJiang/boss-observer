@@ -384,7 +384,7 @@ INDEX_HTML = """<!doctype html>
             <div><span>Cards</span><strong id="f-card">0</strong></div>
             <div><span>Details</span><strong id="f-detail">0</strong></div>
             <div><span>BOSS-like</span><strong id="f-detail-boss">0</strong></div>
-            <div><span>Greetings</span><strong id="f-greeting">0</strong></div>
+            <div><span>Greeting success</span><strong id="f-greeting">0</strong></div>
             <div><span>Chats</span><strong id="f-chat">0</strong></div>
             <div><span>Wechat</span><strong id="f-wechat">0</strong></div>
           </div>
@@ -619,7 +619,7 @@ async function loadOperator(operatorId) {
   setText("f-card", funnel.card_exposed);
   setText("f-detail", funnel.detail_opened);
   setText("f-detail-boss", bossLikeDetailOpened);
-  setText("f-greeting", funnel.greeting_clicked);
+  setText("f-greeting", funnel.greeting_succeeded);
   setText("f-chat", funnel.chat_snapshots + funnel.chat_opened);
   setText("f-wechat", funnel.wechat_captured);
   renderBars(funnel);

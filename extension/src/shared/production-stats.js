@@ -28,7 +28,7 @@ export const MODULE_REPORT_DEFINITIONS = Object.freeze([
   },
   {
     id: "candidate_greeting",
-    label: "打招呼",
+    label: "打招呼事件",
     eventPrefixes: ["candidate_greeting."]
   },
   {

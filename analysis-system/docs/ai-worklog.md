@@ -37,6 +37,60 @@
 
 ## 当前任务
 
+### 任务：只读验证远程 CLS 连接
+
+- 时间：2026-05-19 18:27
+- 执行者：AI
+- 状态：已完成
+- 目标：在用户明确授权读取 `analysis-system/` 后，查看远程 CLS 读取相关代码和配置，并做一次本地开发/排障性质的只读连接测试，方便后续离线分析读取数据。
+- 当前理解：本轮只做读取和测试，不把 SearchLog 接入生产链路，不修改云端配置，不输出敏感候选人正文、联系方式、聊天正文或完整 URL 参数。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 运行时代码、SQL、前端或测试代码
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改远程 CLS Topic、定时 SQL 或权限配置
+- 验证计划：阅读 README、边界文档、概览和 CLS 相关模块/源码；优先运行离线单元测试；如本地环境已有凭据，再执行最小只读 smoke 查询并记录结果。
+- 下一步：定位 CLS Search 配置和 smoke 查询入口，确认环境变量是否齐备后执行测试。
+
+#### 阶段记录：完成 CLS 只读 smoke
+
+- 时间：2026-05-19 18:32
+- 状态：已完成
+- 已完成：阅读 `README.md`、`docs/boundary.md`、`docs/overview-design.md`、CLS 汇总/API/运维/日志健康模块文档，以及 `cls_search.py`、`summary_reader.py`、`dev_data.py`、`dev_server.py` 和相关测试；确认本地排障可以只读调用 SearchLog，普通 dev 数据源仍禁用 raw SearchLog，只读取汇总 topic。加载 `.env.local` 后确认分钟汇总、日级汇总、10 分钟质量 topic 和腾讯云凭据均已配置。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证结果：`PYTHONPATH=src python3 -m unittest discover tests` 通过，106 tests。首次远程查询在沙箱内因网络权限失败，授权后最小只读 smoke 通过：`CLS_SUMMARY_TOPIC_ID` 今天窗口返回 50 条可解析分钟汇总，其中 43 条推断为 `boss_minute_operator_funnel`、7 条推断为 `boss_minute_chat`，时间范围 UTC `2026-05-19T09:35:00+00:00` 至 `2026-05-19T10:29:00+00:00`；`create_dev_dataset(data_source="summary")` 可装载 50 条分钟汇总，raw 原始事件为 0，符合 summary 模式。`CLS_DAILY_SUMMARY_TOPIC_ID` 和 `CLS_LOG_QUALITY_TOPIC_ID` 连接成功，但今天窗口 smoke 返回 0 条原始记录。
+- 风险/阻塞：本轮没有单独 raw 原始事实 topic 配置，只验证了已配置的汇总/日级/质量 topic；分钟汇总 topic 返回行未显式带 `metric_name`，当前解析器依赖字段集合推断 funnel/chat 类型。SearchLog 调用仅用于本地开发/排障，未接入生产链路。
+- 中断续写入口：后续离线分析可优先用 `iter_minute_summaries_from_search()` 读取分钟汇总；若需要 raw 事件级分析，需要用户另行提供或确认原始事实 topic 配置，并继续按只读排障方式运行。
+
+### 任务：核对详情候选人去重 key 是否稳定
+
+- 时间：2026-05-19 18:00
+- 执行者：AI
+- 状态：已完成
+- 目标：用户补充当事人常在详情内点击“下一个”，详情容器不关闭但候选人切换；需要解释高重复率，并说明此前按什么去重，检查去重 key 是否可能把不同候选人误归为同一候选人。
+- 当前理解：此前 raw 计算使用 `candidateId` 优先，其次 `stableId`、`exposureKey` 的候选人 key；如果详情内“下一个”导致插件沿用旧卡片/旧候选人身份，可能会把真实不同候选人算成重复，造成重复率过高。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改运行时代码、SQL 或云端配置
+  - 不修改 `analysis-system/` 之外文件
+  - 不打印候选人姓名、简历正文、聊天正文、联系方式或完整 URL 参数
+- 验证计划：只读 raw detail opened，统计候选人 key 来源、同一 key 下 profile 指纹/detailProfile 指纹数量、exposure/link 数量和 detectedBy 分布，判断重复率是实际同人多次打开还是 key 被复用/误连。
+- 下一步：若要继续修复，优先在插件端提升详情内“下一个”的身份识别和 opened 幂等；分析侧把 `candidateId(text_fingerprint)` 标注为低置信去重口径。
+
+#### 阶段记录：完成去重 key 稳定性核对
+
+- 时间：2026-05-19 18:04
+- 状态：已完成
+- 已完成：只读 raw detail opened，核对此前去重 key 和 profile 哈希稳定性。此前去重优先使用 `payload.candidate.candidateId`，其次才是 `stableId`、`exposureKey`；本次数据 372 条全部命中 `candidateId`，但 `stableIdSource` 全部是 `text_fingerprint`，不是 BOSS 原生稳定 ID。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证结果：按此前 candidateId 去重，当日候选人为 96，分钟候选人求和为 253；按不输出明文的 profile-with-name 哈希口径，当日为 116，分钟求和为 269。未发现同一 candidateId 下出现多个 displayName 哈希，但有 16 个 candidateId 下 profile 结构哈希变化，说明 candidateId 口径可能低估真实候选人，但主因仍是 poll/canvas 路径在详情容器内多次上报 opened。
+- 风险/阻塞：profile 哈希只用于排障估算，不能直接作为生产身份字段；需要插件端拿到更稳定的候选人 ID 或在详情内切换时建立明确 switch/close 语义。
+- 中断续写入口：修复方向是：同一详情容器内 candidate key/profile fingerprint 未变化时不重复发 opened；candidate key/profile fingerprint 变化时先结束上一详情会话再发下一条 opened；并在日志质量里标记 `stableIdSource=text_fingerprint` 的详情去重低置信。
+
 ### 任务：排查详情重复是否为采集侧过报
 
 - 时间：2026-05-19 17:40
@@ -2491,3 +2545,160 @@
 - 验证结果：`PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache python3 -m compileall src` 通过；`find docs -maxdepth 3 -type f -print` 确认新增文档存在。
 - 风险/阻塞：当前仓库根目录已有父项目未提交改动，本次未修改 `analysis-system/` 之外的文件；`analysis-system/` 目录整体在 git 中仍显示为未跟踪。
 - 中断续写入口：下一步如果进入代码实现，先读本日志最新记录，再从 `docs/modules/01-ingestion-normalization.md` 建立 normalizer 和离线样本测试。
+### 任务：排查打招呼统计翻倍
+
+- 时间：2026-05-20 13:05
+- 执行者：AI
+- 状态：已完成
+- 目标：排查用户提供的 profile 导出中，操作员实际打了 7 个招呼但统计显示 14 个的原因。
+- 当前理解：本次是分析系统/统计口径排查任务，需要先基于离线导出 JSON 定位 14 的来源，再检查统计实现是否重复计数、混用了发送事件和状态事件，或把同一候选人的多条事实事件叠加。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 如确认代码缺陷，可能修改 `src/boss_analysis/` 下相关统计逻辑和对应 `tests/`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改父项目日志契约 `../docs/modules/12-log-specification.md`
+  - 不连接真实 CLS、不读取插件运行时、不引入生产 SearchLog 路径
+- 验证计划：检查导出 JSON 中事件类型、事件 ID、候选人维度和时间线；阅读统计相关源码与测试；如修改代码，运行相关测试或 `pytest`。
+- 当前状态：已阅读最新工作日志、`git status --short` 和 `AGENTS.md`；下一步读取 README、边界、overview、相关模块文档、日志契约、源码和 profile 样本。
+
+#### 阶段记录：定位翻倍高风险来源
+
+- 时间：2026-05-20 13:16
+- 状态：实现中
+- 已完成：已阅读 README、边界、overview、事实投影、聚合/API、CLS 定时 SQL 文档、日志契约中打招呼事件定义、统计源码和前端展示代码；已检查用户提供的 profile JSON。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：profile 中 `runtime.recentEvents` 只保留最近 50 条，其中打招呼为 1 条 `candidate_greeting.clicked` 和 1 条 `candidate_greeting.succeeded`；`productionStats.candidate_greeting.producedCount=137` 是插件模块累计产量，不是本轮 14。分析系统的单人漏斗优先读取 `boss_minute_operator_funnel`，当前直接累加所有分钟汇总行。
+- 发现原因：CLS 分钟任务配置为每 1 分钟执行，SQL 时间窗口为 `@m-3m,@m-1m`，窗口会重叠；目标 topic 是追加写而非 upsert。如果同一个 `metric_name + minute + operator_id + job_id` 被连续两次任务写入，当前 query service 会把两条汇总都相加，导致 7 个打招呼显示为 14。
+- 中断续写入口：在 `MinuteSummaryRecord` 增加 `recorded_at`，解析 CLS 目标日志写入时间；在 query service 对分钟汇总按稳定键取最新/最高信号一条后再聚合；补充重复 summary 不翻倍的单元测试。
+
+#### 阶段记录：完成分钟汇总去重修复
+
+- 时间：2026-05-20 13:27
+- 状态：已完成
+- 已完成：已在分钟汇总模型中保留 `recorded_at`，解析 `calculated_at`、`recorded_at` 或 CLS `__TIMESTAMP__`；单人统计从分钟汇总生成漏斗和分钟趋势前，先按 `metric_name + minute + operator_id + raw_operator_id + job_id` 折叠重复快照，有写入时间时取最新，没有写入时间时取信号计数更完整的一条；补充重叠窗口重复 summary 不翻倍的单元测试；同步更新聚合/API 模块文档。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/04-aggregation-query-api.md`
+  - `src/boss_analysis/domain/summary.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_query_service.py`
+  - `tests/test_summary_reader.py`
+- 验证结果：`pytest tests/test_query_service.py tests/test_summary_reader.py` 失败，因为本机未安装 pytest；`python3 -m pytest ...` 同样缺 pytest 模块；已改用 `PYTHONPATH=src python3 -m unittest tests.test_query_service tests.test_summary_reader`，29 tests 通过；`PYTHONPATH=src python3 -m unittest discover -s tests`，107 tests 通过。
+- 风险/阻塞：用户提供的 profile 只含最近 50 条事件和模块累计统计，无法单独还原“7 个招呼”的完整原始事件明细；本次修复针对已确认的汇总 topic 重叠窗口追加写翻倍风险。若线上仍显示异常，需要再用当天分钟汇总 topic 中该操作员的重复 key 行做只读核对。
+- 中断续写入口：如继续核对线上数据，读取 `boss_summary_minute_prod` 中目标操作员当天 `boss_minute_operator_funnel` 记录，按 `metric_name + minute + operator_id + job_id` 分组查看是否同一 key 出现 2 条或多条。
+### 任务：修正前端主漏斗打招呼展示口径
+
+- 时间：2026-05-20 14:05
+- 执行者：AI
+- 状态：已完成
+- 目标：用户重新启动后仍看到“打招呼 15”，需要把分析系统前端主漏斗的“打招呼”从点击次数改为更符合业务理解的成功招呼次数。
+- 当前理解：分析系统后端同时保留 `greeting_clicked` 和 `greeting_succeeded`。当前前端主漏斗 `FunnelCell label="打招呼"` 使用的是点击数，容易被理解为 BOSS 实际打招呼成功数；应将主漏斗显示改为成功数，并把点击数保留在详细指标中用于排查。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `frontend/src/App.tsx`
+  - 可能同步 `src/boss_analysis/dev_server.py`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改 CLS SQL
+  - 不修改插件事件生成逻辑和日志契约
+- 验证计划：检索前端所有 `greeting_clicked` 展示点；修改主漏斗和趋势标签；运行分析系统单元测试，并尽量运行前端 build。
+- 当前状态：准备修改前端展示口径。
+
+#### 完成记录：主漏斗改为成功招呼口径
+
+- 时间：2026-05-20 14:10
+- 状态：已完成
+- 已完成：前端单人主漏斗将“打招呼”卡片改为“招呼成功”，数值使用 `greeting_succeeded`；分钟趋势线也从 `greeting_clicked` 改为 `greeting_succeeded` 并标为“招呼成功”；详细条形指标中仍保留“打招呼点击”和“打招呼成功”两个数用于排查点击重复和成功确认差异；同步更新旧 dev server 内嵌页面的主漏斗口径。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `frontend/src/App.tsx`
+  - `src/boss_analysis/dev_server.py`
+- 验证结果：`PYTHONPATH=src python3 -m unittest discover -s tests` 通过，107 tests；`npm --prefix frontend run build` 通过。
+- 风险/阻塞：后端仍保留 click/success 两个事实计数；如果用户仍在“打招呼点击”明细里看到 15，那表示点击事实确实有 15，需要进一步查原始点击事件是否重复触发或是否跨时间窗/岗位累计。
+- 中断续写入口：若需要继续查“点击 15”的来源，按 raw `candidate_greeting.clicked` 事件 ID、candidate key、occurred_at、job_id 分组确认是否是重复点击、跨岗位累计或采集侧重复上报。
+
+### 任务：增加单人明细统计起点过滤
+
+- 时间：2026-05-20 14:24
+- 执行者：AI
+- 状态：已完成
+- 目标：用户仍看到招呼成功 13，需要区分“今日全量”和“本轮/指定起点后”的统计口径，让单人明细可以按统计起点过滤。
+- 当前理解：本地 API 当前按当天最新本地日期汇总，`zhouxinyu` 今日全量招呼成功为 13；按 2026-05-20 12:00 后过滤时为 7。系统没有 run_id，因此不应把 12:00 之类业务假设硬编码为默认口径，应提供明确的时间起点过滤。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/api/query_service.py`
+  - `src/boss_analysis/dev_server.py`
+  - `frontend/src/api.ts`
+  - `frontend/src/App.tsx`
+  - `frontend/src/styles.css`
+  - `tests/test_query_service.py`
+  - 可能补充 `tests/test_dev_server.py`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改 CLS SQL 或云端配置
+  - 不修改插件事件采集逻辑
+- 验证计划：补充 query service 时间过滤单测；运行分析系统单元测试；运行前端 build；如可行，用本地 API 只读验证 since 参数。
+- 当前状态：已确认问题来源是默认今日全量，准备接入 `since` 查询参数和前端筛选控件。
+
+#### 完成记录：单人明细支持时间范围
+
+- 时间：2026-05-20 14:44
+- 状态：已完成
+- 已完成：单人明细后端查询支持 `since` 和 `until` 时间范围；本地 dev server 将查询参数解析为 Asia/Shanghai 本地时间；前端单人明细增加“统计起点/统计终点”控件，并提供“今天 12:00”“截至现在”“今日全量”快捷按钮；测试覆盖 summary 时间过滤和 dev app 参数透传。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/api/query_service.py`
+  - `src/boss_analysis/dev_server.py`
+  - `frontend/src/api.ts`
+  - `frontend/src/App.tsx`
+  - `frontend/src/styles.css`
+  - `tests/test_query_service.py`
+  - `tests/test_dev_server.py`
+- 验证结果：`PYTHONPATH=src python3 -m unittest discover -s tests` 通过，110 tests；`npm --prefix frontend run build` 通过；`git diff --check -- ...` 通过。已重启本地 8765 后端；只读调用 `/api/operator/zhouxinyu` 时实时今日全量已变为招呼成功 17、点击 26，调用 `since=2026-05-20T12:00&until=2026-05-20T15:13` 返回招呼成功 7、点击 9。
+- 风险/阻塞：当前系统仍没有 run_id，只能用明确时间范围切分某一轮操作；如果希望自动识别“本轮”，需要采集侧或自动化侧上报运行开始/结束事实，不能在分析侧硬编码时间。
+- 中断续写入口：若用户希望默认显示本轮，下一步应先定义 run/session 边界事件，再在前端提供运行维度选择，而不是继续用固定时间假设。
+
+### 任务：撤回时间窗口改动并继续排查今日全量异常
+
+- 时间：2026-05-20 14:49
+- 执行者：AI
+- 状态：实现中
+- 目标：用户明确指出不要用时间窗口让数据对上，需要回到“今天全量”口径，继续排查今日招呼统计与实际操作不一致的根因。
+- 当前理解：刚才新增的时间范围筛选属于错误方向，应撤回前端/API 时间窗口能力；保留已经确认有价值的分钟汇总去重和主漏斗成功口径，再从今日全量数据本身查是否仍存在汇总重复、采集侧重复上报、点击/成功语义误读或跨账号/岗位混算。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `frontend/src/App.tsx`
+  - `frontend/src/api.ts`
+  - `frontend/src/styles.css`
+  - `src/boss_analysis/api/query_service.py`
+  - `src/boss_analysis/dev_server.py`
+  - `tests/test_query_service.py`
+  - `tests/test_dev_server.py`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改 CLS SQL 或云端资源
+  - 不修改插件采集代码，除非后续明确定位为采集侧缺陷
+- 验证计划：撤回时间窗口相关代码后运行单元测试和前端 build；只读分析今日全量分钟汇总，按操作员、分钟、职位和写入快照分组查多计来源。
+- 当前状态：准备先撤回时间窗口 UI/API，再继续定位今日全量异常。
+
+#### 阶段记录：时间窗口已撤回并定位到采集侧过报
+
+- 时间：2026-05-20 15:06
+- 状态：已完成
+- 已完成：撤回单人明细 `since/until` API、前端时间控件和相关测试，恢复只看当天全量的产品口径；保留分钟汇总重复快照去重和主漏斗“招呼成功”展示口径。通过本地排障只读 raw CLS 检索确认：2026-05-20 `zhouxinyu` 的 raw 里已有多条 `candidate_greeting.clicked/succeeded`，且同一候选人哈希存在重复 click/success，说明分析系统展示的是已写入的事实事件，不是前端时间窗口导致。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `frontend/src/App.tsx`
+  - `frontend/src/api.ts`
+  - `frontend/src/styles.css`
+  - `src/boss_analysis/api/query_service.py`
+  - `src/boss_analysis/dev_server.py`
+  - `tests/test_query_service.py`
+  - `tests/test_dev_server.py`
+- 验证结果：`PYTHONPATH=src python3 -m unittest discover -s tests` 通过，107 tests；`npm --prefix frontend run build` 通过；`git diff --check -- ...` 通过；确认代码中不再存在 `operatorSince`、`operatorUntil`、`OperatorTimeFilter`、`_parse_query_datetime` 等时间窗口实现。
+- 发现原因：采集侧 `greeting-probe` 会把“已打招呼”等包含“打招呼”的状态文本识别为新的打招呼动作，导致用户点到已发送状态时仍产生新的 clicked/succeeded 事实事件。该缺陷已转到父项目插件修复。
+- 风险/阻塞：2026-05-20 已写入 CLS 的历史脏事件缺少 actionText 字段，无法可靠回溯区分真实点击和“已打招呼”状态误记；修复插件后只能保证后续不再新增这类误记，历史当天数据若要校正需要另行人工指定剔除规则或重算来源。
+- 中断续写入口：后续检查父项目 `extension/src/content/greeting-probe.js` 和 `test/greeting-probe.test.js` 的状态文本排除规则；如需历史修正，先不要写自动规则，需用户确认可接受的剔除口径。

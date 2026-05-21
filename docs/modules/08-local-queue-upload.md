@@ -32,7 +32,7 @@ BOSS 页面操作发生在浏览器中，网络、页面刷新、标签页关闭
 
 ### 3.4 生产统计状态
 
-按模块维护 produced/uploaded/failed/pending 状态，用于 popup 显示绿色/红色健康状态。
+按模块维护 produced/uploaded/failed/pending 事件状态，用于 popup 显示绿色/红色健康状态。这里统计的是事实事件数，不是业务动作数；例如一次成功打招呼通常会产生点击和成功两条事件。
 
 ### 3.5 预留事件类型
 

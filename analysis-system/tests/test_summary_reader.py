@@ -33,6 +33,7 @@ class SummaryReaderTests(unittest.TestCase):
       "chat_snapshot_captured": "3",
       "wechat_captured": "1",
       "total_events": "16",
+      "__TIMESTAMP__": "2026-05-18T12:32:00+08:00",
     })
 
     self.assertIsNotNone(record)
@@ -42,6 +43,7 @@ class SummaryReaderTests(unittest.TestCase):
     self.assertEqual(record.card_exposed, 9)
     self.assertEqual(record.chat_snapshots, 3)
     self.assertEqual(record.event_count, 16)
+    self.assertEqual(record.recorded_at.isoformat(), "2026-05-18T12:32:00+08:00")
 
   def test_parse_chat_summary_marks_missing_operator(self):
     record = parse_minute_summary_record({

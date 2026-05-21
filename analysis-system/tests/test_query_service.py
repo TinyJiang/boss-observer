@@ -303,6 +303,41 @@ class AnalysisQueryServiceTests(unittest.TestCase):
     self.assertEqual(analytics.minute_points[1].card_exposed, 4)
     self.assertEqual(health.summary_record_count, 3)
 
+  def test_operator_analytics_dedupes_overlapping_summary_snapshots(self):
+    service = AnalysisQueryService(
+      InMemoryFactStore(),
+      minute_summaries=[
+        MinuteSummaryRecord(
+          metric_name="boss_minute_operator_funnel",
+          minute=datetime(2026, 5, 17, 1, 14, tzinfo=timezone.utc),
+          operator_id="op_summary",
+          job_id="job_summary",
+          greeting_clicked=7,
+          greeting_succeeded=7,
+          total_events=14,
+          recorded_at=datetime(2026, 5, 17, 1, 16, tzinfo=timezone.utc),
+        ),
+        MinuteSummaryRecord(
+          metric_name="boss_minute_operator_funnel",
+          minute=datetime(2026, 5, 17, 1, 14, tzinfo=timezone.utc),
+          operator_id="op_summary",
+          job_id="job_summary",
+          greeting_clicked=7,
+          greeting_succeeded=7,
+          total_events=14,
+          recorded_at=datetime(2026, 5, 17, 1, 17, tzinfo=timezone.utc),
+        ),
+      ],
+      clock=fixed_now,
+    )
+
+    analytics = service.operator_analytics("op_summary")
+
+    self.assertEqual(analytics.funnel.greeting_clicked, 7)
+    self.assertEqual(analytics.funnel.greeting_succeeded, 7)
+    self.assertEqual(len(analytics.minute_points), 1)
+    self.assertEqual(analytics.minute_points[0].greeting_clicked, 7)
+
   def test_operator_analytics_uses_latest_local_day_for_summary_records(self):
     service = AnalysisQueryService(
       InMemoryFactStore(),

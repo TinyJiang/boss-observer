@@ -4240,3 +4240,242 @@
 - 不修改范围：不修改 `analysis-system/`、不修改插件源码、不新增事件类型、不改日志契约、不新增依赖。
 - 验证计划：文档新增后运行 `git diff --check -- docs/recruiting-strategy.md docs/ai-worklog.md`。
 - 当前状态：已完成接手阅读和范围确认，准备新增策略文档。
+
+#### 阶段记录：策略文档已新增
+
+- 时间：2026-05-19 17:58 CST
+- 状态：待验证
+- 已完成：新增 `docs/recruiting-strategy.md`，作为招聘策略经验库；文档包含定位、使用规则、状态枚举、经验条目模板、筛选/详情/打招呼/聊天/微信转化/反例分区和复盘建议。
+- 改动文件：
+  - `docs/recruiting-strategy.md`
+  - `docs/ai-worklog.md`
+- 验证结果：尚未运行。
+- 风险/阻塞：当前只是经验模板和维护规则，尚未填入用户实际策略经验；未将策略文档接入插件逻辑，符合插件只记录事实的边界。
+- 中断续写入口：运行 `git diff --check -- docs/recruiting-strategy.md docs/ai-worklog.md`；如通过，追加完成记录。
+
+#### 完成记录：策略经验库已建立
+
+- 时间：2026-05-19 17:59 CST
+- 状态：已完成
+- 已完成：完成 `docs/recruiting-strategy.md` 策略经验库模板，保留插件只记录事实的边界，并提供后续逐步补充策略经验的统一条目格式和分区。
+- 改动文件：
+  - `docs/recruiting-strategy.md`
+  - `docs/ai-worklog.md`
+- 验证结果：`git diff --check -- docs/recruiting-strategy.md docs/ai-worklog.md` 通过。
+- 风险/阻塞：未运行 `npm test`，因为本次只新增/追加文档，不修改插件代码或测试；策略正文仍需用户后续填充真实经验。
+- 中断续写入口：后续如继续补经验，直接在 `docs/recruiting-strategy.md` 对应分区新增策略条目，并继续按本日志追加任务记录。
+
+#### 阶段记录：用户调整策略文档目录
+
+- 时间：2026-05-19 18:01 CST
+- 状态：已完成
+- 已完成：用户新增 `strategy/` 目录，并将策略经验库移动到 `strategy/recruiting-strategy.md`。后续策略经验应在该目录维护。
+- 改动文件：
+  - `strategy/recruiting-strategy.md`
+  - `docs/ai-worklog.md`
+- 验证结果：`git diff --check -- docs/ai-worklog.md strategy/recruiting-strategy.md` 通过。
+- 风险/阻塞：工作区同时存在用户修改的 `analysis-system/docs/ai-worklog.md`，本轮未读取、未修改该子项目文件。
+- 中断续写入口：后续补经验时读取 `strategy/recruiting-strategy.md`，不要再向旧路径 `docs/recruiting-strategy.md` 新增内容。
+
+### 任务：按两个核心方向拆分策略库
+
+- 时间：2026-05-19 18:03 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：根据用户最新思路，将策略库从单一大文档调整为按方向拆分维护，并明确当前只抓两个核心点：候选人曝光和聊天话术转化。
+- 当前理解：策略库会很大，不能把所有经验堆进一个 Markdown；所有操作都应围绕“BOSS 怎么样才能把职位/账号推给更多候选人”和“聊天话术如何提高转化”两个主轴展开。筛选、详情、打招呼、微信跟进等内容都应归入这两个主轴或后续独立方向。
+- 计划修改文件：
+  - `strategy/recruiting-strategy.md`
+  - `strategy/candidate-exposure.md`
+  - `strategy/chat-conversion.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改 `analysis-system/`、不修改插件源码、不新增事件类型、不改日志契约、不写入未验证的业务结论。
+- 验证计划：文档拆分后运行 `git diff --check -- docs/ai-worklog.md strategy/recruiting-strategy.md strategy/candidate-exposure.md strategy/chat-conversion.md`。
+- 当前状态：准备重写策略库入口并新增两个核心方向文件。
+
+#### 阶段记录：策略库主轴已拆分
+
+- 时间：2026-05-19 18:06 CST
+- 状态：待验证
+- 已完成：将 `strategy/recruiting-strategy.md` 改为策略库入口，明确只抓“候选人曝光”和“聊天话术转化”两个核心方向；新增 `strategy/candidate-exposure.md` 和 `strategy/chat-conversion.md`，分别承接两个方向的原则、观察点、可关联事实事件和条目模板。
+- 改动文件：
+  - `strategy/recruiting-strategy.md`
+  - `strategy/candidate-exposure.md`
+  - `strategy/chat-conversion.md`
+  - `docs/ai-worklog.md`
+- 验证结果：尚未运行。
+- 风险/阻塞：当前只记录策略库结构和待验证方向，不写入具体业务结论；用户修改的 `analysis-system/docs/ai-worklog.md` 仍未读取、未修改。
+- 中断续写入口：运行 `git diff --check -- docs/ai-worklog.md strategy/recruiting-strategy.md strategy/candidate-exposure.md strategy/chat-conversion.md`；通过后追加完成记录。
+
+#### 完成记录：策略库两个核心方向已落地
+
+- 时间：2026-05-19 18:07 CST
+- 状态：已完成
+- 已完成：策略库入口和两个核心方向文件已建立，后续经验应优先分别沉淀到候选人曝光和聊天转化两个文件中。
+- 改动文件：
+  - `strategy/recruiting-strategy.md`
+  - `strategy/candidate-exposure.md`
+  - `strategy/chat-conversion.md`
+  - `docs/ai-worklog.md`
+- 验证结果：`git diff --check -- docs/ai-worklog.md strategy/recruiting-strategy.md strategy/candidate-exposure.md strategy/chat-conversion.md` 通过。
+- 风险/阻塞：未运行 `npm test`，因为本次只修改策略文档和工作日志；未接触 `analysis-system/`。
+- 中断续写入口：新增策略时先判断属于曝光还是转化，再追加到对应方向文件；如果出现第三个足够大的方向，再新增独立 Markdown 并从入口文件链接。
+
+### 任务：调整策略库为曝光、主动打招呼、聊天转化三大方向
+
+- 时间：2026-05-19 18:09 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：根据用户最新判断，将岗位吸引力/岗位包装归入候选人曝光方向，并把主动打招呼策略新增为独立大项。
+- 当前理解：岗位包装会影响候选人点击、回复和平台后续曝光，因此应归在候选人曝光下面；主动打招呼同时考验岗位吸引力和招呼语回复率，应该作为第三个独立方向维护，位于曝光和聊天转化之间。
+- 计划修改文件：
+  - `strategy/recruiting-strategy.md`
+  - `strategy/candidate-exposure.md`
+  - `strategy/proactive-greeting.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改 `analysis-system/`、不修改插件源码、不新增事件类型、不改日志契约、不写入未经验证的业务结论。
+- 验证计划：文档调整后运行 `git diff --check -- docs/ai-worklog.md strategy/recruiting-strategy.md strategy/candidate-exposure.md strategy/proactive-greeting.md strategy/chat-conversion.md`。
+- 当前状态：准备新增主动打招呼策略文件，并调整入口和候选人曝光文档。
+
+#### 阶段记录：主动打招呼方向已新增
+
+- 时间：2026-05-19 18:12 CST
+- 状态：待验证
+- 已完成：将策略库入口改为候选人曝光、主动打招呼、聊天转化三大方向；在候选人曝光策略中补充岗位吸引力/岗位包装作为曝光上游信号；新增 `strategy/proactive-greeting.md`，围绕候选人选择、岗位卖点、招呼语结构、发送节奏和回复率维护主动打招呼策略。
+- 改动文件：
+  - `strategy/recruiting-strategy.md`
+  - `strategy/candidate-exposure.md`
+  - `strategy/proactive-greeting.md`
+  - `docs/ai-worklog.md`
+- 验证结果：尚未运行。
+- 风险/阻塞：当前只做策略文档结构调整，未把任何策略判断写入插件逻辑；用户修改的 `analysis-system/docs/ai-worklog.md` 仍未读取、未修改。
+- 中断续写入口：运行 `git diff --check -- docs/ai-worklog.md strategy/recruiting-strategy.md strategy/candidate-exposure.md strategy/proactive-greeting.md strategy/chat-conversion.md`；通过后追加完成记录。
+
+#### 完成记录：三大方向策略库结构已完成
+
+- 时间：2026-05-19 18:13 CST
+- 状态：已完成
+- 已完成：完成三大方向策略库结构：候选人曝光、主动打招呼、聊天转化。岗位吸引力/岗位包装已归入候选人曝光；主动打招呼作为独立文件维护岗位卖点、候选人选择、招呼语结构、发送节奏和回复率。
+- 改动文件：
+  - `strategy/recruiting-strategy.md`
+  - `strategy/candidate-exposure.md`
+  - `strategy/proactive-greeting.md`
+  - `docs/ai-worklog.md`
+- 验证结果：`git diff --check -- docs/ai-worklog.md strategy/recruiting-strategy.md strategy/candidate-exposure.md strategy/proactive-greeting.md strategy/chat-conversion.md` 通过。
+- 风险/阻塞：未运行 `npm test`，因为本次只修改策略文档和工作日志；未接触 `analysis-system/`。
+- 中断续写入口：后续主动打招呼相关经验追加到 `strategy/proactive-greeting.md`；岗位包装相关经验追加到 `strategy/candidate-exposure.md`。
+
+### 任务：整理策略反例文档并新增策略目录协作规范
+
+- 时间：2026-05-19 18:18 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：整理用户新增的 `strategy/anti.md` 格式，并在 `strategy/` 下新增 `AGENTS.md`，说明策略目录与父项目、分析系统子项目之间的边界。
+- 当前理解：`strategy/anti.md` 用于维护不允许出现的操作方式和判定规则；策略目录应作为独立策略文档区，只维护自身文档，不操作父项目插件代码和 `analysis-system/`，父项目普通任务也不应顺手修改策略目录。
+- 计划修改文件：
+  - `strategy/anti.md`
+  - `strategy/AGENTS.md`
+  - `strategy/recruiting-strategy.md`
+  - `AGENTS.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：不修改 `analysis-system/`、不修改插件源码、不改日志契约、不新增代码或测试。
+- 验证计划：运行 `git diff --check -- docs/ai-worklog.md AGENTS.md strategy/anti.md strategy/AGENTS.md strategy/recruiting-strategy.md`；本次仅文档变更，不运行 `npm test`。
+- 当前状态：已完成接手阅读，准备整理文档。
+
+#### 阶段记录：反向规则与策略目录边界已整理
+
+- 时间：2026-05-19 18:25 CST
+- 状态：待验证
+- 已完成：将 `strategy/anti.md` 整理为“文档定位、条目模板、当前反向规则、判定说明、分析步骤、判定规则、案例证据、处理建议”结构，保留用户原始案例中的关键阈值和证据。
+- 已完成：新增 `strategy/AGENTS.md`，说明策略目录与父项目、`analysis-system/` 的关系，以及策略目录内外互不越界的修改规则；同步在根 `AGENTS.md` 增加 `strategy/` 策略库保护，避免普通父项目任务顺手修改策略目录。
+- 已完成：在 `strategy/recruiting-strategy.md` 的辅助文件区加入 `anti.md` 和 `AGENTS.md` 链接。
+- 改动文件：
+  - `strategy/anti.md`
+  - `strategy/AGENTS.md`
+  - `strategy/recruiting-strategy.md`
+  - `AGENTS.md`
+  - `docs/ai-worklog.md`
+- 验证结果：尚未运行。
+- 风险/阻塞：`AGENTS.md` 中保留根项目统一工作日志的最小例外：策略任务如由根项目工作流执行，可以只追加 `docs/ai-worklog.md`，但不得借此修改其他父项目文件。用户修改的 `analysis-system/docs/ai-worklog.md` 仍未读取、未修改。
+- 中断续写入口：运行 `git diff --check -- docs/ai-worklog.md AGENTS.md strategy/anti.md strategy/AGENTS.md strategy/recruiting-strategy.md`；通过后追加完成记录。
+
+#### 完成记录：策略反向规则与目录协作规范已完成
+
+- 时间：2026-05-19 18:26 CST
+- 状态：已完成
+- 已完成：完成 `strategy/anti.md` 格式整理，新增 `strategy/AGENTS.md`，并在根 `AGENTS.md` 增加 `strategy/` 保护规则；策略库入口已链接反向规则和协作规范。
+- 改动文件：
+  - `strategy/anti.md`
+  - `strategy/AGENTS.md`
+  - `strategy/recruiting-strategy.md`
+  - `AGENTS.md`
+  - `docs/ai-worklog.md`
+- 验证结果：`git diff --check -- docs/ai-worklog.md AGENTS.md strategy/anti.md strategy/AGENTS.md strategy/recruiting-strategy.md` 通过。
+- 风险/阻塞：未运行 `npm test`，因为本次只修改 Markdown 协作文档和策略文档；未接触 `analysis-system/`。
+- 中断续写入口：后续新增不允许出现的操作方式，追加到 `strategy/anti.md`；后续策略目录任务先读 `strategy/AGENTS.md`。
+### 任务：修正插件生产统计打招呼展示口径
+
+- 时间：2026-05-20 13:45 CST
+- 执行者：AI
+- 状态：已完成
+- 任务目标：把插件端生产统计中容易被误读为“打招呼次数”的展示文案修正为事件数口径，避免一次成功打招呼的 clicked + succeeded 两条事实事件被误解为两次招呼。
+- 当前理解：事件生成逻辑是正确的事实日志设计，不应改为少发成功事件；本次只修正 popup/debug/profile 相关展示或说明，使 `producedCount` 明确表示模块事件数。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/shared/production-stats.js`
+  - 可能涉及 `extension/debug/debug.js`、popup 相关文件和测试
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 CLS 定时 SQL
+  - 不修改打招呼事件生成逻辑和日志契约
+  - 不修改策略库 `strategy/`
+- 验证计划：阅读 popup/debug 相关源码和测试；更新必要测试；运行 `npm test`。
+- 当前状态：已阅读根项目工作日志、概要设计、相关模块文档片段和 `package.json`；下一步定位生产统计展示代码并修改。
+
+#### 完成记录：打招呼生产统计口径展示已修正
+
+- 时间：2026-05-20 13:51 CST
+- 状态：已完成
+- 已完成：将生产统计定义中的 `candidate_greeting` 展示名从“打招呼”改为“打招呼事件”，将状态页模块文案改为“打招呼事件记录”，避免把 clicked/succeeded/failed 事实事件数误读为业务招呼次数；同步补充本地队列/运行监控文档，说明 produced/uploaded/failed/pending 是事实事件数。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/08-local-queue-upload.md`
+  - `docs/modules/11-runtime-monitoring-alert.md`
+  - `extension/src/shared/production-stats.js`
+  - `extension/debug/debug.js`
+  - `test/production-stats.test.js`
+- 验证结果：`npm test` 通过，188 tests。
+- 风险/阻塞：本次不改变打招呼事件生成逻辑，不改变 CLS SQL；一次成功打招呼仍会产生 clicked 和 succeeded 两条事实事件，分析侧应使用去重后的 `greeting_clicked` 或明确的成功口径统计业务次数。
+- 中断续写入口：若后续需要在 UI 上展示真实“业务招呼次数”，应新增单独指标，不能复用 productionStats 的事件计数。
+
+### 任务：修复已打招呼状态被误记为新打招呼
+
+- 时间：2026-05-20 14:58 CST
+- 执行者：AI
+- 状态：已完成
+- 任务目标：排查并修复今日打招呼统计高于实际操作的问题，避免插件把“已打招呼”等状态文本继续当成新的打招呼动作。
+- 当前理解：分析系统今日全量高不是前端时间范围问题；只读排障 raw CLS 显示 `zhouxinyu` 今日已有大量 `candidate_greeting.clicked/succeeded` 事实事件，且存在同一候选人哈希多次 click/success。插件当前 `isGreetingActionText()` 只要文本包含“打招呼”就可能识别为动作，因此“已打招呼”“打招呼成功”等状态/提示文本会被误当作可点击入口，后续又被成功提示或状态识别为新成功。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/greeting-probe.js`
+  - `test/greeting-probe.test.js`
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 CLS SQL 或云资源
+  - 不改日志契约字段结构
+  - 不修改策略库 `strategy/`
+- 验证计划：补充单元测试覆盖“已打招呼/打招呼成功/上限提示不是动作按钮”；运行 `npm test`；必要时运行分析系统测试确认撤回时间窗口后仍通过。
+- 当前状态：已阅读根工作日志、概要设计、打招呼日志契约、相关插件源码和测试；准备修改动作文本识别规则。
+
+#### 完成记录：已排除打招呼状态文本误触发
+
+- 时间：2026-05-20 15:08 CST
+- 状态：已完成
+- 已完成：在 `isGreetingActionText()` 中增加非动作状态文本排除，明确不把“已打招呼”“打招呼成功”“打招呼失败”“今日打招呼人数已达上限”等状态/提示文本识别为新的打招呼动作；补充测试覆盖已打招呼按钮/子元素不会被 `findGreetingActionElement()` 命中。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/greeting-probe.js`
+  - `test/greeting-probe.test.js`
+- 验证结果：`npm test` 通过，189 tests；`git diff --check -- ...` 通过。
+- 风险/阻塞：已写入 CLS 的历史误记事件没有保存动作按钮原始文本，无法自动可靠纠正；需要重新加载 Chrome 插件后，新采集逻辑才会生效。
+- 中断续写入口：如果用户继续看到新产生的数据异常，下一步从 raw `candidate_greeting.clicked/succeeded` 的 `occurred_at`、`candidateId` 哈希、`entry`、`detectedBy` 和重复候选人分布继续查，重点看是否仍有非动作点击被记录。

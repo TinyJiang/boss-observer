@@ -71,6 +71,7 @@
 - 开发环境通过 `CLS_SUMMARY_TOPIC_ID` 指向 `boss_summary_minute_prod`；也可用 `BOSS_ANALYSIS_SUMMARY_DATA_FILE` 读取离线汇总样本。
 - API 的单人漏斗和聊天指标优先使用分钟汇总；某个操作员没有汇总时，回退到当前 raw event/fact 结果。
 - 同时存在 `boss_minute_operator_funnel` 和 `boss_minute_chat` 时，漏斗使用前者，聊天明细使用后者，避免重复累计聊天字段。
+- 分钟任务使用重叠查询窗口时，目标 topic 会追加写入同一 `metric_name + minute + operator_id + job_id` 的多条快照；查询侧必须先按该稳定键取最新一条，再做单人漏斗和分钟趋势 rollup，避免 7 个打招呼显示成 14。
 - `operator_id = '<missing>'` 或空值必须保留为数据健康异常，不归并到真实操作员。
 - 源主题 `boss` 中 `operator_id` 应按 `text` 类型开启 SQL 分析；如果误建为 `long`，即使原始日志里有字符串值，定时 SQL 也会产出 missing。
 
@@ -103,7 +104,7 @@ API 不应暴露：
 - 本地缓存：`summary-sync-worker` 只同步汇总结果，不重新计算原始日志分钟指标。
 - 手动重算：优先触发或补建 CLS 定时 SQL 任务；本地重放用于 parser 修复和明细校验。
 
-所有汇总写入或同步必须幂等，可以通过 `metric_name + minute_bucket + dimensions` 覆盖同一窗口结果。
+所有汇总写入或同步必须幂等，可以通过 `metric_name + minute_bucket + dimensions` 覆盖同一窗口结果。直接从 CLS 追加型目标 topic 读取时，如果尚未同步到可 upsert 的缓存表，查询层需要用同一稳定键折叠重复快照；有 `recorded_at` 或 CLS 写入时间时取最新，否则取信号计数更完整的一条。
 
 ## 当日活跃时长
 

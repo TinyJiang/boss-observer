@@ -23,9 +23,19 @@ test.beforeEach(() => clearCandidateCardRegistry());
 test("greeting action text accepts only compact greet actions", () => {
   assert.equal(isGreetingActionText("打招呼"), true);
   assert.equal(isGreetingActionText("立即打招呼"), true);
+  assert.equal(isGreetingActionText("已打招呼"), false);
+  assert.equal(isGreetingActionText("打招呼成功"), false);
+  assert.equal(isGreetingActionText("今日打招呼人数已达上限，请稍后再试"), false);
   assert.equal(isGreetingActionText("打招呼语设置"), false);
   assert.equal(isGreetingActionText("打招呼设置"), false);
   assert.equal(isGreetingActionText("候选人详情 28岁 本科 期望 杭州 运营 打招呼"), false);
+});
+
+test("greeting action lookup ignores already greeted state labels", () => {
+  const button = createElement({ tagName: "BUTTON", text: "已打招呼" });
+  const span = createElement({ tagName: "SPAN", text: "已打招呼", parentElement: button });
+
+  assert.equal(findGreetingActionElement(span), null);
 });
 
 test("greeting action lookup prefers the interactive ancestor", () => {

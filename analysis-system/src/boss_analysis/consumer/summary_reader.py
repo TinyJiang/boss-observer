@@ -197,6 +197,7 @@ def parse_minute_summary_record(raw_record: Mapping[str, Any]) -> MinuteSummaryR
     may_be_incomplete_count=_int_value(raw.get("may_be_incomplete_count")),
     total_events=_int_value(raw.get("total_events") or raw.get("event_count")),
     chat_events=_int_value(raw.get("chat_events")),
+    recorded_at=_parse_minute(raw.get("calculated_at") or raw.get("recorded_at") or raw.get("__TIMESTAMP__")),
   )
 
 

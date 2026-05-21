@@ -29,6 +29,7 @@ class MinuteSummaryRecord:
   may_be_incomplete_count: int = 0
   total_events: int = 0
   chat_events: int = 0
+  recorded_at: datetime | None = None
 
   @property
   def event_count(self) -> int:

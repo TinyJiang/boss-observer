@@ -20,6 +20,16 @@
 - 根目录文档只维护插件、日志采集和日志契约；分析系统设计、计划、进度和实现文档维护在 `analysis-system/docs/`。
 - 如果用户明确授权进入 `analysis-system/` 工作，必须先阅读 `analysis-system/AGENTS.md`，并按子项目自己的 `analysis-system/docs/ai-worklog.md` 记录任务。
 
+### strategy 策略库保护
+
+`strategy/` 是独立招聘策略知识库文档区，不属于 Chrome 插件项目的默认修改范围。
+
+- 除非用户明确要求修改策略库或明确点名 `strategy/`，否则普通插件开发、日志契约、调试和打包任务不得新增、修改、删除 `strategy/` 下的文件。
+- 策略库只维护招聘经验、策略假设、反向规则、复盘口径和待验证判断，不保存插件源码、后端代码、密钥、完整聊天原文或完整候选人敏感信息。
+- 插件项目不得从 `strategy/` 导入代码或依赖其运行时状态；`strategy/` 也不得从父项目复制运行代码、配置或依赖。
+- 策略文档可以引用 `docs/modules/12-log-specification.md` 中的事件名称和事实字段，但不能要求插件端写入策略结论。
+- 如果用户明确授权进入 `strategy/` 工作，必须先阅读 `strategy/AGENTS.md`，并默认只修改 `strategy/` 下的策略文档；如根项目工作流要求记录任务，可以只追加 `docs/ai-worklog.md`，不得借策略任务修改其他父项目文件。
+
 ## 2. AI 接手前必须先读
 
 开始改代码前，先按顺序阅读：

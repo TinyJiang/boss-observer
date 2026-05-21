@@ -27,7 +27,7 @@ const MODULE_LABELS = {
   candidate_filter: "筛选记录",
   candidate_list: "候选人列表",
   candidate_detail: "候选人详情",
-  candidate_greeting: "打招呼记录",
+  candidate_greeting: "打招呼事件记录",
   candidate_chat: "聊天记录",
   queue_upload: "数据同步"
 };

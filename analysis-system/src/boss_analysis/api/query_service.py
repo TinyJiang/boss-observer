@@ -562,6 +562,7 @@ def _operator_analytics_from_summaries(
   *,
   daily_duration: DailyActiveDurationRecord | None = None,
 ) -> OperatorAnalytics:
+  records = list(_dedupe_minute_summary_records(records))
   funnel_records = [
     record for record in records
     if record.metric_name == "boss_minute_operator_funnel"
@@ -604,6 +605,66 @@ def _operator_analytics_from_summaries(
     minute_points=_minute_points_from_summaries(records),
     daily_active_duration=daily_duration,
   )
+
+
+def _dedupe_minute_summary_records(
+  records: list[MinuteSummaryRecord] | tuple[MinuteSummaryRecord, ...],
+) -> tuple[MinuteSummaryRecord, ...]:
+  """Collapse repeated append-only CLS summary snapshots for the same minute bucket."""
+
+  by_key: dict[tuple[str, datetime, str | None, str | None, str | None], MinuteSummaryRecord] = {}
+  for record in records:
+    key = (
+      record.metric_name,
+      record.minute,
+      record.operator_id,
+      record.raw_operator_id,
+      record.job_id,
+    )
+    existing = by_key.get(key)
+    if existing is None or _minute_summary_record_is_newer(record, existing):
+      by_key[key] = record
+  return tuple(sorted(
+    by_key.values(),
+    key=lambda record: (
+      record.minute,
+      record.metric_name,
+      record.operator_id or "",
+      record.raw_operator_id or "",
+      record.job_id or "",
+    ),
+  ))
+
+
+def _minute_summary_record_is_newer(
+  candidate: MinuteSummaryRecord,
+  existing: MinuteSummaryRecord,
+) -> bool:
+  if candidate.recorded_at is not None and existing.recorded_at is not None:
+    return candidate.recorded_at > existing.recorded_at
+  if candidate.recorded_at is not None:
+    return True
+  if existing.recorded_at is not None:
+    return False
+  return _minute_summary_signal(candidate) > _minute_summary_signal(existing)
+
+
+def _minute_summary_signal(record: MinuteSummaryRecord) -> tuple[int, int]:
+  counter_total = sum([
+    record.card_exposed,
+    record.detail_opened,
+    record.greeting_clicked,
+    record.greeting_succeeded,
+    record.greeting_failed,
+    record.chat_opened,
+    record.chat_snapshots,
+    record.wechat_captured,
+    record.report_required,
+    record.capture_failed,
+    record.visible_message_count,
+    record.may_be_incomplete_count,
+  ])
+  return record.event_count, counter_total
 
 
 def _daily_record_is_newer(

@@ -5,6 +5,7 @@ import {
   createEmptyProductionStats,
   getModuleHealthStatus,
   getModuleReportStatus,
+  MODULE_REPORT_DEFINITIONS,
   normalizeProductionStats,
   recordProducedEvent,
   recordUploadedEvents,
@@ -12,6 +13,12 @@ import {
   syncPendingEvents
 } from "../extension/src/shared/production-stats.js";
 import { EVENT_TYPES } from "../extension/src/shared/event-types.js";
+
+test("production stats labels greeting as event counts", () => {
+  const greetingDefinition = MODULE_REPORT_DEFINITIONS.find((definition) => definition.id === "candidate_greeting");
+
+  assert.equal(greetingDefinition.label, "打招呼事件");
+});
 
 test("production stats records module pending counts for produced events", () => {
   const event = {
