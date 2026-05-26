@@ -57,6 +57,7 @@ async function render() {
   appendRow(summaryEl, "Debug mode", state.config?.debug ? "on" : "off");
   appendRow(summaryEl, "Batch size", String(state.config?.uploadBatchSize ?? 0));
   appendRow(summaryEl, "Queue cap", String(state.config?.maxQueueSize ?? 0));
+  appendRow(summaryEl, "Pending chat candidates", String(state.chatPendingCandidates?.items?.length ?? 0));
   appendRow(summaryEl, "Source tab", formatSourceTab(state.lastEvent));
   appendRow(summaryEl, "Network capture", state.networkDebug?.enabled ? "on" : "off");
   appendRow(summaryEl, "Network requests", String(state.networkDebug?.requestCount ?? 0));
@@ -148,6 +149,7 @@ function buildSummaryCopyText(state) {
     ["Debug mode", state.config?.debug ? "on" : "off"],
     ["Batch size", String(state.config?.uploadBatchSize ?? 0)],
     ["Queue cap", String(state.config?.maxQueueSize ?? 0)],
+    ["Pending chat candidates", String(state.chatPendingCandidates?.items?.length ?? 0)],
     ["Source tab", formatSourceTab(state.lastEvent)],
     ["Network capture", state.networkDebug?.enabled ? "on" : "off"],
     ["Network requests", String(state.networkDebug?.requestCount ?? 0)]

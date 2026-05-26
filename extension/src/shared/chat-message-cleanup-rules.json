@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0.0",
+  "description": "Rules for dropping exact BOSS system cards, controls, and narrowly shaped non-message placeholders from chat snapshot messages.",
+  "ignoreExactTexts": [
+    "快速沟通小技巧！",
+    "觉得合适，直接联系牛人吧~",
+    "暂不考虑",
+    "获取联系方式",
+    "求简历",
+    "换电话",
+    "换微信",
+    "约面试",
+    "不合适",
+    "发送",
+    "在线简历",
+    "附件简历",
+    "牛人分析器",
+    "已读",
+    "送达",
+    "未读"
+  ],
+  "ignoreRegexes": [
+    "^\\d{1,2}月\\d{1,2}日\\s+沟通的职位-.+$",
+    "^/?\\S+\\.(?:png|jpe?g|webp|gif|mp3|wav|m4a|mp4)(?:\\?\\S*)?$"
+  ]
+}

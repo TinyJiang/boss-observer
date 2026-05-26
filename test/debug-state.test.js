@@ -11,11 +11,13 @@ test("debug state starts empty", () => {
 
   assert.equal(state.queueSize, 0);
   assert.equal(state.recentEvents.length, 0);
+  assert.deepEqual(state.recentEventSummaries, []);
   assert.equal(state.lastEvent, null);
   assert.equal(state.lastUploadResult, null);
   assert.equal(state.collectionGate.status, "operator_unconfigured");
   assert.equal(state.collectionGate.canCollect, false);
   assert.equal(state.lastCollectionBlock, null);
+  assert.deepEqual(state.chatPendingCandidates.items, []);
   assert.equal(state.networkDebug.enabled, false);
   assert.deepEqual(state.networkDebug.recentRequests, []);
   assert.equal(state.productionStats.modules.candidate_chat.pendingCount, 0);
@@ -38,9 +40,11 @@ test("debug state initialization clears previous runtime state", () => {
   assert.equal(nextState.lastUploadResult, null);
   assert.equal(nextState.lastUploadError, null);
   assert.equal(nextState.lastEvent, null);
+  assert.deepEqual(nextState.chatPendingCandidates.items, []);
   assert.equal(nextState.collectionGate.status, "operator_unconfigured");
   assert.equal(nextState.lastCollectionBlock, null);
   assert.deepEqual(nextState.recentEvents, []);
+  assert.deepEqual(nextState.recentEventSummaries, []);
   assert.equal(nextState.networkDebug.enabled, false);
   assert.equal(nextState.productionStats.modules.candidate_chat.producedCount, 0);
   assert.deepEqual(nextState.config, {

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from boss_analysis.domain.operators import OperatorProfile
-from boss_analysis.domain.summary import DailyActiveDurationRecord
+from boss_analysis.domain.summary import DailyActiveDurationRecord, DailyBasicStatsRecord
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,7 @@ class ActiveOperatorSummary:
   minutes_since_active: int
   last_action: str
   job_id: str | None
+  job_name: str | None = None
   display_name: str | None = None
   account_name: str | None = None
 
@@ -74,6 +75,8 @@ class OperatorAnalytics:
   job_ids: tuple[str, ...]
   minute_points: tuple[OperatorMinutePoint, ...] = ()
   daily_active_duration: DailyActiveDurationRecord | None = None
+  plugin_version: str | None = None
+  plugin_version_observed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +129,18 @@ class LogQualityQueryResult:
   sensitive_leak_signal_count: int
   version_summaries: tuple[LogQualityVersionSummary, ...] = ()
   event_summaries: tuple[LogQualityEventSummary, ...] = ()
+
+
+@dataclass(frozen=True)
+class HistoryQueryResult:
+  status: str
+  operator_id: str | None
+  active_date: date | None
+  source_record_count: int
+  record_count: int
+  latest_active_date: date | None = None
+  latest_recorded_at: datetime | None = None
+  records: tuple[DailyBasicStatsRecord, ...] = ()
 
 
 @dataclass(frozen=True)

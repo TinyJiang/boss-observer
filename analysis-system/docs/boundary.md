@@ -22,6 +22,8 @@
 - `page_type`
 - `page_url`
 - `job_id`
+- `job_name`
+- `jobName`
 - `payload_json`
 - `context_json`
 

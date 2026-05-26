@@ -4,6 +4,7 @@ export type ActiveOperator = {
   minutes_since_active: number;
   last_action: string;
   job_id: string | null;
+  job_name?: string | null;
   display_name?: string | null;
   account_name?: string | null;
 };
@@ -84,6 +85,13 @@ export type DashboardPayload = {
     record_count: number;
     loaded_at: string;
   } | null;
+  daily_basic_summary_source?: {
+    kind: string;
+    label: string;
+    detail: string | null;
+    record_count: number;
+    loaded_at: string;
+  } | null;
   log_quality_source?: {
     kind: string;
     label: string;
@@ -154,6 +162,78 @@ export type LogQualityPayload = {
   log_quality_source?: DataSourceInfo | null;
 };
 
+export type DailyBasicStatsRecord = {
+  metric_name: string;
+  active_date: string;
+  operator_id: string;
+  operator_account_name: string | null;
+  boss_account_name: string | null;
+  boss_account_matched: string | null;
+  first_active_minute: string | null;
+  last_active_minute: string | null;
+  active_minutes: number;
+  active_seconds: number;
+  observed_minutes: number;
+  session_count: number;
+  touched_job_count: number;
+  plugin_started: number;
+  boss_page_entered: number;
+  boss_page_left: number;
+  page_changed: number;
+  plugin_exception: number;
+  job_context_detected: number;
+  job_context_changed: number;
+  filter_panel_opened: number;
+  filter_applied: number;
+  card_exposed: number;
+  detail_opened: number;
+  detail_closed: number;
+  greeting_clicked: number;
+  greeting_succeeded: number;
+  greeting_failed: number;
+  chat_opened: number;
+  snapshot_captured: number;
+  wechat_captured: number;
+  capture_failed: number;
+  card_unique_candidates: number;
+  detail_unique_candidates: number;
+  greeting_unique_candidates: number;
+  chat_unique_candidates: number;
+  wechat_unique_candidates: number;
+  visible_message_count: number;
+  may_be_incomplete_count: number;
+  first_round_candidate_initiated_count: number;
+  first_round_boss_replied_count: number;
+  first_round_boss_reply_elapsed_median_ms: number;
+  first_round_boss_reply_elapsed_avg_ms: number;
+  chat_conversation_count: number;
+  boss_ended_conversation_count: number;
+  boss_reply_count: number;
+  boss_reply_elapsed_median_ms: number;
+  boss_reply_elapsed_avg_ms: number;
+  detail_duration_ms: number;
+  greeting_result_elapsed_ms: number;
+  total_events: number;
+  source_row_count: number;
+  recorded_at: string | null;
+  has_values: boolean;
+  value_status: string;
+};
+
+export type HistoryPayload = {
+  history: {
+    status: "ok" | "partial" | "missing_values" | "empty";
+    operator_id: string | null;
+    active_date: string | null;
+    source_record_count: number;
+    record_count: number;
+    latest_active_date: string | null;
+    latest_recorded_at: string | null;
+    records: DailyBasicStatsRecord[];
+  };
+  daily_basic_summary_source?: DataSourceInfo | null;
+};
+
 export type OperatorsPayload = {
   operators: OperatorProfile[];
 };
@@ -161,6 +241,8 @@ export type OperatorsPayload = {
 export type OperatorPayload = {
   operator: {
     operator_id: string;
+    plugin_version: string | null;
+    plugin_version_observed_at: string | null;
     minute_points?: OperatorMinutePoint[];
     daily_active_duration?: DailyActiveDuration | null;
     funnel: {

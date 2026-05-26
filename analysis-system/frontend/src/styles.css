@@ -330,7 +330,7 @@ h3 {
 
 .durationSummary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -494,6 +494,11 @@ h3 {
   min-height: 0;
 }
 
+.historyPanel {
+  margin-top: 14px;
+  min-height: 0;
+}
+
 .qualityFilters {
   min-height: 0;
   margin-bottom: 14px;
@@ -503,12 +508,31 @@ h3 {
   align-items: end;
 }
 
+.historyFilters {
+  min-height: 0;
+  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(220px, 320px) auto 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
 .qualityFilters label {
   display: grid;
   gap: 6px;
 }
 
+.historyFilters label {
+  display: grid;
+  gap: 6px;
+}
+
 .qualityFilters span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.historyFilters span {
   color: var(--muted);
   font-size: 12px;
 }
@@ -523,8 +547,222 @@ h3 {
   font: inherit;
 }
 
+.historyFilters input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.queryButton,
+.tableActionButton,
+.backButton {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.queryButton {
+  min-width: 96px;
+  min-height: 42px;
+  padding: 9px 14px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.queryButton .loadingText {
+  color: #fff;
+}
+
+.queryButton .spinner {
+  border-color: rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+}
+
+.queryButton:disabled {
+  cursor: wait;
+  opacity: 0.82;
+}
+
+.queryState {
+  align-self: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.queryState.loading {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.queryState.error {
+  color: #92400e;
+  font-weight: 700;
+}
+
 .qualityError {
   margin-bottom: 14px;
+}
+
+.historySummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.historySummary div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfe;
+}
+
+.historySummary span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.historySummary strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.historyNotice {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e3a8a;
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.historyLoadingBanner {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  border-radius: 8px;
+  padding: 9px 10px;
+  margin-bottom: 12px;
+}
+
+.historyTableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.historyTable {
+  width: 100%;
+  min-width: 1180px;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.historyTable th,
+.historyTable td {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  font-size: 13px;
+}
+
+.historyTable th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  background: #f8fafc;
+}
+
+.historyTable tr:last-child td {
+  border-bottom: 0;
+}
+
+.historyTable small {
+  display: block;
+  color: var(--muted);
+  line-height: 1.35;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.historyOperator {
+  display: block;
+  font-weight: 700;
+}
+
+.historyMetricCell {
+  display: block;
+  min-width: 96px;
+}
+
+.historyMetricCell strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.historyTable tr.missingValues {
+  background: #fff7ed;
+}
+
+.historyStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.historyStatus.ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.historyStatus.missing {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.tableActionButton {
+  padding: 6px 10px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.tableActionButton:hover,
+.backButton:hover {
+  border-color: var(--accent);
+}
+
+.detailTopbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.backButton {
+  min-width: 68px;
+  min-height: 36px;
+  padding: 7px 12px;
 }
 
 .qualitySummary {
@@ -683,8 +921,11 @@ h3 {
   .metricsGrid,
   .contentGrid,
   .qualityFilters,
+  .historyFilters,
   .qualityGrid,
-  .qualitySummary {
+  .qualitySummary,
+  .historySummary,
+  .durationSummary {
     grid-template-columns: 1fr;
   }
 

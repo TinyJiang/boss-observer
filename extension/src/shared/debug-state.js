@@ -7,6 +7,10 @@ import {
   createEmptyProductionStats,
   normalizeProductionStats
 } from "./production-stats.js";
+import {
+  createEmptyChatPendingCandidatesState,
+  normalizeChatPendingCandidatesState
+} from "./chat-pending-candidates.js";
 import { evaluateCollectionGate } from "./operator-identity.js";
 
 export const DEBUG_STATE_KEY = "bossObserver.debugState";
@@ -16,6 +20,7 @@ export function createEmptyDebugState() {
     updatedAt: null,
     lastEvent: null,
     recentEvents: [],
+    recentEventSummaries: [],
     queueSize: 0,
     lastFlushAt: null,
     lastUploadResult: null,
@@ -23,6 +28,7 @@ export function createEmptyDebugState() {
     config: null,
     collectionGate: evaluateCollectionGate({}),
     lastCollectionBlock: null,
+    chatPendingCandidates: createEmptyChatPendingCandidatesState(),
     networkDebug: createEmptyNetworkDebugState(),
     productionStats: createEmptyProductionStats()
   };
@@ -43,8 +49,10 @@ export async function readDebugState() {
   return {
     ...createEmptyDebugState(),
     ...storedState,
+    recentEventSummaries: Array.isArray(storedState.recentEventSummaries) ? storedState.recentEventSummaries : [],
     collectionGate: storedState.collectionGate || evaluateCollectionGate(storedState.config || {}),
     lastCollectionBlock: storedState.lastCollectionBlock || null,
+    chatPendingCandidates: normalizeChatPendingCandidatesState(storedState.chatPendingCandidates),
     networkDebug: normalizeNetworkDebugState(storedState.networkDebug),
     productionStats: normalizeProductionStats(storedState.productionStats)
   };

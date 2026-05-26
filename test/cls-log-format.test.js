@@ -35,6 +35,7 @@ test("maps a plugin event into cls log contents", () => {
           isBossPage: true,
           jobContext: {
             jobId: "job-1",
+            jobName: "主播运营",
             jobStatus: "0"
           },
           startedAt: "2026-05-11T16:03:35.997+08:00"
@@ -70,6 +71,7 @@ test("maps a plugin event into cls log contents", () => {
     page_title: "BOSS直聘",
     is_boss_page: "true",
     job_id: "job-1",
+    job_name: "主播运营",
     job_status: "0",
     operator_id: "op-1",
     operator_account_name: "张三",
@@ -87,6 +89,7 @@ test("maps a plugin event into cls log contents", () => {
       isBossPage: true,
       jobContext: {
         jobId: "job-1",
+        jobName: "主播运营",
         jobStatus: "0"
       },
       startedAt: "2026-05-11T16:03:35.997+08:00"

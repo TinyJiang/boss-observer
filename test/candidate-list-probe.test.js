@@ -32,12 +32,9 @@ test("candidate list probe registers exposed cards and writes exposure event id 
 
   assert.deepEqual(
     collector.events.map((event) => event.type),
-    [
-      EVENT_TYPES.CANDIDATE_LIST_VIEWED,
-      EVENT_TYPES.CANDIDATE_CARD_EXPOSED
-    ]
+    [EVENT_TYPES.CANDIDATE_CARD_EXPOSED]
   );
-  const cardEvent = collector.events[1];
+  const cardEvent = collector.events[0];
   assert.match(cardEvent.payload.candidate.candidateId, /^bo_candidate_dataset_geekid_geek_1_[a-z0-9]+$/);
   assert.equal(cardEvent.payload.candidate.exposureKey.includes("candidate_recommend"), true);
   assert.equal(Object.hasOwn(cardEvent.payload, "page"), false);
@@ -46,8 +43,8 @@ test("candidate list probe registers exposed cards and writes exposure event id 
   assert.equal(card.dataset.bossObserverCandidateId, cardEvent.payload.candidate.candidateId);
 
   const association = getCandidateCardAssociationFromElement(card);
-  assert.equal(association?.exposedEventId, "evt_2");
-  assert.equal(association?.candidate.exposedEventId, "evt_2");
+  assert.equal(association?.exposedEventId, "evt_1");
+  assert.equal(association?.candidate.exposedEventId, "evt_1");
 });
 
 test("candidate list probe records card clicks as recent card interactions", () => {

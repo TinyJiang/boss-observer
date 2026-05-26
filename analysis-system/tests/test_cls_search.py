@@ -11,10 +11,14 @@ from boss_analysis.consumer.cls_search import (
   ClsSearchConfig,
   TencentCloudApiClient,
   TencentCloudCredentials,
+  build_metric_range_payload,
   build_search_payload,
+  decode_metric_query_result,
   iter_log_values_from_search_response,
+  load_cls_daily_basic_summary_search_config,
   load_cls_daily_summary_search_config,
   load_cls_summary_search_config,
+  query_cls_metric_range,
   search_cls_log_values,
 )
 
@@ -77,6 +81,22 @@ class ClsSearchTests(unittest.TestCase):
     self.assertEqual(config.window_mode, "today")
     self.assertEqual(config.limit, 300)
 
+  def test_load_cls_daily_basic_summary_config_reads_basic_stats_topic(self):
+    config = load_cls_daily_basic_summary_search_config({
+      "CLS_DAILY_BASIC_SUMMARY_TOPIC_ID": "topic-daily-basic",
+      "TENCENTCLOUD_SECRET_ID": "secret-id",
+      "TENCENTCLOUD_SECRET_KEY": "secret-key",
+      "CLS_DAILY_BASIC_SUMMARY_REGION": "ap-shanghai",
+      "CLS_DAILY_BASIC_SUMMARY_QUERY": "metric_name:boss_daily_operator_basic_stats",
+      "CLS_DAILY_BASIC_SUMMARY_WINDOW_MINUTES": "2880",
+    })
+
+    self.assertEqual(config.topic_id, "topic-daily-basic")
+    self.assertEqual(config.region, "ap-shanghai")
+    self.assertEqual(config.query, "metric_name:boss_daily_operator_basic_stats")
+    self.assertEqual(config.window_minutes, 2880)
+    self.assertEqual(config.window_mode, "relative")
+
   def test_build_search_payload_uses_window_in_milliseconds(self):
     config = ClsSearchConfig(
       topic_id="topic-real",
@@ -115,6 +135,45 @@ class ClsSearchTests(unittest.TestCase):
 
     self.assertEqual(payload["To"], 1779158400000)
     self.assertEqual(payload["From"], 1779120000000)
+
+  def test_build_search_payload_can_override_window(self):
+    config = ClsSearchConfig(
+      topic_id="topic-real",
+      credentials=TencentCloudCredentials("secret-id", "secret-key"),
+      query="*",
+      window_mode="today",
+      timezone_name="Asia/Shanghai",
+      limit=50,
+    )
+
+    payload = build_search_payload(
+      config,
+      start_at=datetime(2026, 5, 22, 16, 0, tzinfo=timezone.utc),
+      end_at=datetime(2026, 5, 23, 16, 0, tzinfo=timezone.utc),
+    )
+
+    self.assertEqual(payload["From"], 1779465600000)
+    self.assertEqual(payload["To"], 1779552000000)
+
+  def test_build_metric_range_payload_uses_seconds(self):
+    config = ClsSearchConfig(
+      topic_id="topic-metric",
+      credentials=TencentCloudCredentials("secret-id", "secret-key"),
+    )
+
+    payload = build_metric_range_payload(
+      config,
+      query='{metric_name="boss_daily_operator_basic_stats"}',
+      start_at=datetime(2026, 5, 22, 16, 0, tzinfo=timezone.utc),
+      end_at=datetime(2026, 5, 23, 16, 0, tzinfo=timezone.utc),
+      step_seconds=120,
+    )
+
+    self.assertEqual(payload["TopicId"], "topic-metric")
+    self.assertEqual(payload["Query"], '{metric_name="boss_daily_operator_basic_stats"}')
+    self.assertEqual(payload["Start"], 1779465600)
+    self.assertEqual(payload["End"], 1779552000)
+    self.assertEqual(payload["Step"], 120)
 
   def test_api_client_builds_tc3_headers(self):
     client = TencentCloudApiClient(
@@ -182,6 +241,45 @@ class ClsSearchTests(unittest.TestCase):
     self.assertEqual(fake_client.calls[0]["action"], "SearchLog")
     self.assertEqual(fake_client.calls[0]["version"], CLS_SEARCH_VERSION)
     self.assertEqual(fake_client.calls[0]["region"], "ap-guangzhou")
+
+  def test_query_cls_metric_range_calls_query_range_metric(self):
+    result = [{
+      "metric": {
+        "__name__": "active_minutes",
+        "metric_name": "boss_daily_operator_basic_stats",
+        "active_date": "2026-05-23",
+        "operator_id": "zhouxinyu",
+      },
+      "values": [[1779465600, "100"]],
+    }]
+    fake_client = FakeClsClient({
+      "Response": {
+        "ResultType": "matrix",
+        "Result": json.dumps(result),
+      }
+    })
+    config = ClsSearchConfig(
+      topic_id="topic-metric",
+      credentials=TencentCloudCredentials("secret-id", "secret-key"),
+      region="ap-shanghai",
+    )
+
+    values = query_cls_metric_range(
+      config,
+      query='{metric_name="boss_daily_operator_basic_stats"}',
+      start_at=datetime(2026, 5, 22, 16, 0, tzinfo=timezone.utc),
+      end_at=datetime(2026, 5, 23, 16, 0, tzinfo=timezone.utc),
+      client=fake_client,
+    )
+
+    self.assertEqual(values, result)
+    self.assertEqual(fake_client.calls[0]["action"], "QueryRangeMetric")
+    self.assertEqual(fake_client.calls[0]["payload"]["TopicId"], "topic-metric")
+    self.assertEqual(fake_client.calls[0]["region"], "ap-shanghai")
+
+  def test_decode_metric_query_result_ignores_non_json(self):
+    self.assertEqual(decode_metric_query_result("not json"), [])
+    self.assertEqual(decode_metric_query_result({"bad": "shape"}), [])
 
   def test_search_cls_log_values_paginates_until_list_over(self):
     responses = [

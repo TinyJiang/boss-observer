@@ -15,17 +15,19 @@ const JOB_STATUS_KEYS = [
   "jobstatus"
 ];
 
-export function buildJobContextSnapshot({ urls = [], datasets = [] } = {}) {
+export function buildJobContextSnapshot({ urls = [], datasets = [], jobNames = [] } = {}) {
   const datasetContext = datasets
     .map((dataset) => extractJobContextFromDataset(dataset))
     .find((context) => context.jobId);
   if (datasetContext) {
-    return datasetContext;
+    return withJobName(datasetContext, jobNames);
   }
 
-  return urls
+  const urlContext = urls
     .map((url) => extractJobContextFromUrl(url))
     .find((context) => context.jobId) || null;
+
+  return urlContext ? withJobName(urlContext, jobNames) : null;
 }
 
 export function extractJobContextFromUrl(href = "") {
@@ -72,11 +74,64 @@ export function buildJobContextKey(jobContext) {
     return "";
   }
 
-  return [
+  const parts = [
     jobContext.jobIdSource || "unknown",
     jobContext.jobId,
     jobContext.jobStatus || ""
-  ].join(":");
+  ];
+
+  if (jobContext.jobName) {
+    parts.push(jobContext.jobNameSource || "unknown", jobContext.jobName);
+  }
+
+  return parts.join(":");
+}
+
+export function buildJobNameCandidate(value = "", source = "unknown") {
+  const jobName = normalizeJobName(value);
+  if (!jobName) {
+    return null;
+  }
+
+  return {
+    value: jobName,
+    source: source || "unknown"
+  };
+}
+
+export function extractJobNameFromPageTitle(pageTitle = "") {
+  const normalizedTitle = normalizeWhitespace(pageTitle);
+  if (!normalizedTitle || normalizedTitle === "BOSS直聘") {
+    return null;
+  }
+
+  const titleWithoutBrand = normalizedTitle
+    .replace(/\s*[_\-|｜—–].*?BOSS直聘.*$/u, "")
+    .replace(/\s*BOSS直聘.*$/u, "")
+    .trim();
+  const match = titleWithoutBrand.match(/^(.{2,60}?)(?:招聘信息|招聘|职位详情|岗位详情|职位|岗位)$/u);
+  if (!match) {
+    return null;
+  }
+
+  return buildJobNameCandidate(match[1], "page_title");
+}
+
+export function extractJobNameFromVisibleText(text = "", source = "dom.selected_job_title") {
+  const normalized = normalizeWhitespace(text).replace(/[]/gu, "");
+  const salaryMatch = normalized.match(
+    /^(.{2,100}?\s+[_＿]\s+[^\s_＿]{1,20}\s+\d+(?:\.\d+)?\s*(?:[-~–—]\s*\d+(?:\.\d+)?)?\s*(?:[kK]|千|万|元)(?:\/(?:时|天|月|年|小时))?(?:\s*·\s*\d+薪)?)/u
+  );
+  if (salaryMatch) {
+    return buildJobNameCandidate(salaryMatch[1], source);
+  }
+
+  const match = normalized.match(/^(.{2,100}?\s+[_＿]\s+[^\s_＿]{1,20})(?:\s|$)/u);
+  if (!match) {
+    return null;
+  }
+
+  return buildJobNameCandidate(match[1], source);
 }
 
 function findSearchParam(searchParams, keys) {
@@ -128,6 +183,91 @@ function findObjectValue(source, keys) {
   }
 
   return { key: "", value: "" };
+}
+
+function withJobName(jobContext, jobNames) {
+  const candidate = findJobNameCandidate(jobNames);
+  if (!candidate) {
+    return jobContext;
+  }
+
+  return {
+    ...jobContext,
+    jobName: candidate.value,
+    jobNameSource: candidate.source
+  };
+}
+
+function findJobNameCandidate(jobNames) {
+  for (const candidate of jobNames || []) {
+    const value = typeof candidate === "object" && candidate !== null ? candidate.value : candidate;
+    const source = typeof candidate === "object" && candidate !== null ? candidate.source : "unknown";
+    const normalized = buildJobNameCandidate(value, source || "unknown");
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function normalizeJobName(value) {
+  let normalized = normalizeWhitespace(value);
+  if (!normalized) {
+    return "";
+  }
+
+  normalized = stripLeadingRecommendationTabs(normalized);
+  normalized = normalized
+    .replace(/^(?:当前|沟通)?(?:招聘)?职位(?:名称)?[:：\-\s]*/u, "")
+    .replace(/^(?:当前|招聘)?岗位(?:名称)?[:：\-\s]*/u, "")
+    .replace(/\s*(?:切换职位|展开|收起|请选择职位)$/u, "")
+    .trim();
+  normalized = normalizeWhitespace(normalized);
+
+  if (!normalized || normalized.length > 60) {
+    return "";
+  }
+
+  if (/职位描述|岗位职责|工作内容|任职要求|岗位要求|薪资详情|福利待遇|公司介绍/u.test(normalized)) {
+    return "";
+  }
+
+  return normalized;
+}
+
+function stripLeadingRecommendationTabs(value) {
+  const tokens = normalizeWhitespace(value).split(" ");
+  let index = 0;
+  let sawRecommendationNav = false;
+  let sawLatest = false;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (["推荐", "精选", "精选牛人", "新牛人", "最新"].includes(token)) {
+      sawRecommendationNav = true;
+      sawLatest = sawLatest || token === "最新";
+      index += 1;
+      continue;
+    }
+
+    if (/^\d+$/.test(token) && sawRecommendationNav) {
+      index += 1;
+      continue;
+    }
+
+    break;
+  }
+
+  if (!sawRecommendationNav || !sawLatest || index <= 0 || index >= tokens.length) {
+    return value;
+  }
+
+  return tokens.slice(index).join(" ");
+}
+
+function normalizeWhitespace(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 function emptyJobContext() {

@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   buildDiagnosticProfile,
-  buildDiagnosticProfileFilename
+  buildDiagnosticProfileFilename,
+  DIAGNOSTIC_PROFILE_NETWORK_REQUEST_LIMIT,
+  DIAGNOSTIC_PROFILE_RECENT_EVENT_LIMIT,
+  summarizeDiagnosticEvent
 } from "../extension/src/shared/diagnostic-profile.js";
 import { EVENT_TYPES } from "../extension/src/shared/event-types.js";
 
@@ -132,6 +135,99 @@ test("diagnostic profile summarizes merged detail analysis marker", () => {
 
   assert.equal(event.payload.analysis.module, "boss_analysis");
   assert.equal(event.payload.candidate.profile.displayName, "Alone");
+});
+
+test("diagnostic profile includes local-only pending chat candidates", () => {
+  const profile = buildDiagnosticProfile({
+    chatPendingCandidates: {
+      updatedAt: "2026-05-22T10:00:00.000+08:00",
+      source: "poll",
+      items: [
+        {
+          candidateId: "candidate_1",
+          displayName: "桂儿",
+          jobTitle: "【8000+】居家黑板主播（时薪40+可兼职）",
+          lastMessageAt: "2026-05-22T09:54:00.000+08:00",
+          lastMessageTimeText: "09:54"
+        }
+      ]
+    }
+  }, {
+    manifest: {
+      version: "0.1.2"
+    },
+    now: () => "2026-05-22T10:01:00.000+08:00"
+  });
+
+  assert.equal(profile.runtime.moduleHealth.candidate_chat.status, "problem");
+  assert.equal(profile.runtime.chatPendingCandidates.items.length, 1);
+  assert.equal(profile.runtime.chatPendingCandidates.items[0].displayName, "桂儿");
+  assert.equal(profile.runtime.productionStats.unreportedChats, undefined);
+});
+
+test("diagnostic profile prefers bounded stored event summaries", () => {
+  const recentEventSummaries = Array.from({
+    length: DIAGNOSTIC_PROFILE_RECENT_EVENT_LIMIT + 5
+  }, (_item, index) => summarizeDiagnosticEvent({
+    id: `summary_${index}`,
+    type: EVENT_TYPES.CANDIDATE_DETAIL_OPENED,
+    occurredAt: `2026-05-17T16:${String(index % 60).padStart(2, "0")}:00.000+08:00`,
+    payload: {
+      candidate: {
+        candidateId: `candidate_${index}`,
+        profile: {
+          displayName: `候选人${index}`
+        }
+      },
+      chat: {
+        messages: [
+          {
+            text: "不应进入 profile 的聊天正文"
+          }
+        ]
+      }
+    }
+  }));
+  const profile = buildDiagnosticProfile({
+    recentEventSummaries,
+    recentEvents: [
+      {
+        id: "raw_should_not_be_used",
+        type: EVENT_TYPES.CANDIDATE_CHAT_SNAPSHOT_CAPTURED
+      }
+    ]
+  });
+
+  assert.equal(profile.runtime.recentEvents.length, DIAGNOSTIC_PROFILE_RECENT_EVENT_LIMIT);
+  assert.equal(profile.runtime.recentEvents[0].id, "summary_0");
+  assert.equal(
+    profile.runtime.recentEvents[DIAGNOSTIC_PROFILE_RECENT_EVENT_LIMIT - 1].id,
+    `summary_${DIAGNOSTIC_PROFILE_RECENT_EVENT_LIMIT - 1}`
+  );
+  assert.equal(JSON.stringify(profile).includes("不应进入 profile 的聊天正文"), false);
+});
+
+test("diagnostic profile exports the full bounded network request summary list", () => {
+  const profile = buildDiagnosticProfile({
+    networkDebug: {
+      recentRequests: Array.from({
+        length: DIAGNOSTIC_PROFILE_NETWORK_REQUEST_LIMIT + 5
+      }, (_item, index) => ({
+        id: `req_${index}`,
+        observedAt: "2026-05-17T16:20:00.000+08:00",
+        url: `https://www.zhipin.com/wapi/example/${index}`,
+        responseBodyPreview: "body should stay out of diagnostic profile"
+      }))
+    }
+  });
+
+  assert.equal(profile.runtime.networkDebug.recentRequests.length, DIAGNOSTIC_PROFILE_NETWORK_REQUEST_LIMIT);
+  assert.equal(profile.runtime.networkDebug.recentRequests[0].id, "req_0");
+  assert.equal(
+    profile.runtime.networkDebug.recentRequests[DIAGNOSTIC_PROFILE_NETWORK_REQUEST_LIMIT - 1].id,
+    `req_${DIAGNOSTIC_PROFILE_NETWORK_REQUEST_LIMIT - 1}`
+  );
+  assert.equal(JSON.stringify(profile).includes("body should stay out of diagnostic profile"), false);
 });
 
 function createDebugState() {

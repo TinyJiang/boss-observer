@@ -186,7 +186,18 @@
         gap: 8px;
         min-width: 0;
       }
+      .chat-main {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
       .label {
+        overflow-wrap: anywhere;
+      }
+      .chat-meta {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
         overflow-wrap: anywhere;
       }
       .state-text {
@@ -236,6 +247,11 @@
       <section>
         <h2>数据状态</h2>
         <div class="status-list" id="moduleStatus"></div>
+      </section>
+
+      <section>
+        <h2>待上传聊天</h2>
+        <div class="chat-list" id="chatPendingCandidates"></div>
       </section>
     </main>
     <script type="module" src="./debug.js"></script>

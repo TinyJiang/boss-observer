@@ -1,4 +1,4 @@
-import type { DashboardPayload, LogQualityPayload, OperatorPayload, OperatorsPayload } from "./types";
+import type { DashboardPayload, HistoryPayload, LogQualityPayload, OperatorPayload, OperatorsPayload } from "./types";
 
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
@@ -33,4 +33,23 @@ export function fetchLogQuality(filters: {
   }
   const query = params.toString();
   return getJson<LogQualityPayload>(`/api/log-quality${query ? `?${query}` : ""}`);
+}
+
+export function fetchHistory(filters: {
+  operatorId?: string;
+  activeDate?: string;
+  days?: number;
+}): Promise<HistoryPayload> {
+  const params = new URLSearchParams();
+  if (filters.operatorId) {
+    params.set("operator_id", filters.operatorId);
+  }
+  if (filters.activeDate) {
+    params.set("active_date", filters.activeDate);
+  }
+  if (filters.days) {
+    params.set("days", String(filters.days));
+  }
+  const query = params.toString();
+  return getJson<HistoryPayload>(`/api/history${query ? `?${query}` : ""}`);
 }

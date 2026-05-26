@@ -4,6 +4,7 @@ import {
   createEmptyChatReportState,
   updateChatReportStateFromEvents
 } from "../shared/chat-report-state.js";
+import { buildChatPendingCandidatesState } from "../shared/chat-pending-candidates.js";
 import {
   buildClsAnonymousTracklogBody,
   buildClsAnonymousTracklogUrl,
@@ -14,6 +15,10 @@ import {
   DEBUG_STATE_KEY,
   readDebugState
 } from "../shared/debug-state.js";
+import {
+  DIAGNOSTIC_PROFILE_RECENT_EVENT_LIMIT,
+  summarizeDiagnosticEvent
+} from "../shared/diagnostic-profile.js";
 import { EVENT_TYPES } from "../shared/event-types.js";
 import {
   appendNetworkDebugRequest,
@@ -39,6 +44,7 @@ import { shouldFlushImmediately } from "../shared/upload-policy.js";
 let flushing = false;
 const eventHandlingRunner = createSequentialTaskRunner();
 const BOSS_TAB_URL_PATTERNS = ["https://www.zhipin.com/*", "https://zhipin.com/*"];
+const RAW_DEBUG_RECENT_EVENT_LIMIT = 50;
 
 chrome.runtime.onInstalled.addListener(async () => {
   const config = await readConfig();
@@ -77,6 +83,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.kind === "bossObserver.bossAccountObserved") {
     eventHandlingRunner.run(() => handleBossAccountObserved(message.account, _sender))
       .then((state) => sendResponse({ ok: true, collectionGate: state.collectionGate }))
+      .catch((error) => sendResponse({ ok: false, error: String(error) }));
+
+    return true;
+  }
+
+  if (message.kind === "bossObserver.chatPendingCandidatesObserved") {
+    eventHandlingRunner.run(() => handleChatPendingCandidatesObserved(message))
+      .then((state) => sendResponse({ ok: true, chatPendingCandidates: state.chatPendingCandidates }))
       .catch((error) => sendResponse({ ok: false, error: String(error) }));
 
     return true;
@@ -149,7 +163,11 @@ async function handleEvent(event, sender) {
       collectionGate,
       queueSize: queued.length,
       lastEvent: enrichedEvent,
-      recentEvents: [enrichedEvent, ...current.recentEvents].slice(0, 50),
+      recentEvents: [enrichedEvent, ...current.recentEvents].slice(0, RAW_DEBUG_RECENT_EVENT_LIMIT),
+      recentEventSummaries: [
+        summarizeDiagnosticEvent(enrichedEvent),
+        ...(current.recentEventSummaries || [])
+      ].slice(0, DIAGNOSTIC_PROFILE_RECENT_EVENT_LIMIT),
       productionStats
     };
   });
@@ -237,6 +255,23 @@ async function handleNetworkDebugRequest(request) {
     updatedAt: nowLocalIsoString(),
     networkDebug: appendNetworkDebugRequest(current.networkDebug, request)
   }));
+}
+
+async function handleChatPendingCandidatesObserved(message) {
+  let nextState = null;
+  await updateDebugState(async (current) => {
+    nextState = {
+      ...current,
+      updatedAt: nowLocalIsoString(),
+      chatPendingCandidates: buildChatPendingCandidatesState({
+        source: message.source || "",
+        observedAt: message.observedAt || nowLocalIsoString(),
+        items: message.candidates || []
+      })
+    };
+    return nextState;
+  });
+  return nextState;
 }
 
 async function handleNetworkDebugCommand(command) {
@@ -390,7 +425,7 @@ async function postBatch(config, events) {
     throw new Error(`Upload failed with HTTP ${response.status}`);
   }
 
-  console.debug("[BOSS Observer]", EVENT_TYPES.UPLOAD_SUCCEEDED, events.length);
+  console.debug("[BOSS Observer] upload.succeeded", events.length);
   return {
     targetType: request.targetType,
     status: response.status,

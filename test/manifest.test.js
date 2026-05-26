@@ -22,4 +22,7 @@ test("manifest grants and injects on both BOSS host variants", async () => {
       assert.ok(resource.matches.includes(pattern));
     }
   }
+
+  const resources = manifest.web_accessible_resources.flatMap((resource) => resource.resources);
+  assert.ok(resources.includes("src/shared/*.json"));
 });

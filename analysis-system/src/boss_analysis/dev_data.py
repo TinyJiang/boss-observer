@@ -13,15 +13,24 @@ from boss_analysis.consumer import (
   IngestionPipeline,
   iter_daily_active_durations_from_file,
   iter_daily_active_durations_from_search,
+  iter_daily_basic_summaries_from_file,
+  iter_daily_basic_summaries_from_metric_topic,
+  iter_daily_basic_summaries_from_search,
   iter_log_quality_summaries_from_file,
   iter_log_quality_summaries_from_search,
   iter_minute_summaries_from_file,
   iter_minute_summaries_from_search,
+  load_cls_daily_basic_summary_search_config,
   load_cls_daily_summary_search_config,
   load_cls_log_quality_search_config,
   load_cls_summary_search_config,
 )
-from boss_analysis.domain import DailyActiveDurationRecord, LogQualitySummaryRecord, MinuteSummaryRecord
+from boss_analysis.domain import (
+  DailyActiveDurationRecord,
+  DailyBasicStatsRecord,
+  LogQualitySummaryRecord,
+  MinuteSummaryRecord,
+)
 from boss_analysis.storage import InMemoryFactStore, InMemoryRawEventRepository
 
 
@@ -44,11 +53,13 @@ class DevDataset:
   fact_store: InMemoryFactStore
   minute_summaries: tuple[MinuteSummaryRecord, ...]
   daily_active_durations: tuple[DailyActiveDurationRecord, ...]
+  daily_basic_summaries: tuple[DailyBasicStatsRecord, ...]
   log_quality_summaries: tuple[LogQualitySummaryRecord, ...]
   generated_at: datetime
   source: DevDataSourceInfo
   summary_source: DevDataSourceInfo | None = None
   daily_summary_source: DevDataSourceInfo | None = None
+  daily_basic_summary_source: DevDataSourceInfo | None = None
   log_quality_source: DevDataSourceInfo | None = None
 
 
@@ -79,7 +90,9 @@ def create_dev_dataset(
   cls_client: Any | None = None,
   summary_cls_client: Any | None = None,
   daily_summary_cls_client: Any | None = None,
+  daily_basic_summary_cls_client: Any | None = None,
   log_quality_cls_client: Any | None = None,
+  include_daily_basic_summaries: bool = True,
 ) -> DevDataset:
   """Create local dev repositories and record where data came from."""
 
@@ -106,6 +119,13 @@ def create_dev_dataset(
     data_source=data_source,
     daily_summary_cls_client=daily_summary_cls_client,
   )
+  daily_basic_summaries, daily_basic_summary_source = _load_daily_basic_summaries(
+    generated_at,
+    data_file=data_file,
+    data_source=data_source,
+    daily_basic_summary_cls_client=daily_basic_summary_cls_client,
+    load_records=include_daily_basic_summaries,
+  )
   log_quality_summaries, log_quality_source = _load_log_quality_summaries(
     generated_at,
     data_file=data_file,
@@ -116,12 +136,14 @@ def create_dev_dataset(
     _summary_source_required(data_source=data_source, data_file=data_file)
     and summary_source is None
     and daily_summary_source is None
+    and daily_basic_summary_source is None
     and log_quality_source is None
   ):
     raise ValueError(
       "data source 'summary' requires BOSS_ANALYSIS_SUMMARY_DATA_FILE, "
       "CLS_SUMMARY_TOPIC_ID, BOSS_ANALYSIS_DAILY_SUMMARY_DATA_FILE, "
-      "CLS_DAILY_SUMMARY_TOPIC_ID, BOSS_ANALYSIS_LOG_QUALITY_DATA_FILE, "
+      "CLS_DAILY_SUMMARY_TOPIC_ID, BOSS_ANALYSIS_DAILY_BASIC_SUMMARY_DATA_FILE, "
+      "CLS_DAILY_BASIC_SUMMARY_TOPIC_ID, BOSS_ANALYSIS_LOG_QUALITY_DATA_FILE, "
       "or CLS_LOG_QUALITY_TOPIC_ID"
     )
 
@@ -133,11 +155,13 @@ def create_dev_dataset(
     fact_store=fact_store,
     minute_summaries=tuple(minute_summaries),
     daily_active_durations=tuple(daily_active_durations),
+    daily_basic_summaries=tuple(daily_basic_summaries),
     log_quality_summaries=tuple(log_quality_summaries),
     generated_at=generated_at,
     source=source,
     summary_source=summary_source,
     daily_summary_source=daily_summary_source,
+    daily_basic_summary_source=daily_basic_summary_source,
     log_quality_source=log_quality_source,
   )
 
@@ -183,6 +207,20 @@ def iter_daily_summary_records_from_search(
   """Yield normalized daily active-duration metrics from the configured daily summary topic."""
 
   yield from iter_daily_active_durations_from_search(now=now, client=client)
+
+
+def iter_daily_basic_summary_records_from_search(
+  *,
+  now: datetime | None = None,
+  client: Any | None = None,
+) -> Iterable[DailyBasicStatsRecord]:
+  """Yield daily basic statistics from the configured CLS daily-basic topic."""
+
+  yield from _iter_daily_basic_summaries_from_configured_topic(
+    now=now,
+    client=client,
+    reader_mode=_daily_basic_summary_reader_mode(),
+  )
 
 
 def iter_log_quality_records_from_search(
@@ -331,6 +369,58 @@ def _load_daily_active_durations(
   return records, _source_info("daily_summary_topic", "CLS 日级指标", detail, len(records), generated_at)
 
 
+def _load_daily_basic_summaries(
+  generated_at: datetime,
+  *,
+  data_file: str | Path | None,
+  data_source: str | None,
+  daily_basic_summary_cls_client: Any | None,
+  load_records: bool = True,
+) -> tuple[list[DailyBasicStatsRecord], DevDataSourceInfo | None]:
+  resolved_data_file = data_file or os.environ.get("BOSS_ANALYSIS_DEV_DATA_FILE")
+  requested_source = _normalize_data_source(data_source or os.environ.get("BOSS_ANALYSIS_DATA_SOURCE"))
+  if requested_source == "real":
+    requested_source = "file" if resolved_data_file else "summary"
+  if requested_source == "auto":
+    if resolved_data_file:
+      requested_source = "file"
+    else:
+      requested_source = "summary" if _has_daily_basic_summary_source_configured() else "demo"
+  if requested_source != "summary":
+    return [], None
+
+  daily_basic_file = os.environ.get("BOSS_ANALYSIS_DAILY_BASIC_SUMMARY_DATA_FILE")
+  if daily_basic_file:
+    records = list(iter_daily_basic_summaries_from_file(daily_basic_file)) if load_records else []
+    return records, _source_info(
+      "daily_basic_summary_file",
+      "日级基础指标文件",
+      str(Path(daily_basic_file)),
+      len(records),
+      generated_at,
+    )
+
+  if not os.environ.get("CLS_DAILY_BASIC_SUMMARY_TOPIC_ID"):
+    return [], None
+  config = load_cls_daily_basic_summary_search_config()
+  reader_mode = _daily_basic_summary_reader_mode()
+  records = (
+    list(_iter_daily_basic_summaries_from_configured_topic(
+      now=generated_at,
+      client=daily_basic_summary_cls_client,
+      reader_mode=reader_mode,
+    ))
+    if load_records
+    else []
+  )
+  detail = (
+    f"{config.endpoint} topic={config.topic_id} "
+    f"mode={reader_mode} query={config.query} window={config.window_label}"
+  )
+  label = "CLS 日级基础指标" if reader_mode == "metric" else "CLS 日级基础日志"
+  return records, _source_info("daily_basic_summary_topic", label, detail, len(records), generated_at)
+
+
 def _load_log_quality_summaries(
   generated_at: datetime,
   *,
@@ -411,6 +501,7 @@ def _has_any_summary_source_configured() -> bool:
   return (
     _has_minute_summary_source_configured()
     or _has_daily_summary_source_configured()
+    or _has_daily_basic_summary_source_configured()
     or _has_log_quality_source_configured()
   )
 
@@ -423,8 +514,35 @@ def _has_daily_summary_source_configured() -> bool:
   return bool(os.environ.get("BOSS_ANALYSIS_DAILY_SUMMARY_DATA_FILE") or os.environ.get("CLS_DAILY_SUMMARY_TOPIC_ID"))
 
 
+def _has_daily_basic_summary_source_configured() -> bool:
+  return bool(
+    os.environ.get("BOSS_ANALYSIS_DAILY_BASIC_SUMMARY_DATA_FILE")
+    or os.environ.get("CLS_DAILY_BASIC_SUMMARY_TOPIC_ID")
+  )
+
+
 def _has_log_quality_source_configured() -> bool:
   return bool(os.environ.get("BOSS_ANALYSIS_LOG_QUALITY_DATA_FILE") or os.environ.get("CLS_LOG_QUALITY_TOPIC_ID"))
+
+
+def _iter_daily_basic_summaries_from_configured_topic(
+  *,
+  now: datetime | None,
+  client: Any | None,
+  reader_mode: str,
+) -> Iterable[DailyBasicStatsRecord]:
+  if reader_mode == "log":
+    yield from iter_daily_basic_summaries_from_search(now=now, client=client)
+    return
+  yield from iter_daily_basic_summaries_from_metric_topic(now=now, client=client)
+
+
+def _daily_basic_summary_reader_mode() -> str:
+  raw = os.environ.get("CLS_DAILY_BASIC_SUMMARY_SOURCE") or os.environ.get("CLS_DAILY_BASIC_SUMMARY_MODE")
+  value = (raw or "metric").strip().lower().replace("_", "-")
+  if value in {"log", "logs", "search", "searchlog", "search-log"}:
+    return "log"
+  return "metric"
 
 
 def _records_from_json_value(value: Any) -> Iterable[dict[str, Any]]:

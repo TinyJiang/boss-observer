@@ -54,9 +54,10 @@
 
 - content script 会扫描顶层页面和同源 iframe。
 - 第一版只从 URL 查询参数和 DOM dataset 中提取稳定职位 ID，例如 `jobid`、`jobId`、`encryptJobId`、`positionId`。
+- 职位名称只从可见的选中职位标题、职位菜单文本或窄格式页面标题中提取，例如 `主播运营`、`直播中控`。真机推荐页已观察到顶部职位选择器文本形如 `兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时`，该整段是 BOSS 当前职位展示名称；插件保留这段可见展示值，只清理父容器误拼入的推荐 tab 文本和末尾图标字符，不读取职位描述正文、薪资详情正文或完整 JD。
 - 如果同一上下文中能读到 `status` / `jobStatus`，会作为 `jobStatus` 一并记录。
 - 识别到职位后会更新 `SessionContext`，后续事件的 `context.jobContext` 会带上当前职位上下文。
-- 当前不会从页面正文猜测职位名称，也不会采集职位描述正文。
+- 如果同一个 `jobId` 先被识别、职位名称稍后才因页面渲染变为可见，职位探针会再次更新 `SessionContext`，让后续候选人曝光、详情、打招呼和聊天事件携带 `jobName`。
 
 ## 5. 输出给其他模块的上下文
 
@@ -74,6 +75,8 @@
 
 - `jobId`: 当前职位 ID。
 - `jobIdSource`: ID 来源，例如 `url.jobid`、`url.jobId`、`dataset.jobId`。
+- `jobName`: 当前职位展示名称，例如 `主播运营`、`直播中控`，或 BOSS 顶部职位选择器完整可见值 `兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时`；识别不到时省略。
+- `jobNameSource`: 名称来源，例如 `dom.selected_job_title`、`dom.job_menu`、`page_title`。
 - `jobStatus`: URL 或 dataset 中可见的职位状态参数，识别不到时省略。
 - `jobStatusSource`: 状态来源，识别不到时省略。
 - `sourceUrl`、`confidence`、`updatedAt` 仅用于内部识别过程，不进入 `context.jobContext` 或 `job_context.detected` / `job_context.changed` 的正式 payload。
@@ -84,10 +87,10 @@ MVP 需要完成：
 
 - 能识别当前职位上下文。
 - 能记录职位切换。
-- 能把职位上下文附加到候选人列表曝光、候选人详情打开、打招呼日志中。
+- 能把职位上下文附加到候选人卡片曝光、候选人详情打开、打招呼日志中。
 - 职位识别失败时能记录异常或空上下文。
 
-当前第一版已完成 URL / dataset 职位 ID 识别、职位识别/切换事件、以及 `context.jobContext` 附加。职位名称、职位页面曝光和职位选择器点击行为仍待真机验证后实现。
+当前第一版已完成 URL / dataset 职位 ID 识别、可见职位名称提取、职位识别/切换事件、以及 `context.jobContext` 附加。职位页面曝光和职位选择器点击行为仍待真机验证后实现。
 
 ## 7. 真机验证点
 

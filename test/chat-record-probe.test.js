@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildChatCandidatePayload,
+  buildPendingChatCandidatesFromListItems,
   buildChatSnapshotPayload,
   ChatRecordProbe,
   collectChatMessagesFromText,
@@ -12,6 +13,10 @@ import {
   parseClearlyTodayChatListTime
 } from "../extension/src/content/chat-record-probe.js";
 import { EVENT_TYPES } from "../extension/src/shared/event-types.js";
+import {
+  loadChatMessageCleanupRules,
+  shouldIgnoreChatMessageText
+} from "../extension/src/shared/chat-message-cleanup.js";
 
 const FIXED_NOW = () => new Date(2026, 4, 15, 14, 20, 0, 0);
 const LEGACY_CHAT_REPORT_PROMPT_TEXT = "今日聊天未上报，请点开补采";
@@ -134,6 +139,80 @@ test("chat list scan does not emit report required events", async () => {
   }
 
   assert.deepEqual(events, []);
+});
+
+test("chat list scan publishes local-only pending candidate names", async () => {
+  const events = [];
+  const messages = [];
+  const pendingCard = createListElement("09:54 桂儿 【8000+】居家黑板主播（时薪40+可兼职） 哦");
+  const reportedCard = createListElement("10:00 陈女士 【8000+】居家黑板主播（时薪40+可兼职） 好的");
+  const root = createListRoot([pendingCard, reportedCard]);
+  const reportedItem = findChatListItems(root, { now: FIXED_NOW })
+    .find((item) => item.displayName === "陈女士");
+  const probe = new ChatRecordProbe({
+    collector: {
+      collect(type, payload) {
+        events.push({ type, payload });
+      }
+    },
+    sessionContext: {
+      page: {
+        isBossPage: true,
+        pageType: "chat",
+        url: "https://www.zhipin.com/web/chat/index"
+      }
+    },
+    now: FIXED_NOW,
+    readReportState: () => ({
+      candidates: {
+        [reportedItem.candidate.candidateId]: {
+          lastReportedMessageAt: "2026-05-15T10:00:00.000+08:00"
+        }
+      }
+    })
+  });
+  const originalDocument = globalThis.document;
+  const originalChrome = globalThis.chrome;
+  try {
+    globalThis.document = root;
+    globalThis.chrome = {
+      runtime: {
+        sendMessage(message, callback) {
+          messages.push(message);
+          callback?.({ ok: true });
+        }
+      }
+    };
+    await probe.scan("test");
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.chrome = originalChrome;
+  }
+
+  assert.deepEqual(events, []);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].kind, "bossObserver.chatPendingCandidatesObserved");
+  assert.deepEqual(messages[0].candidates.map((candidate) => candidate.displayName), ["桂儿"]);
+  assert.equal(messages[0].candidates[0].lastMessageTimeText, "09:54");
+});
+
+test("pending chat candidate builder uses successful report watermarks", () => {
+  const root = createListRoot([
+    createListElement("09:54 桂儿 【8000+】居家黑板主播（时薪40+可兼职） 哦"),
+    createListElement("10:00 陈女士 【8000+】居家黑板主播（时薪40+可兼职） 好的")
+  ]);
+  const items = findChatListItems(root, { now: FIXED_NOW });
+  const reportedItem = items.find((item) => item.displayName === "陈女士");
+
+  const pending = buildPendingChatCandidatesFromListItems(items, {
+    candidates: {
+      [reportedItem.candidate.candidateId]: {
+        lastReportedMessageAt: "2026-05-15T10:00:00.000+08:00"
+      }
+    }
+  });
+
+  assert.deepEqual(pending.map((candidate) => candidate.displayName), ["桂儿"]);
 });
 
 test("chat snapshot emits again on repeated manual open until upload watermark advances", async () => {
@@ -415,6 +494,237 @@ test("chat snapshot parser captures rendered text messages and skips media urls"
   assert.equal(payload.chat.mediaSummary.imageNodeCount, 2);
 });
 
+test("chat snapshot parser marks candidate and recruiter directions from message bubble classes", () => {
+  const panel = createChatPanelWithMessageNodes({
+    lines: [
+      "桂儿",
+      "刚刚活跃",
+      "在线简历",
+      "附件简历",
+      "沟通职位： 兼职·【8000+】居家黑板主播（时薪40+可兼职）",
+      "09:10",
+      "候选人发来的消息",
+      "09:12",
+      "招聘者发出的消息",
+      "发送"
+    ],
+    messages: [
+      {
+        text: "候选人发来的消息",
+        className: "chat-message item-friend"
+      },
+      {
+        text: "招聘者发出的消息",
+        className: "chat-message item-myself"
+      }
+    ]
+  });
+
+  const payload = buildChatSnapshotPayload(panel, {
+    source: "test",
+    chatPageUrl: "https://www.zhipin.com/web/chat/index",
+    now: FIXED_NOW
+  });
+
+  assert.deepEqual(payload.chat.messages.map((message) => message.direction), [
+    "candidate",
+    "recruiter"
+  ]);
+});
+
+test("chat snapshot parser marks directions from left and right bubble positions", () => {
+  const panel = createChatPanelWithMessageNodes({
+    lines: [
+      "桂儿",
+      "刚刚活跃",
+      "在线简历",
+      "附件简历",
+      "沟通职位： 兼职·【8000+】居家黑板主播（时薪40+可兼职）",
+      "09:10",
+      "左侧候选人消息",
+      "09:12",
+      "右侧招聘者消息",
+      "发送"
+    ],
+    messages: [
+      {
+        text: "左侧候选人消息",
+        rect: {
+          left: 24,
+          top: 120,
+          width: 180,
+          height: 40
+        }
+      },
+      {
+        text: "右侧招聘者消息",
+        rect: {
+          left: 520,
+          top: 180,
+          width: 180,
+          height: 40
+        }
+      }
+    ]
+  });
+
+  const payload = buildChatSnapshotPayload(panel, {
+    source: "test",
+    chatPageUrl: "https://www.zhipin.com/web/chat/index",
+    now: FIXED_NOW
+  });
+
+  assert.deepEqual(payload.chat.messages.map((message) => message.direction), [
+    "candidate",
+    "recruiter"
+  ]);
+});
+
+test("chat snapshot parser keeps unknown direction when DOM has no structural signal", () => {
+  const panel = createChatPanelWithMessageNodes({
+    lines: [
+      "桂儿",
+      "刚刚活跃",
+      "在线简历",
+      "附件简历",
+      "沟通职位： 兼职·【8000+】居家黑板主播（时薪40+可兼职）",
+      "09:10",
+      "无法判断方向的消息",
+      "发送"
+    ],
+    messages: [
+      {
+        text: "无法判断方向的消息",
+        rect: {
+          left: 320,
+          top: 120,
+          width: 120,
+          height: 40
+        }
+      }
+    ]
+  });
+
+  const payload = buildChatSnapshotPayload(panel, {
+    source: "test",
+    chatPageUrl: "https://www.zhipin.com/web/chat/index",
+    now: FIXED_NOW
+  });
+
+  assert.equal(payload.chat.messages[0].direction, "unknown");
+});
+
+test("chat snapshot direction hints preserve message order, timestamps, and fingerprints", () => {
+  const panel = createChatPanelWithMessageNodes({
+    lines: [
+      "桂儿",
+      "刚刚活跃",
+      "在线简历",
+      "附件简历",
+      "沟通职位： 兼职·【8000+】居家黑板主播（时薪40+可兼职）",
+      "09:10",
+      "第一条消息",
+      "09:12",
+      "第二条消息",
+      "09:14",
+      "第三条消息",
+      "发送"
+    ],
+    messages: [
+      {
+        text: "第一条消息",
+        className: "message-left"
+      },
+      {
+        text: "第二条消息",
+        className: "message-right"
+      },
+      {
+        text: "第三条消息",
+        className: "message-left"
+      }
+    ]
+  });
+
+  const firstPayload = buildChatSnapshotPayload(panel, {
+    source: "test",
+    chatPageUrl: "https://www.zhipin.com/web/chat/index",
+    now: FIXED_NOW
+  });
+  const secondPayload = buildChatSnapshotPayload(panel, {
+    source: "test",
+    chatPageUrl: "https://www.zhipin.com/web/chat/index",
+    now: FIXED_NOW
+  });
+
+  assert.deepEqual(firstPayload.chat.messages.map((message) => message.messageIndex), [0, 1, 2]);
+  assert.deepEqual(firstPayload.chat.messages.map((message) => message.messageAt), [
+    "2026-05-15T09:10:00.000+08:00",
+    "2026-05-15T09:12:00.000+08:00",
+    "2026-05-15T09:14:00.000+08:00"
+  ]);
+  assert.deepEqual(firstPayload.chat.messages.map((message) => message.text), [
+    "第一条消息",
+    "第二条消息",
+    "第三条消息"
+  ]);
+  assert.equal(firstPayload.chat.lastMessageFingerprint, firstPayload.chat.messages[2].fingerprint);
+  assert.deepEqual(
+    firstPayload.chat.messages.map((message) => message.fingerprint),
+    secondPayload.chat.messages.map((message) => message.fingerprint)
+  );
+});
+
+test("chat snapshot parser drops configured BOSS system card messages", () => {
+  const messages = collectChatMessagesFromText([
+    "05-18 19:48",
+    "老板您好，我申请报名【8000+】居家黑板主播（时薪40+可兼职）这个岗位，如果您觉得合适，可以直接联系我～",
+    "快速沟通小技巧！",
+    "我看到快速沟通小技巧！这个提示了",
+    "觉得合适，直接联系牛人吧~",
+    "暂不考虑",
+    "暂不考虑这个按钮是什么意思",
+    "获取联系方式",
+    "你好，可以聊一聊啊，我们招搞笑类型的主播",
+    "今天 15:36",
+    "可以的，有无责底薪吗"
+  ].join("\n"), { now: FIXED_NOW });
+
+  assert.deepEqual(messages.map((message) => message.text), [
+    "老板您好，我申请报名【8000+】居家黑板主播（时薪40+可兼职）这个岗位，如果您觉得合适，可以直接联系我～",
+    "我看到快速沟通小技巧！这个提示了",
+    "暂不考虑这个按钮是什么意思",
+    "你好，可以聊一聊啊，我们招搞笑类型的主播",
+    "可以的，有无责底薪吗"
+  ]);
+});
+
+test("chat message cleanup rules load from extension json when available", async () => {
+  const rules = await loadChatMessageCleanupRules({
+    runtime: {
+      getURL(path) {
+        assert.equal(path, "src/shared/chat-message-cleanup-rules.json");
+        return `chrome-extension://test/${path}`;
+      }
+    },
+    fetchFn: async () => ({
+      ok: true,
+      async json() {
+        return {
+          schemaVersion: "1.0.0",
+          ignoreExactTexts: ["系统卡片"],
+          ignoreRegexes: ["^media://"]
+        };
+      }
+    })
+  });
+
+  assert.equal(shouldIgnoreChatMessageText("系统卡片", rules), true);
+  assert.equal(shouldIgnoreChatMessageText("我看到系统卡片了", rules), false);
+  assert.equal(shouldIgnoreChatMessageText("media://image-placeholder", rules), true);
+  assert.equal(shouldIgnoreChatMessageText("正常聊天内容", rules), false);
+});
+
 test("chat snapshot parser keeps live innerText line breaks", () => {
   const liveText = [
     "桂儿",
@@ -599,6 +909,33 @@ function createChatPanelElement() {
   ].join("\n"));
 }
 
+function createChatPanelWithMessageNodes({
+  lines = [],
+  messages = [],
+  rect = {
+    left: 0,
+    top: 0,
+    width: 720,
+    height: 520
+  }
+} = {}) {
+  const panel = createListElement(lines.join("\n"), { rect });
+  messages.forEach((message) => {
+    appendListChild(panel, createListElement(message.text, {
+      className: message.className || "",
+      dataset: message.dataset || {},
+      attributes: message.attributes || {},
+      rect: message.rect || {
+        left: 24,
+        top: 120,
+        width: 180,
+        height: 40
+      }
+    }));
+  });
+  return panel;
+}
+
 function createListRoot(elements = []) {
   const body = createListElement("");
   const root = {
@@ -628,16 +965,29 @@ function createListRoot(elements = []) {
   return root;
 }
 
-function createListElement(text = "") {
+function createListElement(text = "", {
+  attributes = {},
+  className = "",
+  dataset = {},
+  rect = {
+    left: 10,
+    top: 20,
+    width: 220,
+    height: 60
+  },
+  tagName = "div"
+} = {}) {
   return {
-    attributes: {},
+    attributes: { ...attributes },
+    className,
     innerText: text,
     textContent: text,
-    dataset: {},
+    dataset: { ...dataset },
     parentElement: null,
     ownerDocument: null,
     children: [],
     style: {},
+    tagName: tagName.toUpperCase(),
     appendChild(child) {
       child.parentElement = this;
       child.ownerDocument = this.ownerDocument;
@@ -648,14 +998,16 @@ function createListElement(text = "") {
       return null;
     },
     getAttribute(name) {
+      if (name === "class") {
+        return this.className || this.attributes[name] || null;
+      }
       return this.attributes[name] ?? null;
     },
     getBoundingClientRect() {
       return {
-        left: 10,
-        top: 20,
-        width: 220,
-        height: 60
+        ...rect,
+        right: rect.left + rect.width,
+        bottom: rect.top + rect.height
       };
     },
     querySelector(selector) {
@@ -680,9 +1032,15 @@ function createListElement(text = "") {
     },
     removeAttribute(name) {
       delete this.attributes[name];
+      if (name === "class") {
+        this.className = "";
+      }
     },
     setAttribute(name, value) {
       this.attributes[name] = String(value);
+      if (name === "class") {
+        this.className = String(value);
+      }
     },
     contains(target) {
       return this.children.some((child) => child === target || child.contains(target));
@@ -710,5 +1068,14 @@ function matchesSelector(element, selector = "") {
   if (selector.includes("data-boss-observer-chat-report-prompt")) {
     return element.getAttribute("data-boss-observer-chat-report-prompt") === "true";
   }
-  return false;
+  const selectors = selector.split(",").map((current) => current.trim()).filter(Boolean);
+  if (selectors.includes("*")) {
+    return true;
+  }
+  return selectors.some((current) => {
+    if (current === "a[href]") {
+      return element.tagName === "A" && Boolean(element.href);
+    }
+    return current.toUpperCase() === element.tagName;
+  });
 }

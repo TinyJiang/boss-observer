@@ -9,9 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from boss_analysis.api import AnalysisQueryService
-from boss_analysis.dev_data import create_dev_state
-from boss_analysis.domain import LogQualitySummaryRecord
-from boss_analysis.dev_server import DevApp, INDEX_HTML, load_env_files, make_handler
+from boss_analysis.dev_data import DevDataSourceInfo, create_dev_state
+from boss_analysis.domain import DailyBasicStatsRecord, LogQualitySummaryRecord
+from boss_analysis.dev_server import DevApp, INDEX_HTML, _decode_path_segment, load_env_files, make_handler
 
 
 def plugin_event(event_id):
@@ -76,6 +76,7 @@ class DevServerTests(unittest.TestCase):
     self.assertIn("card_exposed", encoded)
     self.assertIn("source", encoded)
     self.assertIn("log_quality_source", encoded)
+    self.assertIn("daily_basic_summary_source", encoded)
     self.assertNotIn("redacted-in-facts", encoded)
 
   def test_http_handler_and_payloads_are_available_without_binding_socket(self):
@@ -88,7 +89,11 @@ class DevServerTests(unittest.TestCase):
     self.assertIn("dashboard", payload)
     self.assertIn("source", payload)
     self.assertIn("log_quality_source", payload)
+    self.assertIn("daily_basic_summary_source", payload)
     self.assertGreaterEqual(payload["dashboard"]["active_count"], 1)
+
+  def test_operator_path_segment_decodes_unicode_operator_id(self):
+    self.assertEqual(_decode_path_segment("%E5%B0%8F%E5%9B%BE%E5%9B%BE"), "小图图")
 
   def test_index_is_dashboard_not_landing_page(self):
     self.assertIn("Active operators", INDEX_HTML)
@@ -225,6 +230,127 @@ class DevServerTests(unittest.TestCase):
     self.assertEqual(payload["quality"]["source_record_count"], 2)
     self.assertEqual(payload["quality"]["record_count"], 1)
     self.assertEqual(payload["quality"]["finding_count"], 2)
+
+  def test_dev_app_realtime_refresh_skips_daily_basic_topic_records(self):
+    env = {
+      "CLS_DAILY_BASIC_SUMMARY_TOPIC_ID": "topic-daily-basic",
+      "TENCENTCLOUD_SECRET_ID": "secret-id",
+      "TENCENTCLOUD_SECRET_KEY": "secret-key",
+    }
+    with patch.dict(os.environ, env, clear=True):
+      with patch("boss_analysis.dev_data.iter_daily_basic_summaries_from_metric_topic") as reader:
+        app = DevApp(
+          data_source="summary",
+          use_demo_fallback=False,
+          require_real_data=True,
+        )
+
+    reader.assert_not_called()
+    self.assertEqual(app.source.kind, "summary")
+    self.assertEqual(app.daily_basic_summary_source.kind, "daily_basic_summary_topic")
+    self.assertEqual(app._daily_basic_summaries, ())
+
+  def test_dev_app_history_payload_reads_unloaded_daily_basic_topic_on_demand(self):
+    env = {
+      "CLS_DAILY_BASIC_SUMMARY_TOPIC_ID": "topic-daily-basic",
+      "TENCENTCLOUD_SECRET_ID": "secret-id",
+      "TENCENTCLOUD_SECRET_KEY": "secret-key",
+    }
+    refreshed_records = (
+      DailyBasicStatsRecord(
+        metric_name="boss_daily_operator_basic_stats",
+        active_date=datetime(2026, 5, 23, tzinfo=timezone.utc).date(),
+        operator_id="op_real",
+        active_minutes=60,
+      ),
+    )
+    with patch.dict(os.environ, env, clear=True):
+      app = DevApp(
+        data_source="summary",
+        use_demo_fallback=False,
+        require_real_data=True,
+      )
+      with patch(
+        "boss_analysis.dev_server.iter_daily_basic_summaries_from_metric_topic",
+        return_value=refreshed_records,
+      ) as reader:
+        payload = app.history_payload(
+          operator_id="op_real",
+          active_date="2026-05-23",
+        )
+
+    reader.assert_called_once_with(
+      active_date="2026-05-23",
+      operator_id="op_real",
+      lookback_days=None,
+    )
+    self.assertEqual(payload["daily_basic_summary_source"]["record_count"], 1)
+    self.assertEqual(payload["history"]["records"][0]["active_minutes"], 60)
+
+  def test_dev_app_history_payload_filters_daily_basic_records(self):
+    app = DevApp(data_source="empty", use_demo_fallback=False)
+    app._daily_basic_summaries = (
+      DailyBasicStatsRecord(
+        metric_name="boss_daily_operator_basic_stats",
+        active_date=datetime(2026, 5, 23, tzinfo=timezone.utc).date(),
+        operator_id="op_real",
+        active_minutes=50,
+        card_exposed=120,
+        total_events=180,
+      ),
+      DailyBasicStatsRecord(
+        metric_name="boss_daily_operator_basic_stats",
+        active_date=datetime(2026, 5, 22, tzinfo=timezone.utc).date(),
+        operator_id="op_real",
+        active_minutes=10,
+      ),
+    )
+    app.query_service = app._build_query_service()
+
+    payload = app.history_payload(
+      operator_id="op_real",
+      active_date="2026-05-23",
+    )
+
+    self.assertEqual(payload["history"]["status"], "ok")
+    self.assertEqual(payload["history"]["record_count"], 1)
+    self.assertEqual(payload["history"]["records"][0]["active_minutes"], 50)
+
+  def test_dev_app_history_payload_refreshes_daily_basic_log_topic_for_filters(self):
+    app = DevApp(data_source="empty", use_demo_fallback=False)
+    app.daily_basic_summary_source = DevDataSourceInfo(
+      kind="daily_basic_summary_topic",
+      label="CLS 日级基础日志",
+      detail="topic=topic-daily-basic",
+      record_count=0,
+      loaded_at=datetime(2026, 5, 25, tzinfo=timezone.utc),
+    )
+    app.query_service = app._build_query_service()
+    refreshed_records = (
+      DailyBasicStatsRecord(
+        metric_name="boss_daily_operator_basic_stats",
+        active_date=datetime(2026, 5, 23, tzinfo=timezone.utc).date(),
+        operator_id="op_real",
+        active_minutes=60,
+      ),
+    )
+
+    with patch(
+      "boss_analysis.dev_server.iter_daily_basic_summaries_from_metric_topic",
+      return_value=refreshed_records,
+    ) as reader:
+      payload = app.history_payload(
+        operator_id="op_real",
+        active_date="2026-05-23",
+      )
+
+    reader.assert_called_once_with(
+      active_date="2026-05-23",
+      operator_id="op_real",
+      lookback_days=None,
+    )
+    self.assertEqual(payload["daily_basic_summary_source"]["record_count"], 1)
+    self.assertEqual(payload["history"]["records"][0]["active_minutes"], 60)
 
 
 if __name__ == "__main__":

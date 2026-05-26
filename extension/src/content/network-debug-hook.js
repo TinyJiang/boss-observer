@@ -2,7 +2,7 @@
   const HOOK_FLAG = "__bossObserverNetworkDebugHookInstalled";
   const CONTROL_SOURCE = "bossObserver.networkDebug.control";
   const REQUEST_SOURCE = "bossObserver.networkDebug.request";
-  const MAX_CAPTURE_CHARS = 200000;
+  const MAX_CAPTURE_CHARS = 1_000_000;
 
   if (window[HOOK_FLAG]) {
     return;
@@ -11,7 +11,7 @@
 
   const state = {
     enabled: false,
-    maxPreviewChars: 12000
+    maxPreviewChars: 1_000_000
   };
 
   let sequence = 0;

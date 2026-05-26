@@ -119,17 +119,7 @@ export class PageSessionProbe {
     }
   }
 
-  recordDwell(reason) {
-    const dwellMs = Date.now() - this.currentPageStartedAt;
-    if (dwellMs < this.config.minDwellMs) {
-      return;
-    }
-
-    this.collector.collect(EVENT_TYPES.PAGE_DWELL_RECORDED, {
-      dwellMs,
-      reason
-    });
-  }
+  recordDwell() {}
 
   safeRun(source, action) {
     try {

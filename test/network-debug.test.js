@@ -8,6 +8,8 @@ import {
   createEmptyNetworkDebugState,
   filterNetworkDebugRequests,
   isGeekDetailInfoUrl,
+  NETWORK_DEBUG_MAX_PREVIEW_CHARS,
+  NETWORK_DEBUG_MAX_STORED_CHARS,
   sanitizeNetworkDebugRequest,
   setNetworkDebugEnabled
 } from "../extension/src/shared/network-debug.js";
@@ -18,6 +20,8 @@ test("network debug state starts disabled and local-only", () => {
   assert.equal(state.enabled, false);
   assert.equal(state.requestCount, 0);
   assert.deepEqual(state.recentRequests, []);
+  assert.equal(state.maxPreviewChars, NETWORK_DEBUG_MAX_PREVIEW_CHARS);
+  assert.equal(state.maxStoredChars, NETWORK_DEBUG_MAX_STORED_CHARS);
 });
 
 test("network debug control toggles capture state", () => {
@@ -188,4 +192,33 @@ test("network debug appends recent requests without touching formal events", () 
   const cleared = clearNetworkDebugRequests(third);
   assert.equal(cleared.requestCount, 0);
   assert.deepEqual(cleared.recentRequests, []);
+});
+
+test("network debug keeps larger previews while bounding stored request history", () => {
+  const largePreview = "a".repeat(900_000);
+  const initial = {
+    ...createEmptyNetworkDebugState(),
+    maxRecentRequests: 80,
+    maxPreviewChars: 1_000_000,
+    maxStoredChars: 2_000_000
+  };
+  const first = appendNetworkDebugRequest(initial, {
+    id: "req_1",
+    url: "https://www.zhipin.com/wapi/zpjob/view/geek/info/v2?expectId=1",
+    responseBodyPreview: largePreview
+  });
+  const second = appendNetworkDebugRequest(first, {
+    id: "req_2",
+    url: "https://www.zhipin.com/wapi/zpjob/view/geek/info/v2?expectId=2",
+    responseBodyPreview: largePreview
+  });
+  const third = appendNetworkDebugRequest(second, {
+    id: "req_3",
+    url: "https://www.zhipin.com/wapi/zpjob/view/geek/info/v2?expectId=3",
+    responseBodyPreview: largePreview
+  });
+
+  assert.equal(first.recentRequests[0].responseBodyPreview.length, 900_000);
+  assert.deepEqual(third.recentRequests.map((request) => request.id), ["req_3", "req_2"]);
+  assert.equal(third.requestCount, 3);
 });

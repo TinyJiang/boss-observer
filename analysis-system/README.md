@@ -67,6 +67,7 @@ analysis-system/
 - 所有生产配置走环境变量或云端凭据管理。
 - 不提交 SecretId、SecretKey、数据库密码、JWT 密钥或完整连接串。
 - 所有外部输入先落原始事件表，再解析到事实表。
+- 设计或升级数据分析功能时，必须评估计算应落在 CLS 层还是本地代码层：高频、长周期、可用 SQL 稳定表达的预聚合优先放到 CLS 定时 SQL 或已批准的下游同步链路；本地代码只做权限过滤、跨主题组合、查询范围内 rollup、离线重放校验和探索性补充。
 - 所有事实表写入必须以 `event_id` 或链路事件 ID 幂等。
 - 默认不展示聊天正文、联系方式和完整简历正文。
 
@@ -163,8 +164,9 @@ python3 -m boss_analysis.dev_server \
 - `boss_minute_operator_funnel`
 - `boss_minute_chat`
 - `boss_10min_log_quality`
+- `boss_daily_operator_basic_stats` 的独立指标 topic 配置为 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID`；《历史数据》页面和 `/api/history` 只从该日级基础统计指标 topic 读取，不使用分钟汇总累加。若后续改为日志 topic，可显式设置 `CLS_DAILY_BASIC_SUMMARY_SOURCE=log`。
 
-`summary` 模式只使用分钟汇总结果生成活跃状态、单人漏斗和聊天指标，不查询原始 raw 日志。若汇总结果中 `operator_id` 是 `<missing>`，前端会把它计入“流水线异常”，用于提示源主题索引类型或 SQL 字段配置问题。
+`summary` 模式只使用分钟汇总结果生成活跃状态、单人漏斗、聊天指标和单人明细插件版本，不查询原始 raw 日志。若汇总结果中 `operator_id` 是 `<missing>`，前端会把它计入“流水线异常”，用于提示源主题索引类型或 SQL 字段配置问题。
 如果配置 `BOSS_ANALYSIS_LOG_QUALITY_DATA_FILE` 或 `CLS_LOG_QUALITY_TOPIC_ID`，前端数据质量区域会展示 10 分钟日志质量状态、插件版本维度和事件类型问题排行。`CLS_LOG_QUALITY_TOPIC_ID` 只用于本地开发读取定时 SQL 目标 topic；生产同步仍需走批准的非 SearchLog 链路。
 
 ## 本地操作员列表

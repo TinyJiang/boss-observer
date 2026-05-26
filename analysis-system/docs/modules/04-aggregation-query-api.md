@@ -41,7 +41,7 @@
 - 分钟时间桶
 - 操作员 `operator_id`
 - BOSS 账号匹配状态
-- 职位 `job_id`
+- 该分钟最后一次上报的插件版本 `plugin_version` 和职位 `job_id`、`job_name`，只作为展示上下文，不作为分钟拆分键
 - 页面类型 `page_type`
 - 候选人分析键
 - 事件类型 `event_type`
@@ -63,15 +63,16 @@
 
 | 任务 | 关键字段 | 本地用途 |
 | --- | --- | --- |
-| `boss_minute_operator_funnel` | `minute`、`operator_id`、`job_id`、`card_exposed`、`detail_opened`、`greeting_clicked`、`greeting_succeeded`、`greeting_failed`、`chat_opened`、`chat_snapshot_captured`、`wechat_captured`、`total_events` | 操作员单人漏斗、大盘最近活动、岗位初步拆分 |
-| `boss_minute_chat` | `minute`、`operator_id`、`job_id`、`chat_opened`、`snapshot_captured`、`report_required`、`capture_failed`、`wechat_captured`、`chat_events` | 聊天打开、聊天快照、待补采、失败、微信成功 |
+| `boss_minute_operator_funnel` | `minute`、`operator_id`、`plugin_version`、`job_id`、`job_name`、`card_exposed`、`detail_opened`、`greeting_clicked`、`greeting_succeeded`、`greeting_failed`、`chat_opened`、`chat_snapshot_captured`、`wechat_captured`、`total_events` | 操作员单人漏斗、大盘最近活动、该分钟最后插件版本和岗位展示 |
+| `boss_minute_chat` | `minute`、`operator_id`、`plugin_version`、`job_id`、`job_name`、`chat_opened`、`snapshot_captured`、`report_required`、`capture_failed`、`wechat_captured`、`chat_events` | 聊天打开、聊天快照、待补采、失败、微信成功、该分钟最后插件版本和岗位展示 |
 
 本地读取约定：
 
 - 开发环境通过 `CLS_SUMMARY_TOPIC_ID` 指向 `boss_summary_minute_prod`；也可用 `BOSS_ANALYSIS_SUMMARY_DATA_FILE` 读取离线汇总样本。
 - API 的单人漏斗和聊天指标优先使用分钟汇总；某个操作员没有汇总时，回退到当前 raw event/fact 结果。
 - 同时存在 `boss_minute_operator_funnel` 和 `boss_minute_chat` 时，漏斗使用前者，聊天明细使用后者，避免重复累计聊天字段。
-- 分钟任务使用重叠查询窗口时，目标 topic 会追加写入同一 `metric_name + minute + operator_id + job_id` 的多条快照；查询侧必须先按该稳定键取最新一条，再做单人漏斗和分钟趋势 rollup，避免 7 个打招呼显示成 14。
+- 同一操作员同一分钟如果跨插件版本或操作多个职位，CLS 分钟任务不按版本或职位拆行；计数字段覆盖整个分钟，`plugin_version/job_id/job_name` 使用该分钟最后一次上报的事件上下文。
+- 分钟任务使用重叠查询窗口时，目标 topic 会追加写入同一 `metric_name + minute + operator_id` 的多条快照；查询侧必须先按该稳定键取最新一条，再做单人漏斗和分钟趋势 rollup，避免 7 个打招呼显示成 14。
 - `operator_id = '<missing>'` 或空值必须保留为数据健康异常，不归并到真实操作员。
 - 源主题 `boss` 中 `operator_id` 应按 `text` 类型开启 SQL 分析；如果误建为 `long`，即使原始日志里有字符串值，定时 SQL 也会产出 missing。
 
@@ -87,6 +88,18 @@ API 应围绕事实和聚合提供最小稳定接口：
 - 分钟趋势、漏斗指标和历史报表查询，优先基于 CLS 汇总结果。
 - 解析错误和消费健康查询。
 - 报表导出任务创建与查询。
+
+### 历史日级对话分析
+
+《历史数据》页面读取 `boss_daily_operator_basic_stats` 日级基础统计，不从分钟汇总或 raw 日志临时拼接。日级记录新增以下对话分析字段：
+
+- 首轮候选人发起会话数、首轮 BOSS 回复会话数、首轮 BOSS 回复间隔中位数和平均值；首轮回复率由 `first_round_boss_replied_count / first_round_candidate_initiated_count` 计算。
+- 可解析聊天会话数、BOSS 结束会话数；BOSS 结束率由 `boss_ended_conversation_count / chat_conversation_count` 计算。
+- 全轮 BOSS 回复次数、全轮 BOSS 回复间隔中位数和平均值；全轮回复按“候选人连续发言轮次 -> 下一轮 BOSS 首条回复”计算。
+
+这些字段只使用聊天快照中的方向、时间、指纹和会话键，不返回聊天正文。因为聊天快照当前是 `visible_dom`，前端展示时应把缺失或 0 分母显示为暂无，而不是解释为 0%。
+
+2026-05-26 raw CLS 排障确认，当时历史 `candidate_chat.snapshot_captured` 的消息对象只有 `direction/fingerprint/messageAt/messageIndex`，且 `direction` 全部为 `unknown`；这批历史快照缺少可区分候选人和 BOSS 的结构字段，不能可靠回算本节三个方向相关指标。修复采集侧方向字段后，新写入快照才能进入该统计。
 
 API 不应暴露：
 

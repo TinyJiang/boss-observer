@@ -1,4 +1,5 @@
 import { readConfig } from "../shared/config.js";
+import { loadChatMessageCleanupRules } from "../shared/chat-message-cleanup.js";
 import { AccountIdentityProbe } from "./account-identity-probe.js";
 import { CandidateDetailProbe } from "./candidate-detail-probe.js";
 import { CandidateListProbe } from "./candidate-list-probe.js";
@@ -11,7 +12,10 @@ import { PageSessionProbe } from "./page-session-probe.js";
 import { SessionContext } from "./session-context.js";
 
 async function bootstrap() {
-  const config = await readConfig();
+  const [config, messageCleanupRules] = await Promise.all([
+    readConfig(),
+    loadChatMessageCleanupRules()
+  ]);
   if (!config.enabled) {
     return;
   }
@@ -24,7 +28,7 @@ async function bootstrap() {
   const filterProbe = new FilterProbe({ collector, sessionContext });
   const candidateDetailProbe = new CandidateDetailProbe({ collector, sessionContext });
   const candidateListProbe = new CandidateListProbe({ collector, sessionContext });
-  const chatRecordProbe = new ChatRecordProbe({ collector, sessionContext });
+  const chatRecordProbe = new ChatRecordProbe({ collector, sessionContext, messageCleanupRules });
   const greetingProbe = new GreetingProbe({ collector, sessionContext });
   accountIdentityProbe.start();
   pageSessionProbe.start();

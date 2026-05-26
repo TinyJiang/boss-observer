@@ -50,6 +50,66 @@ class FakeDailySummaryClsClient:
     }
 
 
+class FakeDailyBasicSummaryClsClient:
+  def call(self, action, payload, *, version, region):
+    if action == "QueryRangeMetric":
+      return {
+        "Response": {
+          "ResultType": "matrix",
+          "Result": json.dumps([
+            {
+              "metric": {
+                "__name__": "active_minutes",
+                "metric_name": "boss_daily_operator_basic_stats",
+                "active_date": "2026-05-17",
+                "operator_id": "op_real",
+              },
+              "values": [[1778976000, "18"]],
+            },
+            {
+              "metric": {
+                "__name__": "card_exposed",
+                "metric_name": "boss_daily_operator_basic_stats",
+                "active_date": "2026-05-17",
+                "operator_id": "op_real",
+              },
+              "values": [[1778976000, "42"]],
+            },
+            {
+              "metric": {
+                "__name__": "total_events",
+                "metric_name": "boss_daily_operator_basic_stats",
+                "active_date": "2026-05-17",
+                "operator_id": "op_real",
+              },
+              "values": [[1778976000, "100"]],
+            },
+          ]),
+        }
+      }
+    return {
+      "Response": {
+        "Results": [
+          {
+            "LogJson": json.dumps({
+              "metric_name": "boss_daily_operator_basic_stats",
+              "active_date": "2026-05-17",
+              "operator_id": "op_real",
+              "active_minutes": 18,
+              "card_exposed": 42,
+              "total_events": 100,
+            }),
+          }
+        ]
+      }
+    }
+
+
+class FailingDailyBasicSummaryClsClient:
+  def call(self, action, payload, *, version, region):
+    raise AssertionError("daily basic summary topic should not be queried")
+
+
 class FakeLogQualityClsClient:
   def call(self, action, payload, *, version, region):
     return {
@@ -276,6 +336,49 @@ class DevDataTests(unittest.TestCase):
     self.assertEqual(dataset.daily_summary_source.record_count, 1)
     self.assertEqual(dataset.daily_active_durations[0].operator_id, "op_real")
     self.assertEqual(dataset.daily_active_durations[0].active_minutes, 18)
+
+  def test_create_dev_dataset_loads_daily_basic_summary_source_when_configured(self):
+    env = {
+      "CLS_DAILY_BASIC_SUMMARY_TOPIC_ID": "topic-daily-basic",
+      "TENCENTCLOUD_SECRET_ID": "secret-id",
+      "TENCENTCLOUD_SECRET_KEY": "secret-key",
+    }
+    with patch.dict(os.environ, env, clear=True):
+      dataset = create_dev_dataset(
+        now=datetime(2026, 5, 17, 1, 15, tzinfo=timezone.utc),
+        data_source="summary",
+        use_demo_fallback=False,
+        cls_client=FailingClsClient(),
+        daily_basic_summary_cls_client=FakeDailyBasicSummaryClsClient(),
+      )
+
+    self.assertEqual(dataset.source.kind, "summary")
+    self.assertIsNone(dataset.summary_source)
+    self.assertEqual(dataset.daily_basic_summary_source.kind, "daily_basic_summary_topic")
+    self.assertEqual(dataset.daily_basic_summary_source.record_count, 1)
+    self.assertEqual(dataset.daily_basic_summaries[0].operator_id, "op_real")
+    self.assertEqual(dataset.daily_basic_summaries[0].card_exposed, 42)
+
+  def test_create_dev_dataset_can_skip_daily_basic_summary_topic_records(self):
+    env = {
+      "CLS_DAILY_BASIC_SUMMARY_TOPIC_ID": "topic-daily-basic",
+      "TENCENTCLOUD_SECRET_ID": "secret-id",
+      "TENCENTCLOUD_SECRET_KEY": "secret-key",
+    }
+    with patch.dict(os.environ, env, clear=True):
+      dataset = create_dev_dataset(
+        now=datetime(2026, 5, 17, 1, 15, tzinfo=timezone.utc),
+        data_source="summary",
+        use_demo_fallback=False,
+        cls_client=FailingClsClient(),
+        daily_basic_summary_cls_client=FailingDailyBasicSummaryClsClient(),
+        include_daily_basic_summaries=False,
+      )
+
+    self.assertEqual(dataset.source.kind, "summary")
+    self.assertEqual(dataset.daily_basic_summary_source.kind, "daily_basic_summary_topic")
+    self.assertEqual(dataset.daily_basic_summary_source.record_count, 0)
+    self.assertEqual(dataset.daily_basic_summaries, ())
 
   def test_create_dev_dataset_loads_log_quality_source_when_configured(self):
     env = {

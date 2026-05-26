@@ -23,7 +23,7 @@ test("production stats labels greeting as event counts", () => {
 test("production stats records module pending counts for produced events", () => {
   const event = {
     eventId: "evt_1",
-    type: EVENT_TYPES.CANDIDATE_LIST_VIEWED,
+    type: EVENT_TYPES.CANDIDATE_CARD_EXPOSED,
     occurredAt: "2026-05-16T10:00:00.000+08:00"
   };
 
@@ -31,7 +31,7 @@ test("production stats records module pending counts for produced events", () =>
 
   assert.equal(stats.modules.candidate_list.producedCount, 1);
   assert.equal(stats.modules.candidate_list.pendingCount, 1);
-  assert.equal(stats.modules.candidate_list.lastEventType, EVENT_TYPES.CANDIDATE_LIST_VIEWED);
+  assert.equal(stats.modules.candidate_list.lastEventType, EVENT_TYPES.CANDIDATE_CARD_EXPOSED);
   assert.equal(getModuleReportStatus(stats.modules.candidate_list), "pending");
 });
 

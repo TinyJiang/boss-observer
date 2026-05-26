@@ -38,6 +38,7 @@ export function buildClsContents(event) {
     page_title: stringifyClsValue(context.pageTitle),
     is_boss_page: stringifyClsValue(context.isBossPage),
     job_id: stringifyClsValue(jobContext.jobId),
+    job_name: stringifyClsValue(jobContext.jobName),
     job_status: stringifyClsValue(jobContext.jobStatus),
     operator_id: stringifyClsValue(operator.operatorId),
     operator_account_name: stringifyClsValue(operator.accountName),

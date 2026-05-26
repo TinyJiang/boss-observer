@@ -16,6 +16,7 @@ from boss_analysis.domain.metrics import (
   DashboardSummary,
   FunnelSummary,
   HealthSummary,
+  HistoryQueryResult,
   LogQualityEventSummary,
   LogQualityIssueCounter,
   LogQualityQueryResult,
@@ -34,6 +35,7 @@ from boss_analysis.domain.storage import (
   ReplayFilter,
 )
 from boss_analysis.domain.summary import DailyActiveDurationRecord
+from boss_analysis.domain.summary import DailyBasicStatsRecord
 from boss_analysis.domain.summary import LogQualitySummaryRecord
 from boss_analysis.domain.summary import MinuteSummaryRecord
 
@@ -47,12 +49,14 @@ __all__ = [
   "CandidateIdentityFact",
   "ChatSummary",
   "DailyActiveDurationRecord",
+  "DailyBasicStatsRecord",
   "DashboardSummary",
   "ErrorStage",
   "EventErrorRecord",
   "FactProjectionResult",
   "FunnelSummary",
   "HealthSummary",
+  "HistoryQueryResult",
   "IngestionResult",
   "LogQualitySummaryRecord",
   "LogQualityEventSummary",

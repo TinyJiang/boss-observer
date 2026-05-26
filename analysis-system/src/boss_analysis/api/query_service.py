@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from boss_analysis.domain import (
   ActiveOperatorSummary,
   ChatSummary,
   DailyActiveDurationRecord,
+  DailyBasicStatsRecord,
   DashboardSummary,
   FunnelSummary,
   HealthSummary,
+  HistoryQueryResult,
   LogQualityEventSummary,
   LogQualityIssueCounter,
   LogQualityQueryResult,
@@ -37,6 +41,7 @@ class AnalysisQueryService:
     raw_repository: RawEventRepository | None = None,
     minute_summaries: tuple[MinuteSummaryRecord, ...] | list[MinuteSummaryRecord] | None = None,
     daily_active_durations: tuple[DailyActiveDurationRecord, ...] | list[DailyActiveDurationRecord] | None = None,
+    daily_basic_summaries: tuple[DailyBasicStatsRecord, ...] | list[DailyBasicStatsRecord] | None = None,
     log_quality_summaries: tuple[LogQualitySummaryRecord, ...] | list[LogQualitySummaryRecord] | None = None,
     operator_profiles: tuple[OperatorProfile, ...] | list[OperatorProfile] | None = None,
     clock=None,
@@ -45,6 +50,7 @@ class AnalysisQueryService:
     self._raw_repository = raw_repository
     self._minute_summaries = tuple(minute_summaries or ())
     self._daily_active_durations = tuple(daily_active_durations or ())
+    self._daily_basic_summaries = tuple(daily_basic_summaries or ())
     self._log_quality_summaries = tuple(log_quality_summaries or ())
     self._operator_profiles = tuple(operator_profiles or ())
     self._profiles_by_id = {profile.operator_id: profile for profile in self._operator_profiles}
@@ -52,22 +58,23 @@ class AnalysisQueryService:
 
   def dashboard(self, *, active_within_minutes: int = 15) -> DashboardSummary:
     now = self._clock()
-    latest_by_operator: dict[str, tuple[datetime, str, str | None]] = {}
+    latest_by_operator: dict[str, tuple[datetime, str, str | None, str | None]] = {}
     observed_operators: set[str] = set()
     daily_durations = self._latest_daily_active_durations()
 
-    for occurred_at, operator_id, action, job_id in self._iter_operator_activity():
+    for occurred_at, operator_id, action, job_id, job_name in self._iter_operator_activity():
       if operator_id is None:
         continue
       observed_operators.add(operator_id)
       if occurred_at is None:
         continue
+      candidate = (occurred_at, action, job_id, job_name)
       existing = latest_by_operator.get(operator_id)
-      if existing is None or occurred_at > existing[0]:
-        latest_by_operator[operator_id] = (occurred_at, action, job_id)
+      if existing is None or _activity_record_is_newer(candidate, existing):
+        latest_by_operator[operator_id] = candidate
 
     active: list[ActiveOperatorSummary] = []
-    for operator_id, (last_active_at, action, job_id) in latest_by_operator.items():
+    for operator_id, (last_active_at, action, job_id, job_name) in latest_by_operator.items():
       minutes_since = max(0, int((now - last_active_at).total_seconds() // 60))
       if minutes_since <= active_within_minutes:
         profile = self._profiles_by_id.get(operator_id)
@@ -77,6 +84,7 @@ class AnalysisQueryService:
           minutes_since_active=minutes_since,
           last_action=action,
           job_id=job_id,
+          job_name=job_name,
           display_name=profile.display_name if profile is not None else None,
           account_name=profile.account_name if profile is not None else None,
         ))
@@ -96,6 +104,7 @@ class AnalysisQueryService:
 
   def operator_analytics(self, operator_id: str) -> OperatorAnalytics:
     daily_duration = self._daily_active_duration_for_operator(operator_id)
+    plugin_version, plugin_version_observed_at = self._latest_plugin_version_for_operator(operator_id)
     summary_records = [
       record for record in self._minute_summaries
       if record.operator_id == operator_id
@@ -111,7 +120,13 @@ class AnalysisQueryService:
         if _local_minute_bucket(record.minute).date() == target_date
       ]
     if summary_records:
-      return _operator_analytics_from_summaries(operator_id, summary_records, daily_duration=daily_duration)
+      return _operator_analytics_from_summaries(
+        operator_id,
+        summary_records,
+        daily_duration=daily_duration,
+        plugin_version=plugin_version,
+        plugin_version_observed_at=plugin_version_observed_at,
+      )
 
     exposures = [
       fact for fact in self._fact_store.candidate_exposures()
@@ -159,6 +174,8 @@ class AnalysisQueryService:
       chat=chat,
       job_ids=tuple(job_ids),
       daily_active_duration=daily_duration,
+      plugin_version=plugin_version,
+      plugin_version_observed_at=plugin_version_observed_at,
     )
 
   def health(self) -> HealthSummary:
@@ -227,28 +244,52 @@ class AnalysisQueryService:
       event_summaries=values["log_quality_event_summaries"],
     )
 
+  def history(
+    self,
+    *,
+    operator_id: str | None = None,
+    active_date: str | date | None = None,
+  ) -> HistoryQueryResult:
+    normalized_operator_id = _clean_filter_value(operator_id)
+    normalized_active_date = _parse_filter_date(active_date)
+    records = _filter_daily_basic_records(
+      _latest_daily_basic_records(self._daily_basic_summaries),
+      operator_id=normalized_operator_id,
+      active_date=normalized_active_date,
+    )
+    return HistoryQueryResult(
+      status=_history_status(records),
+      operator_id=normalized_operator_id,
+      active_date=normalized_active_date,
+      source_record_count=len(self._daily_basic_summaries),
+      record_count=len(records),
+      latest_active_date=max((record.active_date for record in records), default=None),
+      latest_recorded_at=max((record.recorded_at for record in records if record.recorded_at is not None), default=None),
+      records=records,
+    )
+
   def _iter_operator_activity(self):
     for record in self._latest_daily_active_durations():
       if record.last_active_minute is not None and record.active_minutes > 0:
-        yield record.last_active_minute, record.operator_id, record.metric_name, None
-    for record in self._minute_summaries:
+        yield record.last_active_minute, record.operator_id, record.metric_name, None, None
+    for record in _dedupe_minute_summary_records(self._minute_summaries):
       if record.operator_id is not None and record.event_count > 0:
-        yield record.minute, record.operator_id, record.metric_name, record.job_id
+        yield record.minute, record.operator_id, record.metric_name, record.job_id, record.job_name
     if self._raw_repository is not None:
       for record in self._raw_repository.replay_raw_events():
         if record.operator_id is not None:
-          yield record.occurred_at, record.operator_id, record.event_type or "unknown_event", record.job_id
+          yield record.occurred_at, record.operator_id, record.event_type or "unknown_event", record.job_id, _job_name_from_raw_record(record)
     for fact in self._fact_store.candidate_exposures():
-      yield fact.occurred_at, fact.operator_id, "candidate_list.card_exposed", fact.job_id
+      yield fact.occurred_at, fact.operator_id, "candidate_list.card_exposed", fact.job_id, None
     for fact in self._fact_store.detail_sessions():
       if fact.opened_at is not None:
-        yield fact.opened_at, fact.operator_id, "candidate_detail.opened", fact.job_id
+        yield fact.opened_at, fact.operator_id, "candidate_detail.opened", fact.job_id, None
       if fact.closed_at is not None:
-        yield fact.closed_at, fact.operator_id, "candidate_detail.closed", fact.job_id
+        yield fact.closed_at, fact.operator_id, "candidate_detail.closed", fact.job_id, None
     for fact in self._fact_store.greetings():
-      yield fact.occurred_at, fact.operator_id, f"candidate_greeting.{fact.status}", fact.job_id
+      yield fact.occurred_at, fact.operator_id, f"candidate_greeting.{fact.status}", fact.job_id, None
     for fact in self._fact_store.chats():
-      yield fact.occurred_at, fact.operator_id, f"candidate_chat.{fact.kind}", fact.job_id
+      yield fact.occurred_at, fact.operator_id, f"candidate_chat.{fact.kind}", fact.job_id, None
 
   def _summary_missing_operator_count(self) -> int:
     return sum(
@@ -283,6 +324,59 @@ class AnalysisQueryService:
       return _latest_daily_records(self._daily_active_durations)
     return _derive_latest_daily_records_from_minutes(self._minute_summaries)
 
+  def _latest_plugin_version_for_operator(self, operator_id: str) -> tuple[str | None, datetime | None]:
+    summary_version = self._latest_plugin_version_from_minute_summaries(operator_id)
+    if summary_version[0] is not None:
+      return summary_version
+
+    candidates: list[tuple[datetime, int, int, str]] = []
+    if self._raw_repository is not None:
+      for record in self._raw_repository.replay_raw_events():
+        if record.operator_id != operator_id:
+          continue
+        plugin_version = _clean_observed_plugin_version(record.plugin_version)
+        if plugin_version is None:
+          continue
+        observed_at = record.occurred_at or record.received_at or record.created_at
+        if observed_at is not None:
+          candidates.append((observed_at, 2, 1, plugin_version))
+
+    for record in self._log_quality_summaries:
+      if record.operator_id != operator_id and record.raw_operator_id != operator_id:
+        continue
+      plugin_version = _clean_observed_plugin_version(record.plugin_version)
+      if plugin_version is None:
+        continue
+      observed_at = record.window_start or record.recorded_at
+      if observed_at is not None:
+        candidates.append((observed_at, 1, _checked_event_count(record), plugin_version))
+
+    if not candidates:
+      return None, None
+    observed_at, _source_rank, _event_count, plugin_version = max(
+      candidates,
+      key=lambda item: (item[0], item[1], item[2], item[3]),
+    )
+    return plugin_version, observed_at
+
+  def _latest_plugin_version_from_minute_summaries(self, operator_id: str) -> tuple[str | None, datetime | None]:
+    candidates: list[tuple[datetime, datetime, int, str]] = []
+    for record in self._minute_summaries:
+      if record.operator_id != operator_id:
+        continue
+      plugin_version = _clean_observed_plugin_version(record.plugin_version)
+      if plugin_version is None:
+        continue
+      recorded_at = record.recorded_at or record.minute
+      candidates.append((record.minute, recorded_at, record.event_count, plugin_version))
+    if not candidates:
+      return None, None
+    minute, _recorded_at, _event_count, plugin_version = max(
+      candidates,
+      key=lambda item: (item[0], item[1], item[2], item[3]),
+    )
+    return plugin_version, minute
+
 
 def _all_job_ids(*groups):
   for group in groups:
@@ -292,6 +386,92 @@ def _all_job_ids(*groups):
 
 def _utc_now() -> datetime:
   return datetime.now(timezone.utc)
+
+
+def _activity_record_is_newer(
+  candidate: tuple[datetime, str, str | None, str | None],
+  existing: tuple[datetime, str, str | None, str | None],
+) -> bool:
+  candidate_at, candidate_action, candidate_job_id, candidate_job_name = candidate
+  existing_at, existing_action, existing_job_id, existing_job_name = existing
+  if candidate_at != existing_at:
+    return candidate_at > existing_at
+  if _is_daily_active_duration_action(existing_action) and not _is_daily_active_duration_action(candidate_action):
+    return True
+  if existing_job_name is None and candidate_job_name is not None:
+    return True
+  if existing_job_id is None and candidate_job_id is not None:
+    return True
+  return False
+
+
+def _is_daily_active_duration_action(action: str) -> bool:
+  return action == "boss_daily_operator_active_duration"
+
+
+def _job_name_from_raw_record(record) -> str | None:
+  raw = record.raw_cls_json if isinstance(record.raw_cls_json, dict) else {}
+  direct = _first_clean_string(
+    raw.get("job_name"),
+    raw.get("jobName"),
+    raw.get("job_title"),
+    raw.get("jobTitle"),
+    raw.get("position_name"),
+    raw.get("positionName"),
+  )
+  if direct is not None:
+    return direct
+
+  context = _coerce_json_object(record.context_json)
+  job_context = context.get("jobContext") if isinstance(context.get("jobContext"), dict) else {}
+  from_context = _first_clean_string(
+    job_context.get("jobName"),
+    job_context.get("job_name"),
+    job_context.get("jobTitle"),
+    job_context.get("job_title"),
+    job_context.get("positionName"),
+    job_context.get("position_name"),
+    job_context.get("name"),
+    job_context.get("displayName"),
+  )
+  if from_context is not None:
+    return from_context
+
+  payload = _coerce_json_object(record.payload_json)
+  return _first_clean_string(
+    payload.get("jobName"),
+    payload.get("job_name"),
+    payload.get("jobTitle"),
+    payload.get("job_title"),
+    payload.get("positionName"),
+    payload.get("position_name"),
+  )
+
+
+def _coerce_json_object(value: Any) -> dict[str, Any]:
+  if isinstance(value, dict):
+    return value
+  if isinstance(value, str):
+    try:
+      parsed = json.loads(value)
+    except json.JSONDecodeError:
+      return {}
+    if isinstance(parsed, dict):
+      return parsed
+  return {}
+
+
+def _first_clean_string(*values: Any) -> str | None:
+  for value in values:
+    if value is None:
+      continue
+    if isinstance(value, str):
+      stripped = value.strip()
+      if stripped:
+        return stripped
+      continue
+    return str(value)
+  return None
 
 
 LOG_QUALITY_ISSUE_COUNTERS: tuple[tuple[str, str], ...] = (
@@ -421,6 +601,90 @@ def _filter_log_quality_records(
   )
 
 
+def _filter_daily_basic_records(
+  records: tuple[DailyBasicStatsRecord, ...],
+  *,
+  operator_id: str | None,
+  active_date: date | None,
+) -> tuple[DailyBasicStatsRecord, ...]:
+  filtered = [
+    record for record in records
+    if (operator_id is None or record.operator_id == operator_id)
+    and (active_date is None or record.active_date == active_date)
+  ]
+  return tuple(sorted(
+    filtered,
+    key=lambda record: (
+      record.active_date,
+      record.has_values,
+      record.active_minutes,
+      record.total_events,
+      record.operator_id,
+    ),
+    reverse=True,
+  ))
+
+
+def _history_status(records: tuple[DailyBasicStatsRecord, ...]) -> str:
+  if not records:
+    return "empty"
+  valued_count = sum(1 for record in records if record.has_values)
+  if valued_count == 0:
+    return "missing_values"
+  if valued_count < len(records):
+    return "partial"
+  return "ok"
+
+
+def _latest_daily_basic_records(
+  records: tuple[DailyBasicStatsRecord, ...],
+) -> tuple[DailyBasicStatsRecord, ...]:
+  by_key: dict[tuple[date, str], DailyBasicStatsRecord] = {}
+  for record in records:
+    key = (record.active_date, record.operator_id)
+    existing = by_key.get(key)
+    if existing is None or _daily_basic_record_is_newer(record, existing):
+      by_key[key] = record
+  return tuple(by_key.values())
+
+
+def _daily_basic_record_is_newer(
+  candidate: DailyBasicStatsRecord,
+  existing: DailyBasicStatsRecord,
+) -> bool:
+  if candidate.has_values != existing.has_values:
+    return candidate.has_values
+  if candidate.recorded_at is not None and existing.recorded_at is not None:
+    if candidate.recorded_at != existing.recorded_at:
+      return candidate.recorded_at > existing.recorded_at
+  if candidate.recorded_at is not None:
+    return True
+  if existing.recorded_at is not None:
+    return False
+  return _daily_basic_signal(candidate) >= _daily_basic_signal(existing)
+
+
+def _daily_basic_signal(record: DailyBasicStatsRecord) -> tuple[int, int, int]:
+  return (
+    record.active_minutes,
+    record.total_events,
+    sum([
+      record.card_exposed,
+      record.detail_opened,
+      record.greeting_clicked,
+      record.greeting_succeeded,
+      record.chat_opened,
+      record.snapshot_captured,
+      record.wechat_captured,
+      record.first_round_candidate_initiated_count,
+      record.first_round_boss_replied_count,
+      record.chat_conversation_count,
+      record.boss_ended_conversation_count,
+      record.boss_reply_count,
+    ]),
+  )
+
+
 def _log_quality_version_summaries(
   records: tuple[LogQualitySummaryRecord, ...],
 ) -> tuple[LogQualityVersionSummary, ...]:
@@ -547,6 +811,29 @@ def _clean_filter_value(value: str | None) -> str | None:
   return stripped
 
 
+def _clean_observed_plugin_version(value: str | None) -> str | None:
+  cleaned = _clean_filter_value(value)
+  if cleaned is None or cleaned.lower() in {"<missing>", "missing", "__missing__", "null", "none"}:
+    return None
+  return cleaned
+
+
+def _parse_filter_date(value: str | date | None) -> date | None:
+  if value is None:
+    return None
+  if isinstance(value, datetime):
+    return value.date()
+  if isinstance(value, date):
+    return value
+  stripped = value.strip()
+  if not stripped or stripped in {"*", "all", "__all__"}:
+    return None
+  try:
+    return date.fromisoformat(stripped[:10])
+  except ValueError:
+    return None
+
+
 def _status_rank(status: str) -> int:
   return {
     "critical": 0,
@@ -561,6 +848,8 @@ def _operator_analytics_from_summaries(
   records: list[MinuteSummaryRecord],
   *,
   daily_duration: DailyActiveDurationRecord | None = None,
+  plugin_version: str | None = None,
+  plugin_version_observed_at: datetime | None = None,
 ) -> OperatorAnalytics:
   records = list(_dedupe_minute_summary_records(records))
   funnel_records = [
@@ -604,6 +893,8 @@ def _operator_analytics_from_summaries(
     job_ids=tuple(job_ids),
     minute_points=_minute_points_from_summaries(records),
     daily_active_duration=daily_duration,
+    plugin_version=plugin_version,
+    plugin_version_observed_at=plugin_version_observed_at,
   )
 
 
@@ -612,14 +903,13 @@ def _dedupe_minute_summary_records(
 ) -> tuple[MinuteSummaryRecord, ...]:
   """Collapse repeated append-only CLS summary snapshots for the same minute bucket."""
 
-  by_key: dict[tuple[str, datetime, str | None, str | None, str | None], MinuteSummaryRecord] = {}
+  by_key: dict[tuple[str, datetime, str | None, str | None], MinuteSummaryRecord] = {}
   for record in records:
     key = (
       record.metric_name,
       record.minute,
       record.operator_id,
       record.raw_operator_id,
-      record.job_id,
     )
     existing = by_key.get(key)
     if existing is None or _minute_summary_record_is_newer(record, existing):
@@ -631,7 +921,6 @@ def _dedupe_minute_summary_records(
       record.metric_name,
       record.operator_id or "",
       record.raw_operator_id or "",
-      record.job_id or "",
     ),
   ))
 
@@ -641,12 +930,25 @@ def _minute_summary_record_is_newer(
   existing: MinuteSummaryRecord,
 ) -> bool:
   if candidate.recorded_at is not None and existing.recorded_at is not None:
-    return candidate.recorded_at > existing.recorded_at
+    if candidate.recorded_at != existing.recorded_at:
+      return candidate.recorded_at > existing.recorded_at
+    return _minute_summary_context_rank(candidate) >= _minute_summary_context_rank(existing)
   if candidate.recorded_at is not None:
     return True
   if existing.recorded_at is not None:
     return False
-  return _minute_summary_signal(candidate) > _minute_summary_signal(existing)
+  candidate_signal = _minute_summary_signal(candidate)
+  existing_signal = _minute_summary_signal(existing)
+  if candidate_signal != existing_signal:
+    return candidate_signal > existing_signal
+  return _minute_summary_context_rank(candidate) >= _minute_summary_context_rank(existing)
+
+
+def _minute_summary_context_rank(record: MinuteSummaryRecord) -> tuple[int, int]:
+  return (
+    1 if record.job_name is not None else 0,
+    1 if record.job_id is not None else 0,
+  )
 
 
 def _minute_summary_signal(record: MinuteSummaryRecord) -> tuple[int, int]:

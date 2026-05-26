@@ -2702,3 +2702,1323 @@
 - 发现原因：采集侧 `greeting-probe` 会把“已打招呼”等包含“打招呼”的状态文本识别为新的打招呼动作，导致用户点到已发送状态时仍产生新的 clicked/succeeded 事实事件。该缺陷已转到父项目插件修复。
 - 风险/阻塞：2026-05-20 已写入 CLS 的历史脏事件缺少 actionText 字段，无法可靠回溯区分真实点击和“已打招呼”状态误记；修复插件后只能保证后续不再新增这类误记，历史当天数据若要校正需要另行人工指定剔除规则或重算来源。
 - 中断续写入口：后续检查父项目 `extension/src/content/greeting-probe.js` 和 `test/greeting-probe.test.js` 的状态文本排除规则；如需历史修正，先不要写自动规则，需用户确认可接受的剔除口径。
+
+### 任务：排查小图图 operator_id 前台无数据
+
+- 时间：2026-05-23 13:03
+- 执行者：AI
+- 状态：排查中
+- 目标：排查用户反馈“小图图”这个 `operator_id` 在 CLS 中有数据，但分析系统前台拉不到的原因。
+- 当前理解：分析系统本地前台默认从分钟汇总 topic 读取当天全量数据，且操作员展示依赖本地 `config/operators.local.json` 与汇总里的 `operator_id` 精确匹配；需要确认问题发生在操作员配置、summary 读取窗口、任务名/字段解析、API 过滤或前端展示层。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 视排查结果可能修改 `src/boss_analysis/consumer/summary_reader.py`
+  - 视排查结果可能修改 `src/boss_analysis/api/query_service.py`
+  - 视排查结果可能修改前端相关文件
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改 CLS SQL、云端资源或生产配置
+  - 不读取或依赖插件 debug 页、Chrome storage、DOM 规则
+- 验证计划：阅读相关设计与代码；查看本地配置和 API 行为；如有真实 CLS 配置，仅以本地开发/排障目的只读检查 summary 数据；根据定位结果运行相关单元测试和前端 build。
+- 当前状态：已读取最新工作日志、README 和边界说明，准备继续阅读 overview、相关模块文档和 summary/API 代码。
+
+#### 完成记录：定位并修复中文 operator_id URL 解码问题
+
+- 时间：2026-05-23 13:18
+- 状态：已完成，待用户确认是否允许重启真实数据 dev server
+- 已完成：确认 `config/operators.local.json` 已配置 `operatorId: "小图图"`，summary/API 层按字符串精确匹配没有特殊排除中文；根因是 React 前端请求 `/api/operator/${encodeURIComponent(operatorId)}` 后，本地后端直接使用 URL path 末段，未对 `%E5%B0%8F%E5%9B%BE%E5%9B%BE` 做 `unquote`，导致查询服务收到编码字符串而不是 `小图图`，所以单人详情匹配不到 CLS 汇总数据。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/dev_server.py`
+  - `tests/test_dev_server.py`
+- 验证结果：`PYTHONPATH=src python3 -m unittest tests.test_dev_server tests.test_query_service tests.test_summary_reader` 通过，40 tests；`PYTHONPATH=src python3 -m unittest discover -s tests` 通过，108 tests；`npm --prefix frontend run build` 通过；`git diff --check -- src/boss_analysis/dev_server.py tests/test_dev_server.py docs/ai-worklog.md` 通过。
+- 风险/阻塞：尝试重启本地真实数据 dev server 时，沙箱内因网络/端口权限失败；再次以提权方式启动被审批器拒绝，因为会只读访问已配置的真实 CLS 汇总 topic，当前用户尚未明确授权本轮真实云资源访问。需要用户明确允许后，再运行 `./dev.sh` 重启并用真实数据验证 `/api/operator/%E5%B0%8F%E5%9B%BE%E5%9B%BE`。
+- 中断续写入口：获得用户明确授权后，从 `analysis-system/` 运行 `./dev.sh`，再访问 `http://127.0.0.1:5173/` 或后端 `/api/operator/%E5%B0%8F%E5%9B%BE%E5%9B%BE` 验证前台详情数据。
+
+### 任务：排查活跃列表职位全是未关联职位
+
+- 时间：2026-05-23 14:09
+- 执行者：AI
+- 状态：排查中
+- 目标：排查用户反馈当前前台活跃操作员的职位全部显示“未关联职位”的原因。
+- 当前理解：前端“未关联职位”来自 dashboard API 的 `active_operators[].job_id` 为空；需要确认是 CLS 分钟汇总没有 `job_id`、summary reader 解析丢失、dashboard 最后活跃动作选择逻辑覆盖了岗位，还是前端展示层误用字段。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 视排查结果可能修改 `src/boss_analysis/api/query_service.py`
+  - 视排查结果可能补充 `tests/test_query_service.py`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改 CLS SQL、云端资源或生产配置
+  - 不读取或依赖插件 debug 页、Chrome storage、DOM 规则
+- 验证计划：用本地构造 summary 复现 dashboard `job_id` 为空；若定位为代码问题，补单测并运行相关 Python 测试和前端 build。
+- 当前状态：已查看最新工作日志、当前 diff 和 `job_id` 展示/查询链路，准备复现 dashboard 选择逻辑。
+
+#### 完成记录：修复日级活跃覆盖分钟岗位的问题
+
+- 时间：2026-05-23 14:18
+- 状态：已完成
+- 已完成：用本地最小样本复现 dashboard 活跃列表显示“未关联职位”：同一操作员同时有 `boss_daily_operator_active_duration` 和最新分钟汇总时，日级记录先进入 `latest_by_operator`，且 `last_active_minute` 与分钟汇总相同；旧逻辑只在候选记录时间更大时替换，所以带 `job_id` 的分钟汇总无法覆盖无岗位维度的日级记录。已调整 dashboard 活动选择逻辑：时间相同时，优先使用非日级活跃记录，并用带 `job_id` 的记录补齐岗位；日级活跃时长仍保留用于时长展示和没有分钟数据时的活跃兜底。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_query_service.py`
+- 验证结果：本地复现脚本修复前输出 `boss_daily_operator_active_duration None`，修复后输出 `boss_minute_operator_funnel job_from_minute`；`PYTHONPATH=src python3 -m unittest tests.test_query_service tests.test_summary_reader tests.test_dev_server` 通过，41 tests；`PYTHONPATH=src python3 -m unittest discover -s tests` 通过，109 tests；`npm --prefix frontend run build` 通过；`git diff --check -- docs/ai-worklog.md src/boss_analysis/api/query_service.py src/boss_analysis/dev_server.py tests/test_query_service.py tests/test_dev_server.py` 通过。
+- 风险/阻塞：本轮未重启真实数据 dev server，也未访问真实 CLS；如果线上 summary 本身的 `job_id` 字段全部是 `<missing>`，前台仍会显示“未关联职位”，那就需要在获得用户明确授权后只读检查 `boss_summary_minute_prod` 中 `job_id` 分布和原始事实 topic 索引/字段。
+- 中断续写入口：如用户授权真实云只读验证，重启 `./dev.sh` 后检查 `/api/dashboard` 的 `active_operators[].job_id`；若仍为空，读取分钟汇总中 `metric_name + operator_id + minute + job_id` 分布确认是否源数据缺岗位。
+
+### 任务：给职位 ID 增加名称关联展示
+
+- 时间：2026-05-23 14:48
+- 执行者：AI
+- 状态：实现中
+- 目标：回应用户希望当前前台职位不要只显示 ID，而是能关联显示职位名称。
+- 当前理解：日志契约当前只采集 `jobId/jobStatus`，明确不包含职位名称或职位描述正文；分析系统不能从现有 summary 自动还原名称。可行方案是在分析系统本地维护 `job_id -> display_name` 展示配置，API 返回 `job_name`，前端优先显示名称并保留 ID 作为次级信息。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/domain/metrics.py`
+  - 新增或修改岗位配置读取模块
+  - `src/boss_analysis/api/query_service.py`
+  - `src/boss_analysis/dev_server.py`
+  - `frontend/src/types.ts`
+  - `frontend/src/App.tsx`
+  - `tests/` 中相关测试
+  - 可能新增 `config/jobs.example.json`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改日志契约、插件采集、CLS SQL 或真实云资源
+- 不把职位名称写成事实字段或分析结论
+- 验证计划：补充配置解析和 dashboard job name 单测；运行相关 Python 测试、全量单元测试、前端 build 和 diff check。
+- 当前状态：已确认日志契约无职位名称字段，准备实现本地岗位展示配置。
+
+#### 完成记录：本地岗位名称映射已接入前台
+
+- 时间：2026-05-23 15:01
+- 状态：已完成
+- 已完成：新增 `JobProfile` 和 `JobConfigProvider`，支持读取 `config/jobs.local.json` 或 `BOSS_ANALYSIS_JOB_CONFIG_FILE` 中的 `jobId -> displayName` 展示映射；dev server 构建 query service 时注入岗位配置；dashboard API 的活跃操作员行新增 `job_name`；React 前端活跃列表优先显示职位名称，没有映射时继续显示原始 `job_id`；补充 `config/jobs.example.json` 和 README 使用说明；`dev.sh` 已传入默认岗位配置路径。
+- 改动文件：
+  - `.gitignore`
+  - `README.md`
+  - `dev.sh`
+  - `docs/ai-worklog.md`
+  - `config/jobs.example.json`
+  - `frontend/src/App.tsx`
+  - `frontend/src/types.ts`
+  - `src/boss_analysis/domain/jobs.py`
+  - `src/boss_analysis/job_config.py`
+  - `src/boss_analysis/domain/__init__.py`
+  - `src/boss_analysis/domain/metrics.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `src/boss_analysis/dev_server.py`
+  - `tests/test_job_config.py`
+  - `tests/test_query_service.py`
+- 验证结果：`PYTHONPATH=src python3 -m unittest tests.test_job_config tests.test_query_service tests.test_dev_server` 通过，34 tests；`PYTHONPATH=src python3 -m unittest discover -s tests` 通过，113 tests；`npm --prefix frontend run build` 通过；`git diff --check -- .` 通过。
+- 风险/阻塞：现有日志和分钟汇总不包含职位名称，必须人工或后续后台能力维护映射；未配置映射的 `job_id` 会继续显示 ID，避免错误猜测。若希望自动采集职位名称，需要先改日志契约和插件采集范围，再更新 CLS SQL/分析系统。
+- 中断续写入口：把真实岗位映射写入 git ignore 的 `config/jobs.local.json` 后刷新页面；如果页面仍显示 ID，检查 `/api/dashboard` 的对应 `active_operators[].job_name` 是否为空。
+
+### 任务：撤回本地岗位映射并改用线上上报字段
+
+- 时间：2026-05-23 14:53
+- 执行者：AI
+- 状态：实现中
+- 目标：按用户要求撤回本地维护岗位名称的方案，改为只使用线上日志或汇总中上报的岗位名称字段。
+- 当前理解：日志契约当前明确只有 `jobId/jobStatus`，没有职位名称；但如果线上实际已经上报 `job_name`、`jobName`、`jobTitle` 等字段，分析系统应直接透传展示。不能用本地 `job_id -> displayName` 映射，也不能猜测职位名。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 撤回 `.gitignore`、`README.md`、`dev.sh` 中本地岗位配置改动
+  - 删除 `config/jobs.example.json`、`src/boss_analysis/domain/jobs.py`、`src/boss_analysis/job_config.py`、`tests/test_job_config.py`
+  - 修改 `src/boss_analysis/domain/summary.py`
+  - 修改 `src/boss_analysis/consumer/summary_reader.py`
+  - 修改 `src/boss_analysis/api/query_service.py`
+  - 修改相关测试和前端类型/展示
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改日志契约、插件采集、CLS SQL 或真实云资源
+- 不新增任何本地岗位名称映射配置
+- 验证计划：补充 summary/raw 线上字段透传测试；运行相关 Python 测试、全量测试、前端 build 和 diff check。
+- 当前状态：准备撤回本地配置实现并改成线上字段透传。
+
+#### 完成记录：已改为只透传线上岗位名称字段
+
+- 时间：2026-05-23 15:07
+- 状态：已完成
+- 已完成：撤回本地岗位映射方案，删除本地岗位配置相关文件和脚本/文档改动；`MinuteSummaryRecord` 支持 `job_name`；summary reader 会解析线上汇总中的 `job_name/jobName/job_title/jobTitle/position_name/positionName`；dashboard 最近活动会携带线上 `job_name`，并在同一时间优先保留带 `job_name` 的记录；raw 事件路径会从根字段、`context_json.jobContext` 或 `payload_json` 中提取同类岗位名称字段；前端继续优先显示 `job_name`，否则回退 `job_id`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `frontend/src/App.tsx`
+  - `frontend/src/types.ts`
+  - `src/boss_analysis/api/query_service.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/dev_server.py`
+  - `src/boss_analysis/domain/metrics.py`
+  - `src/boss_analysis/domain/summary.py`
+  - `tests/test_query_service.py`
+  - `tests/test_summary_reader.py`
+- 验证结果：`PYTHONPATH=src python3 -m unittest tests.test_query_service tests.test_summary_reader tests.test_dev_server` 通过，43 tests；`PYTHONPATH=src python3 -m unittest discover -s tests` 通过，111 tests；`npm --prefix frontend run build` 通过；`git diff --check -- .` 通过。
+- 风险/阻塞：本轮未访问真实 CLS。按当前日志契约，正式字段只有 `job_id/job_status`，没有职位名称；如果线上 summary/raw 没有额外上报上述名称字段，前端仍只能显示 ID。要完全“直接用线上上报数据”显示名称，需要上游插件和 CLS 定时 SQL 把岗位名称字段写入 raw/summary。
+- 中断续写入口：若用户授权真实云只读验证，检查 `boss_summary_minute_prod` 或 raw topic 中是否存在 `job_name/jobName/jobTitle/positionName`；如果不存在，下一步应改插件日志契约和 CLS 汇总 SQL，而不是分析侧本地维护。
+
+### 任务：分钟汇总 SQL 模板透传职位名称
+
+- 时间：2026-05-23 16:15
+- 执行者：AI
+- 状态：实现中
+- 目标：配合上游插件新增 `job_name` raw 扁平字段，更新 CLS 定时 SQL 文档模板，让 `boss_minute_operator_funnel` 和 `boss_minute_chat` 输出职位名称，避免前台只能显示 `job_id`。
+- 当前理解：分析系统代码已经兼容 summary/raw 中的 `job_name` 等字段；本次只修改分析系统内的 SQL/汇总契约文档，不改 Python/前端代码，不访问真实 CLS，不维护本地 `job_id -> 职位名称` 映射。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/boundary.md`
+  - `docs/modules/04-aggregation-query-api.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改分析系统运行代码或测试代码
+  - 不修改真实 CLS SQL 任务或云端资源
+  - 不新增本地岗位名称映射
+- 验证计划：仅做文档模板修改；运行 `git diff --check -- docs/ai-worklog.md docs/boundary.md docs/modules/04-aggregation-query-api.md docs/modules/07-cls-scheduled-sql-tasks.md`。
+- 当前状态：已按子项目规范读取最新工作日志、README、boundary、overview、汇总 API 文档、定时 SQL 文档和根日志契约，准备更新 SQL 文档模板。
+
+#### 完成记录：SQL 模板已增加 job_name
+
+- 时间：2026-05-23 16:15
+- 状态：已完成
+- 时间补正：本条最初误写为 `2026-05-23 16:22`，与本机实际时间不符；已按 `date` 输出校正。
+- 已完成：在分析系统边界文档中把 `job_name` 加入 CLS raw 扁平字段；更新汇总 API 文档，明确 `boss_minute_operator_funnel` 和 `boss_minute_chat` 的关键字段包含 `job_name`，重复快照折叠键包含 `job_name`；更新 CLS 定时 SQL 文档模板，raw 与 summary 索引建议增加 `job_name`，两个分钟任务均从 raw `job_name` 或 `context_json.jobContext.jobName` 取职位名，输出 `job_name` 并按 `minute + operator_id + job_id + job_name` 分组。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/boundary.md`
+  - `docs/modules/04-aggregation-query-api.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 验证结果：`git diff --check -- analysis-system/docs/ai-worklog.md analysis-system/docs/boundary.md analysis-system/docs/modules/04-aggregation-query-api.md analysis-system/docs/modules/07-cls-scheduled-sql-tasks.md` 通过。
+- 风险/阻塞：本次只更新文档模板，未访问或修改真实 CLS 定时 SQL 任务；线上需要按模板更新云端任务后，`boss_summary_minute_prod` 才会实际产生 `job_name`。
+- 中断续写入口：如果继续上线云端 SQL，需要由用户明确授权真实 CLS 控制台/云资源操作；否则只把本文档中的两个 SQL 模板复制到 CLS 定时任务配置中。
+
+### 任务：分钟汇总同分钟多职位取最后职位名
+
+- 时间：2026-05-23 17:18
+- 执行者：AI
+- 状态：实现中
+- 目标：按用户确认的口径调整分钟级职位名称聚合：同一操作员同一分钟如果操作了多个 `jobName`，分钟汇总只保留最后一次上报的职位名称。
+- 当前理解：当前 SQL 文档模板把 `job_name` 加入 `group by minute, operator_id, job_id, job_name`，这会在同一分钟多职位名时产出多条岗位维度行；用户现在希望分钟级只取最后一个 `jobName`，因此应调整 CLS 定时 SQL 模板和查询侧去重键，必要时在本地查询兼容多条 summary 快照时选择最后职位名。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/04-aggregation-query-api.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_query_service.py`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 定时任务或云资源
+  - 不新增本地岗位名称映射
+  - 不读取插件 debug 页、Chrome storage 或 BOSS DOM
+- 验证计划：补充同一分钟多 `jobName` 的本地单测；运行相关 Python 测试、全量测试、前端 build 和 diff check。
+- 当前状态：已查看最新工作日志、当前 diff、README、边界/总览、聚合 API 文档、CLS SQL 模板和根日志契约，准备修改 SQL 模板与查询折叠口径。
+
+#### 阶段记录：已调整分钟职位口径
+
+- 时间：2026-05-23 17:21
+- 状态：待验证
+- 已完成：更新聚合 API 文档和 CLS 定时 SQL 模板，明确分钟汇总不按 `job_id/job_name` 拆行，同一 `operator_id + minute` 内多个职位时用 `max_by(job_id/job_name, event_at)` 取 `__TIMESTAMP__` 最大的事件上下文；更新查询侧分钟 summary 折叠键为 `metric_name + minute + operator_id + raw_operator_id`，dashboard 读取折叠后的分钟记录，避免重复快照或多职位行影响前台职位展示；新增同一分钟多职位快照时取最新职位上下文的单测。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/04-aggregation-query-api.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_query_service.py`
+- 当前验证结果：尚未运行。
+- 中断续写入口：运行 `PYTHONPATH=src python3 -m unittest tests.test_query_service tests.test_summary_reader tests.test_dev_server`，再运行全量测试、前端 build 和 `git diff --check -- .`。
+
+#### 完成记录：分钟多职位取最后职位名已完成
+
+- 时间：2026-05-23 17:22
+- 状态：已完成
+- 已完成：按新口径更新分钟汇总链路。CLS SQL 模板不再按 `job_id/job_name` 分组，而是在 `minute + operator_id` 粒度汇总整分钟计数，并用 `max_by(job_id, event_at)`、`max_by(job_name, event_at)` 取该分钟最后一次上报的职位上下文；SQL 输入同时兼容 raw 扁平 `job_name` 和插件 camelCase `jobName`，目标汇总统一输出 `job_name`；查询侧按 `metric_name + minute + operator_id + raw_operator_id` 折叠追加型 summary 快照，dashboard 读取折叠后的分钟记录；新增同一分钟多职位快照取最新岗位的回归测试。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/boundary.md`
+  - `docs/modules/04-aggregation-query-api.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_query_service.py`
+- 验证结果：`PYTHONPATH=src python3 -m unittest tests.test_query_service tests.test_summary_reader tests.test_dev_server` 通过，44 tests；`PYTHONPATH=src python3 -m unittest discover -s tests` 通过，112 tests；`npm --prefix frontend run build` 通过；`git diff --check -- .` 通过。
+- 风险/阻塞：本次仍只修改本地分析系统代码和 SQL 文档模板，未修改真实 CLS 定时 SQL 任务；线上 `boss_summary_minute_prod` 需要按新模板更新后，前台才会稳定拿到分钟内最后职位名。
+- 中断续写入口：若要上线，复制 `docs/modules/07-cls-scheduled-sql-tasks.md` 中 `boss_minute_operator_funnel` 和 `boss_minute_chat` 的最新 SQL 到 CLS 定时任务；如需我直接操作云端，需用户明确授权真实 CLS 资源修改。
+
+#### 阶段记录：补充 SQL 发送前字段引用校正
+
+- 时间：2026-05-23 17:26
+- 状态：已完成
+- 已完成：用户要求输出具体 SQL 前，复核插件上报字段为 camelCase `jobName`；为避免 SQL 引擎把大小写字段名规整成小写，将 SQL 模板中的兼容字段引用从 `jobName` 改为 `"jobName"`，目标汇总字段仍统一输出 `job_name`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 当前验证结果：`git diff --check -- .` 通过。
+- 中断续写入口：直接把最新 SQL 复制给用户或更新到 CLS 定时 SQL；若 CLS 控制台不接受双引号字段名，再改回控制台实际支持的字段引用形式。
+
+### 任务：排查最新数据前台仍未显示 jobName
+
+- 时间：2026-05-23 17:37
+- 执行者：AI
+- 状态：排查中
+- 目标：排查用户反馈最新数据已经上来后，前台界面仍没有显示 `jobName` 的原因，确认是否取错字段。
+- 当前理解：前台展示读取 dashboard API 的 `active_operators[].job_name`；分析系统代码已兼容 summary 中的 `job_name/jobName`，但上一版能成功执行的 CLS SQL 只从 `context_json.jobContext.jobName` 取值。如果插件实际把职位名称上报到 raw 顶层 `jobName`，且源 topic 尚未为 `jobName` 建可分析索引，那么分钟汇总可能仍输出空 `job_name`，前台自然不会显示名称。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 视排查结果可能修改 `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - 视排查结果可能补充 `tests/test_summary_reader.py` 或 `tests/test_query_service.py`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不读取或修改真实 CLS，除非用户明确授权本轮真实云只读排查
+  - 不新增本地岗位名称映射
+- 验证计划：先静态检查前端字段、API 序列化、summary reader 和 SQL 模板；如需要确认最新真实数据字段分布，再请求用户明确授权只读访问 CLS 或由用户贴一条 summary/raw 样本。
+- 当前状态：已查看最新工作日志、当前 diff 和本机时间，准备检查相关代码路径。
+
+#### 阶段记录：静态链路确认前台读取 job_name
+
+- 时间：2026-05-23 17:42
+- 状态：需要真实数据验证
+- 已完成：静态检查前端 `OperatorRow`、内联 dev server 页面、dashboard API 序列化、query service 和 summary reader，确认前台展示读取的是 API 的 `active_operators[].job_name`，后端会从 summary 的 `job_name/jobName` 解析并透传；因此界面没有显示名称不太像前端字段名错误，更可能是 `boss_summary_minute_prod` 中对应行的 `job_name` 为空，或日级活跃记录覆盖了尚未加载到的分钟岗位上下文。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 当前验证结果：尝试只读请求本地 `/api/dashboard` 被审批器拒绝，因为该 dev server 以 summary 模式运行，请求会触发真实 CLS 读取，而本轮用户尚未明确授权真实云资源访问；已按更安全方式停止，不绕行。
+- 发现/判断：用户之前执行 SQL 报 `Column 'jobName' cannot be resolved`，说明源 topic 顶层 `jobName` 当前不是可 SQL 引用字段。已把文档模板回退为只从 `context_json.jobContext.jobName` 提取，避免给出会编译失败的 SQL；如果最新插件只把职位名放在顶层 `jobName`，而没有写进 `context_json.jobContext.jobName` 或没有为顶层 `jobName` 建索引，那么分钟汇总仍会输出空 `job_name`。
+- 中断续写入口：需要用户明确授权本轮只读 CLS 排查后，请求 `/api/dashboard` 或读取 summary 样本，检查 `active_operators[].job_name`、summary 行的 `job_name`、raw 行的 `context_json.jobContext.jobName` 和顶层 `jobName` 分布。
+
+### 任务：查看昨日 daily 级别统计数据
+
+- 时间：2026-05-24 14:47
+- 执行者：AI
+- 状态：排查中
+- 目标：按用户要求查看昨日（Asia/Shanghai 自然日 2026-05-23）的 daily 级别统计数据，并汇总可读结果。
+- 当前理解：本轮是只读数据核对；优先读取已配置的日级 summary/指标输出，必要时用开发排障方式读取 CLS 定时 SQL 目标 topic，不修改真实 CLS 任务、云资源或生产链路。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 定时 SQL 任务或云资源
+  - 不读取插件 debug 页、Chrome storage 或 BOSS DOM
+  - 不把 CLS SearchLog 接入生产链路
+- 验证计划：检查本地配置与 reader 能力；只读读取昨日 daily summary 数据，若没有日级数据则说明缺口并酌情检查分钟 summary 兜底可用性。
+- 当前状态：已查看最新工作日志、`git status --short` 和 README，准备读取日级 summary 配置并执行只读查询。
+
+#### 完成记录：昨日 daily 数据只读核对
+
+- 时间：2026-05-24 14:49
+- 状态：已完成
+- 已完成：用本地 `.env.local` 中已配置的日级 summary 入口只读查询最近 48 小时，并筛选 `active_date=2026-05-23`；配置的日级 topic 返回 0 行。随后只读读取分钟汇总 topic 最近 48 小时，按 Asia/Shanghai 自然日筛选 2026-05-23，并在本地按 `operator_id + minute` 去重 rollup 出昨日 daily 近似口径。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：日级 topic：`raw_rows_returned=0`、`yesterday_rows_returned=0`；分钟汇总兜底：原始返回 301 行，昨日过滤 127 行，去重后 104 行，其中 `boss_minute_operator_funnel=93`、`boss_minute_chat=11`，操作员 2 个，合计活跃 93 分钟、卡片曝光 1112、详情打开 208、打招呼点击 39、打招呼成功 25、聊天打开 30、聊天快照 42、微信获取 0。
+- 风险/阻塞：本次展示的是分钟汇总 rollup 的 daily 口径，不是新建 raw CLS 日级任务的直接输出；配置的日级 topic 当前没有可读快照，需确认真实日级任务是否已写入该 topic，或 `.env.local` 的 `CLS_DAILY_SUMMARY_TOPIC_ID` 是否指向了正确目标。
+- 中断续写入口：如需继续排查日级任务，先确认 CLS 控制台中新 daily 任务的目标 topic/指标主题，再读取对应 topic 的 `metric_name`、`active_date`、`operator_id` 字段样本。
+
+### 任务：核对 5 个 CLS topic 与本地配置数量
+
+- 时间：2026-05-24 14:55
+- 执行者：AI
+- 状态：已完成
+- 目标：回应用户指出“现在已有 5 个日志 topic，但配置里好像只有 3 个”的疑问，核对当前 `.env*`、文档和代码支持的 topic 配置边界。
+- 当前理解：用户新增了日级 raw 基础统计相关 topic 后，真实 CLS topic 数量可能已从原先的原始 + 分钟 + 日级活跃 + 健康，增加为 5 个；当前 analysis-system 只显式读取分钟汇总、日级活跃和日志质量 3 类目标 topic，原始 topic 仅作为 Kafka/生产摄取规划项，新增日级基础统计 topic 尚无专门 reader。
+- 已完成：静态查看 `.env.example`、`.env.local` 的 topic 配置键，以及 `docs/modules/07-cls-scheduled-sql-tasks.md` 的 topic 清单；确认当前本地读配置包括 `CLS_SUMMARY_TOPIC_ID`、`CLS_DAILY_SUMMARY_TOPIC_ID`、`CLS_LOG_QUALITY_TOPIC_ID`，另有 `CLS_KAFKA_TOPIC` 作为原始 topic 规划配置但本地 `.env.local` 未填；没有 `boss_daily_operator_basic_stats` 单独 topic 的配置键。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：未访问真实 CLS；仅做本地配置和文档静态核对。
+- 中断续写入口：如果用户希望第五个 topic 被页面/API 使用，需要先决定是把 `boss_daily_operator_basic_stats` 写入既有 `boss_summary_daily_prod`，还是新增独立配置如 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 并实现 reader/domain/API 展示。
+
+### 任务：新增第五个 CLS topic 配置
+
+- 时间：2026-05-24 14:58
+- 执行者：AI
+- 状态：已完成
+- 目标：按用户要求在分析系统配置中新增第五个 CLS topic 配置，用于已配置好的日级基础统计 topic。
+- 当前理解：第五个 topic 对应 raw CLS 日级基础统计任务 `boss_daily_operator_basic_stats` 的独立目标 topic；本轮先补环境变量模板和配置 loader，不改真实 CLS 云资源，不读取或写入生产数据。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `.env.example`
+  - `.env.local`
+  - `README.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/consumer/cls_search.py`
+  - `src/boss_analysis/consumer/__init__.py`
+  - `tests/test_cls_search.py`
+  - `tests/test_summary_reader.py`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不访问或修改真实 CLS 任务
+  - 不把新 topic 接入生产 SearchLog 链路
+  - 不实现业务展示口径扩展，除非配置 loader 需要
+- 验证计划：运行相关配置 loader 测试；执行 `git diff --check` 覆盖本轮文件。
+- 当前状态：已查看最新工作日志、当前 dirty worktree、`.env.example` 和现有 CLS config loader，准备小步补配置。
+
+#### 完成记录：第五个 topic 配置已补齐
+
+- 时间：2026-05-24 15:02
+- 状态：已完成
+- 已完成：新增 `CLS_DAILY_BASIC_SUMMARY_*` 配置组，用于独立的 `boss_daily_operator_basic_stats` 日级基础统计 topic；`.env.example` 已补模板，`.env.local` 已补本地配置块；新增 `load_cls_daily_basic_summary_search_config()` 并从 `boss_analysis.consumer` 导出；README 和 CLS 定时 SQL 任务清单已补第五个 topic 的说明。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `.env.example`
+  - `.env.local`
+  - `README.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/consumer/cls_search.py`
+  - `src/boss_analysis/consumer/__init__.py`
+  - `tests/test_cls_search.py`
+  - `tests/test_summary_reader.py`
+- 当前验证结果：`PYTHONPATH=src python3 -m unittest tests.test_cls_search tests.test_summary_reader` 通过，23 tests；`git diff --check -- .env.example README.md docs/modules/07-cls-scheduled-sql-tasks.md src/boss_analysis/consumer/cls_search.py src/boss_analysis/consumer/__init__.py tests/test_cls_search.py tests/test_summary_reader.py docs/ai-worklog.md` 通过。
+- 风险/阻塞：本轮只补配置和 loader，页面/API 还不会展示 `boss_daily_operator_basic_stats` 指标；后续需要新增 parser/domain/API 映射后才能消费该 topic 的业务字段。
+- 中断续写入口：下一步如果要读取第五个 topic 数据，先实现 `boss_daily_operator_basic_stats` 的记录模型与 parser，再在 dev dataset 和 query service 中接入。
+
+### 任务：验证昨日第五个 daily 基础统计 topic 数据
+
+- 时间：2026-05-24 15:05
+- 执行者：AI
+- 状态：已完成
+- 目标：按用户要求验证昨日（Asia/Shanghai 自然日 2026-05-23）的日级统计数据，优先读取新配置的第五个 `boss_daily_operator_basic_stats` topic。
+- 当前理解：第五个 topic 已在 `.env.local` 配置；本轮只做只读排障查询，不修改真实 CLS 任务或云资源，不把 SearchLog 接入生产链路。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 定时 SQL 任务或云资源
+  - 不读取插件 debug 页、Chrome storage 或 BOSS DOM
+  - 不实现页面/API 消费逻辑
+- 验证计划：用 `CLS_DAILY_BASIC_SUMMARY_*` 配置只读查询最近 48 小时，筛选 `active_date=2026-05-23`，按 `metric_name + active_date + operator_id` 取最新快照并汇总关键指标；如无数据，回报 topic/任务写入缺口。
+- 当前状态：已查看最新工作日志、`git status --short` 和第五个 topic 本地配置，准备执行只读查询。
+
+#### 完成记录：第五个 topic 无昨日可检索数据，分钟汇总兜底可用
+
+- 时间：2026-05-24 15:09
+- 状态：已完成
+- 已完成：使用 `CLS_DAILY_BASIC_SUMMARY_*` 第五个 topic 配置只读查询最近 48 小时并筛选 `active_date=2026-05-23`，返回 0 行；再扩大到最近 7 天查询，仍返回 0 行。随后读取分钟汇总 topic 最近 48 小时，按 Asia/Shanghai 自然日筛选 2026-05-23 并本地去重 rollup，验证昨日统计仍可由分钟汇总兜底得到。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：第五个 topic：最近 48 小时 `raw_rows_returned=0`、昨日 `target_date_rows_returned=0`；最近 7 天 `raw_rows_returned=0`。分钟汇总兜底：原始返回 290 行，昨日过滤 127 行，去重后 104 行，其中 `boss_minute_operator_funnel=93`、`boss_minute_chat=11`，操作员 2 个，合计活跃 93 分钟、卡片曝光 1112、详情打开 208、打招呼点击 39、打招呼成功 25、聊天打开 30、聊天快照 42、微信获取 0。
+- 风险/阻塞：第五个 topic 的 SearchLog 请求没有报 topic 不存在或权限错误，但没有任何可检索日志；需要在 CLS 控制台确认 `boss_daily_operator_basic_stats` 任务的目标 topic 是否为 `.env.local` 中的第五个 topic、目标 topic 是否开启索引、任务是否已成功写入日志。
+- 中断续写入口：如果要继续排查云端任务，先在 CLS 控制台查看 `boss_daily_operator_basic_stats` 最近实例的输入/输出行数和目标主题；若目标 topic 不一致，更新 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 后重试只读查询。
+
+### 任务：排查日级基础统计任务产出 3 条但本地读 0 条
+
+- 时间：2026-05-24 15:12
+- 执行者：AI
+- 状态：已完成
+- 目标：按用户反馈，排查 `boss_daily_operator_basic_stats` 生产任务昨日已产出 3 条但本地第五个 topic 读取为 0 的原因，并查看这 3 条日级产物内容。
+- 当前理解：日级统计是严谨回溯口径，不允许用分钟汇总 fallback；本轮只排查日级任务产物和 topic/索引/时间窗口/配置差异，不再用分钟汇总结果替代。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic 或索引配置
+  - 不读取插件 debug 页、Chrome storage 或 BOSS DOM
+  - 不用分钟汇总兜底回答日级统计
+- 验证计划：只读调用 CLS API 列出可见 topic，确认本地第五个配置指向的 topic 名称；对可疑日级 topic 直接 SearchLog 宽窗口查询，输出聚合产物的字段和值；若 SearchLog 仍为 0，则定位为 topic 配置、目标类型、索引或写入时间差异。
+- 当前状态：已查看最新工作日志、`git status --short` 和第五个 topic 配置，准备执行只读 CLS API 排查。
+
+#### 完成记录：按指标 topic 查到 3 条日级基础统计
+
+- 时间：2026-05-24 15:20
+- 状态：已完成
+- 已完成：确认第五个 topic 是指标 topic，不应使用 `SearchLog`；改用 CLS 指标接口 `GetMetricLabelValues` 和 `QueryRangeMetric` 查询。指标 topic 中存在 `active_minutes`、`total_events`、`card_exposed` 等 metric，`operator_id` 标签有 `shenlingnuo`、`zhouxinyu`、`小图图`。按所有日级基础统计 metric 拼出 3 条记录。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：3 条记录的 `active_date` 均为 `2026-05-22`，不是 `2026-05-23`；三条分别为 `shenlingnuo`、`zhouxinyu`、`小图图`。关键值：`shenlingnuo active_minutes=3 total_events=21 card_exposed=4 chat_opened=5 snapshot_captured=6`；`zhouxinyu active_minutes=100 total_events=1656 card_exposed=844 detail_opened=256 greeting_clicked=58 greeting_succeeded=42 chat_opened=19 snapshot_captured=26`；`小图图 active_minutes=56 total_events=1611 card_exposed=1053 detail_opened=146 greeting_clicked=35 greeting_succeeded=22 greeting_failed=1 chat_opened=8 snapshot_captured=7`。
+- 风险/阻塞：用户期望“昨天”即 2026-05-23 的日级统计，但指标 topic 当前查到的 3 条 active_date 是 2026-05-22，说明定时 SQL 的时间窗口、输出时间戳或 active_date 计算可能偏到前一天；需要继续检查云端任务调度窗口和 SQL 中 active_date 的生成逻辑。
+- 中断续写入口：下一步查看或让用户贴 `boss_daily_operator_basic_stats` 当前 SQL 与调度窗口，重点核对是否使用 `@d-1d,@d`、`@d,@m-1m`、`current_date` 或从 `__TIMESTAMP__`/`occurred_at` 取日期。
+
+### 任务：验证新建任务产出的 2026-05-23 日级基础统计
+
+- 时间：2026-05-24 15:31
+- 执行者：AI
+- 状态：已完成
+- 目标：按用户说明“建完了”，只读查看第五个指标 topic 中 `active_date=2026-05-23` 的日级基础统计产物。
+- 当前理解：用户已新建对齐目标日期的 CLS 定时 SQL 任务；本轮只读读取指标 topic，不修改任务、topic 或索引，不使用分钟汇总 fallback。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic 或索引配置
+  - 不读取插件 debug 页、Chrome storage 或 BOSS DOM
+  - 不用分钟汇总兜底回答日级统计
+- 验证计划：使用 `QueryRangeMetric` 查询第五个指标 topic 的日级基础统计 metrics，按 `active_date=2026-05-23` 和 `operator_id` 拼出记录内容；若没有记录则报告指标 topic 中可见的 `active_date` 标签。
+- 当前状态：准备按指标 topic 读取。
+
+#### 完成记录：2026-05-23 series 已出现但暂无可查询数值样本
+
+- 时间：2026-05-24 15:40
+- 状态：已完成
+- 已完成：只读查询第五个 CLS 指标 topic。`GetMetricLabelValues` 能看到 `active_date=2026-05-23`，`operator_id` 只看到 `zhouxinyu` 和 `小图图`；`GetMetricSeries` 能列出 `active_minutes{active_date="2026-05-23"}` 对应的两个 series，标签包含首末活跃时间：`zhouxinyu 2026-05-23 13:59~17:30`、`小图图 2026-05-23 11:02~18:18`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：对 `active_minutes`、`total_events`、`card_exposed` 等 metric 使用 `QueryRangeMetric` 查询 `active_date="2026-05-23"`，返回 0 个数值 series；对 2026-05-23 00:00 到 2026-05-25 00:00 按小时 `QueryMetric` 扫描，也没有非空瞬时值。宽窗口 `QueryRangeMetric active_minutes` 仍只返回 `active_date=2026-05-22` 的 3 个有值 series。
+- 风险/阻塞：新任务已经在指标 topic 中创建了 2026-05-23 的 series 元数据，但指标数值样本暂不可查；这不同于“没有 topic/没有 label”。需要在 CLS 控制台查看新任务最近实例的“写目标主题成功行数/失败行数”和指标转换状态，确认是否只是指标写入延迟，还是输出到指标 topic 时数值字段没有成功落成样本。
+- 中断续写入口：如继续排查，优先查看 CLS 定时 SQL 调度详情中 2026-05-24 00 点后的实例：输入行数、输出行数、写目标成功/失败行数；同时在指标 topic 查询界面直接查 `active_minutes{active_date="2026-05-23"}` 验证控制台是否也无数值。
+
+### 任务：新增历史数据页面并接入日级指标库
+
+- 时间：2026-05-24 15:47
+- 执行者：AI
+- 状态：进行中
+- 目标：为分析系统前台新增《历史数据》页面，支持按人查看和按日期查看历史数据；数据源必须来自 `CLS_DAILY_BASIC_SUMMARY_*` 指标库，不允许从分钟级汇总累加。
+- 当前理解：需要新增后端指标 topic reader 和 API，再新增前端页面/筛选控件。历史数据只展示 `boss_daily_operator_basic_stats` 指标库中的日级基础统计；如果指标值暂不可查，应明确显示缺数据/写入异常，不回退到分钟汇总。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/consumer/cls_search.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/domain/summary.py`
+  - `src/boss_analysis/domain/metrics.py`
+  - `src/boss_analysis/dev_data.py`
+  - `src/boss_analysis/dev_server.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `frontend/src/types.ts`
+  - `frontend/src/App.tsx`
+  - 相关测试文件
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic 或索引配置
+  - 不使用分钟汇总作为历史数据 fallback
+  - 不展示聊天正文、联系方式或完整简历正文
+- 验证计划：补充 reader/API 单测；运行相关 Python 测试、全量测试、前端 build 和 `git diff --check`。
+- 当前状态：已明确数据源边界，准备阅读现有前后端 API 和页面结构。
+
+#### 接手记录：继续实现历史数据页面
+
+- 时间：2026-05-24 16:02
+- 状态：进行中
+- 已完成：按续写要求查看最新工作日志、`git status --short` 和历史数据相关文件 diff；确认当前已有改动包含前一轮配置/指标 topic loader 以及若干 `job_name` 展示修正，历史数据页面和 API 尚未接入。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：尚未运行验证。
+- 下一步：阅读 `summary_reader`、`dev_data`、`query_service`、`dev_server`、前端 `App`/API/types 的现有模式，新增只读指标 topic reader、后端 `/api/history` 和前端《历史数据》标签页；严格禁止从分钟级汇总累加历史数据。
+
+#### 完成记录：历史数据页面接入日级基础指标库
+
+- 时间：2026-05-24 16:29
+- 状态：已完成
+- 已完成：新增 `DailyBasicStatsRecord`、CLS 指标 topic 读取 helper、日级基础指标 parser 和 metric series 重组逻辑；新增 dev dataset 的 `daily_basic_summaries` 与 `daily_basic_summary_source`；新增查询服务 `history()` 和 dev server `/api/history`。真实 metric topic 模式下，`/api/history` 会按筛选的 `active_date/operator_id` 即时读取 `CLS_DAILY_BASIC_SUMMARY_*` 指标库，避免只依赖启动时的默认窗口；前端新增《历史数据》导航页，可按日期和人筛选，并展示日期、操作员、账号、活跃分钟、曝光/详情、招呼、聊天、微信、总事件和数值状态。本页明确标注“来源：CLS 日级基础指标库；本页不使用分钟汇总累加”，且对 `GetMetricSeries` 有 metadata 但 `QueryRangeMetric` 无数值样本的记录显示 `指标值暂不可查`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `README.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/domain/summary.py`
+  - `src/boss_analysis/domain/metrics.py`
+  - `src/boss_analysis/domain/__init__.py`
+  - `src/boss_analysis/consumer/cls_search.py`
+  - `src/boss_analysis/consumer/__init__.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/dev_data.py`
+  - `src/boss_analysis/dev_server.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `frontend/src/types.ts`
+  - `frontend/src/api.ts`
+  - `frontend/src/App.tsx`
+  - `frontend/src/styles.css`
+  - `tests/test_summary_reader.py`
+  - `tests/test_query_service.py`
+  - `tests/test_dev_server.py`
+- 当前验证结果：
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest tests.test_summary_reader tests.test_query_service tests.test_dev_server` 通过，49 tests。
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，118 tests。
+  - `npm --prefix frontend run build` 通过。
+  - `git diff --check -- ...` 通过。
+  - 本地新版后端已在 `http://127.0.0.1:8766` 启动，前端已在 `http://127.0.0.1:5174` 启动并代理到 8766；`GET /api/history?active_date=2026-05-23` 返回稳定空结构（demo 数据无日级基础指标）。
+- 风险/后续：本地 demo 模式没有真实日级基础指标；若要直接看 2026-05-23 真实指标，需要用 `BOSS_ANALYSIS_DATA_SOURCE=summary` 并确保 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 和腾讯云凭据可用。历史页没有分钟汇总 fallback；真实 topic 若继续只有 series metadata 而无数值样本，页面会显示 `指标值暂不可查`，用于提示继续排查 CLS 指标写入。
+
+### 任务：确认 2026-05-23 日级基础指标数值暂不可查原因
+
+- 时间：2026-05-24 16:36
+- 执行者：AI
+- 状态：进行中
+- 目标：按用户反馈“原始数字里面应该是有的”，只读确认第五个 CLS 指标 topic 中 2026-05-23 的日级基础统计数值为什么前台显示暂不可查。
+- 当前理解：前台已经能读到 `active_date=2026-05-23` 的 2 条 series metadata，但 `QueryRangeMetric` 未返回数值样本；需要区分是查询表达式/时间范围问题，还是 CLS 指标 topic 实际只落了 label、未落数值样本。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不使用分钟级汇总 fallback
+  - 不修改 `analysis-system/` 之外文件
+- 验证计划：使用 `CLS_DAILY_BASIC_SUMMARY_*` 配置只读调用 `GetMetricSeries`、`QueryRangeMetric`，对 `active_minutes`、`card_exposed`、`total_events` 做不同时间范围和表达式查询；必要时查询 label 维度，确认数值是否存在、时间戳是否落在查询窗口内、表达式是否需要调整。
+- 当前状态：准备执行只读 CLS 指标 API 排查。
+
+#### 完成记录：确认是查询窗口错过指标样本时间戳
+
+- 时间：2026-05-24 16:41
+- 状态：已完成
+- 已完成：只读查询第五个 CLS 指标 topic。确认 `active_date=2026-05-23` 的 `active_minutes`、`card_exposed`、`total_events` 等数值样本实际存在；样本时间戳落在 `2026-05-22T16:00:00+00:00` 到 `2026-05-22T16:05:00+00:00`，即 Asia/Shanghai 的 `2026-05-23 00:00` 附近。此前页面显示“指标值暂不可查”的原因是 dev dataset 启动加载按默认 `today` 窗口读取（2026-05-24 当天窗口），`GetMetricSeries` 还能列到 2026-05-23 的 series metadata，但 `QueryRangeMetric` 的窗口没有覆盖 2026-05-23 00:00 的数值 sample。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/dev_server.py`
+  - `src/boss_analysis/consumer/cls_search.py`
+- 当前验证结果：更新后的 `iter_daily_basic_summaries_from_metric_topic(active_date="2026-05-23")` 返回 2 条有值记录：`zhouxinyu/谢女士 active_minutes=21 card_exposed=211 detail_opened=13 total_events=295`；`小图图/伍先生 active_minutes=66 card_exposed=1077 detail_opened=214 total_events=1714`。本机现有 `http://127.0.0.1:8765/api/history?active_date=2026-05-23` 已返回 `status=ok` 和上述完整数值。`PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，118 tests。
+- 后续：已改 `/api/history`，在真实 metric topic source 下会按筛选的 `active_date/operator_id` 即时查对应日期窗口，不再只依赖启动时默认窗口。现有运行中的 8765/5173 服务如果仍是旧进程，需要重启后前台才会显示数值。
+
+### 任务：调整历史数据查询交互和操作员详情子页面
+
+- 时间：2026-05-24 17:30
+- 执行者：AI
+- 状态：进行中
+- 目标：按用户要求为历史数据页增加显式“查询”按钮和 loading 状态；操作员增加查询详情子页面，展示该操作员每天的详细日级基础统计；同时在开发规范中补充任何 loading 都必须有明确状态。
+- 当前理解：历史数据页当前会随筛选条件变化自动查询，需要改为用户点击查询后触发；查询中按钮和页面区域都要有可见 loading 状态。操作员详情子页面应继续只读 `CLS_DAILY_BASIC_SUMMARY_*` 指标库，不使用分钟汇总。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `AGENTS.md`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/dev_server.py`
+  - `frontend/src/App.tsx`
+  - `frontend/src/api.ts`
+  - `frontend/src/styles.css`
+  - `frontend/src/types.ts`
+  - 相关测试文件
+- 不修改范围：
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不修改 `analysis-system/` 之外文件
+  - 不从分钟级汇总累加历史数据
+- 验证计划：补充或调整后端 reader/API 单测；运行相关 Python 测试、全量 Python 测试、前端 build 和 `git diff --check`。
+- 当前状态：准备阅读当前历史页实现并修改交互。
+
+#### 完成记录：历史页改为手动查询并增加操作员详情
+
+- 时间：2026-05-24 18:01
+- 状态：已完成
+- 已完成：历史数据页增加显式“查询”按钮，筛选条件变化后不再立即请求；按钮、筛选区和结果区域都有 `loading/ready/error` 状态提示。操作员行新增“查询详情”按钮，进入操作员历史详情子页面，按操作员查询最近 31 天的日级基础指标并展示每天详细数据。后端指标 reader 支持 `lookback_days`，`/api/history?operator_id=...&days=31` 会从 `CLS_DAILY_BASIC_SUMMARY_*` 指标库读取多日记录。`AGENTS.md` 已补充前端任何 loading 都必须由明确状态字段驱动并在界面显示。
+- 改动文件：
+  - `AGENTS.md`
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/dev_server.py`
+  - `frontend/src/App.tsx`
+  - `frontend/src/api.ts`
+  - `frontend/src/styles.css`
+  - `tests/test_summary_reader.py`
+- 当前验证结果：
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest tests.test_summary_reader tests.test_dev_server tests.test_query_service` 通过，50 tests。
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，119 tests。
+  - `npm --prefix frontend run build` 通过。
+  - `git diff --check -- ...` 通过。
+  - 本地服务已恢复：前端 `http://127.0.0.1:5173`，后端 `http://127.0.0.1:8765`；`/api/history?operator_id=zhouxinyu&days=31` 通过前端代理返回 2026-05-22 和 2026-05-23 两天数据。
+- 后续：当前操作员详情默认最近 31 天，如要做日期范围选择，可在详情页继续增加起止日期筛选。
+
+### 任务：单人明细展示当前操作员插件版本号
+
+- 时间：2026-05-25 13:05
+- 执行者：AI
+- 状态：进行中
+- 目标：在单人明细/操作员详情页展示当前操作员的插件版本号。
+- 当前理解：上一轮已新增操作员详情子页面，本轮应优先复用已有历史明细数据源中携带的 operator/plugin 维度；如果后端已有版本字段，仅补前端展示；如果缺少字段，再在分析系统内部补 API/type 映射，不修改插件和父项目文件。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `frontend/src/App.tsx`
+  - `frontend/src/types.ts`
+  - `frontend/src/styles.css`
+  - 必要时补充 `src/boss_analysis/` 或测试文件中的字段传递
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不从插件端采集新增业务判断，只展示已有事实字段
+- 验证计划：阅读详情页和 API 数据结构，按实际改动运行相关 Python 测试或前端 build，并执行 `git diff --check`。
+- 当前状态：准备阅读 README、边界/设计文档、日志契约和相关前后端代码。
+
+#### 阶段记录：完成插件版本字段接入
+
+- 时间：2026-05-25 13:09
+- 状态：待验证
+- 已完成：阅读当前“单人明细”前端组件、`/api/operator/:id` 查询服务和日志契约；确认插件版本号已经是原始日志契约字段，且 10 分钟质量汇总也按 `plugin_version` 聚合。本轮新增 `OperatorAnalytics.plugin_version` 和 `plugin_version_observed_at`，查询侧优先从该操作员 raw events 和 10 分钟质量汇总中取最近观测版本；前端单人明细顶部统计区新增“插件版本”展示。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/domain/metrics.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_query_service.py`
+  - `frontend/src/types.ts`
+  - `frontend/src/App.tsx`
+  - `frontend/src/styles.css`
+- 当前验证结果：尚未运行。
+- 中断续写入口：从运行 `tests.test_query_service` 和前端 build 开始；若真实 summary 模式缺少 log quality topic，则版本号会显示 `--`，因为分钟汇总本身没有插件版本维度。
+
+#### 完成记录：单人明细已展示插件版本号
+
+- 时间：2026-05-25 13:10
+- 状态：已完成
+- 已完成：`/api/operator/:id` 返回 `plugin_version` 与 `plugin_version_observed_at`；查询服务从该操作员原始日志和 10 分钟质量汇总里选择最近一次可用插件版本。前端“单人明细”的顶部统计区新增“插件版本”格，展示版本号和最近观测时间；没有可用版本时显示 `--`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/domain/metrics.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_query_service.py`
+  - `frontend/src/types.ts`
+  - `frontend/src/App.tsx`
+  - `frontend/src/styles.css`
+- 当前验证结果：
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest tests.test_query_service` 通过，25 tests。
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，121 tests。
+  - `npm --prefix frontend run build` 通过。
+  - `git diff --check -- src/boss_analysis/domain/metrics.py src/boss_analysis/api/query_service.py tests/test_query_service.py frontend/src/types.ts frontend/src/App.tsx frontend/src/styles.css docs/ai-worklog.md` 通过。
+  - 本机已有开发服务进程：后端 `http://127.0.0.1:8765`（pid 21881），前端 `http://127.0.0.1:5173`（pid 21883）。尝试另起 demo 服务后进程很快退出，已把 `.dev/*.pid` 恢复到现有服务进程。
+- 后续：如果只启动分钟汇总而没有 raw events 或 `boss_10min_log_quality` 数据源，单人明细会显示插件版本为 `--`；这是当前数据源不携带版本维度导致的可见缺口。
+
+### 任务：排查当前 CLS 查询变慢原因
+
+- 时间：2026-05-25 13:09
+- 执行者：AI
+- 状态：进行中
+- 目标：按用户反馈“现在 CLS 的查询很慢”，排查分析系统当前 CLS 查询链路慢的原因，区分是前端触发方式、后端串行查询、CLS Search/Metric 接口耗时、时间窗口过大、还是本地服务状态问题。
+- 当前理解：本轮先做只读排查和代码路径分析，不修改真实 CLS 任务、topic、索引或云资源；如果需要验证真实 CLS，只使用本地开发/排障用途的只读接口，并记录范围。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不把 SearchLog 写入生产默认链路
+  - 不读取插件 debug 页、Chrome storage 或 BOSS DOM
+- 验证计划：阅读当前 README、边界/设计文档、CLS 相关模块和 API 路径；查看本地服务/API 查询耗时；必要时用只读 CLS 接口测量不同接口和查询窗口耗时；最终给出原因、影响范围和建议修复方向。
+- 当前状态：已查看最新工作日志和 `git status --short`，发现工作区有大量未提交改动；准备只读阅读 CLS 查询相关代码与配置。
+
+#### 完成记录：定位为日级基础指标读取串行放大
+
+- 时间：2026-05-25 13:18
+- 状态：已完成
+- 已完成：阅读 CLS 查询实现、dev server 刷新逻辑和前端轮询逻辑；使用项目现有只读 CLS client 对真实配置做分段计时。确认慢点不是分钟汇总 `SearchLog`，而是新增的 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 指标 topic 读取：`iter_daily_basic_summaries_from_metric_topic()` 会对每个日级基础指标字段逐个调用 `QueryRangeMetric`，当前 35 个字段加 1 次 `GetMetricSeries`，全部串行执行。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：
+  - `/api/history?active_date=2026-05-23` 等价的日级基础指标查询：35 次 `QueryRangeMetric` + 1 次 `GetMetricSeries`，总耗时约 14.8 秒，返回 2 条记录。
+  - dev dataset 默认 summary 刷新分段计时：分钟汇总 `SearchLog` 0.395 秒、日级活跃 `SearchLog` 0.632 秒、日级基础指标 metric 默认窗口 12.741 秒、10 分钟质量 `SearchLog` 0.749 秒。
+  - 当前后端 `refresh_seconds=15`，前端大盘、单人详情、质量页也按 15 秒轮询；因此只要触发后端真实数据刷新，就会被日级基础指标的 12 到 15 秒串行请求拖慢，甚至与下一轮前端请求重叠。
+- 结论：当前“CLS 查询很慢”的主要原因是分析系统本地请求链路把日级历史指标的 35 个 metric 字段逐个串行查 CLS 指标接口，并且把这段读取放进 dev server 的通用刷新路径；不是 raw `SearchLog` 慢，也不是分钟汇总 topic 慢。
+- 建议下一步：把日级基础指标从大盘通用刷新里移除或懒加载；历史页只在用户点击查询时查，并加后端缓存；进一步优化可把 35 个指标合并为更少的 CLS 查询、或改读日级基础统计日志 topic/同步缓存，而不是请求期逐字段扫 metric topic。
+
+### 任务：确认 metric 查询方式引入来源
+
+- 时间：2026-05-25 13:16
+- 执行者：AI
+- 状态：进行中
+- 目标：确认 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 的 metric 查询方式是否是在历史数据/历史大盘实现时引入，以及此前是否一直使用日志 topic 的 `SearchLog` 查询方式。
+- 当前理解：需要通过当前 diff、代码路径和工作日志确认演变，不修改真实 CLS 任务、topic 或索引，不改变代码实现。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改查询代码或前端代码
+  - 不访问或修改真实云资源
+- 验证计划：查看 `summary_reader`、`cls_search`、`dev_data`、`dev_server` 的当前 diff 和历史任务日志，确认 metric helper 与历史页面/API 的引入点；必要时对比 HEAD 版本。
+- 当前状态：准备只读比对相关文件 diff。
+
+#### 完成记录：确认 metric 方式是在历史数据链路中固化
+
+- 时间：2026-05-25 13:16
+- 状态：已完成
+- 已完成：对比当前 diff 与 HEAD 版本。HEAD 中 `cls_search.py` 只有 `search_cls_log_values()`/`SearchLog`，`summary_reader.py` 只有分钟汇总、日级活跃和质量汇总的 SearchLog reader，没有 `QueryRangeMetric`、`GetMetricSeries`、`DailyBasicStatsRecord` 或 `/api/history`。当前 diff 新增 `query_cls_metric_range()`、`get_cls_metric_series()`，并由 `iter_daily_basic_summaries_from_metric_topic()`、`_load_daily_basic_summaries()` 和 `history_payload()` 调用。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：确认 metric 接口最早先在“第五个 topic 读取为 0”的排障中被临时使用，因为该 topic 实际是指标 topic，`SearchLog` 查不到；随后在“新增历史数据页面并接入日级指标库”任务中被写成正式的历史数据读取实现。此前本地 summary/daily/quality 链路一直是通过 `SearchLog` 读取目标日志 topic。
+- 结论：用户判断正确。metric 方式不是原有通用查询方式，而是为了历史数据/日级基础统计接入第五个指标 topic 时引入并固化的；如果要恢复“日志方式查询”，需要让 `boss_daily_operator_basic_stats` 输出到日志 topic，或在分析系统侧改回读取日级基础统计日志 topic/同步缓存。
+
+### 任务：将历史数据查询从 metric 改回日志 topic 查询
+
+- 时间：2026-05-25 13:19
+- 执行者：AI
+- 状态：进行中
+- 目标：按用户要求，把当前历史数据/日级基础统计查询从 CLS metric 接口改回日志 topic `SearchLog` 读取方式，避免 35 个 metric 字段串行查询导致性能过差。
+- 当前理解：原有分钟汇总、日级活跃、质量汇总均走日志 topic SearchLog；本轮应让 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 也按日级基础统计日志 topic 读取。若云端当前第五个 topic 仍是指标 topic，则代码会恢复为日志 topic 预期，但真实数据需要把 `boss_daily_operator_basic_stats` 输出到日志 topic 或配置正确日志 topic ID。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `README.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/consumer/cls_search.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/consumer/__init__.py`
+  - `src/boss_analysis/dev_data.py`
+  - `src/boss_analysis/dev_server.py`
+  - `tests/test_cls_search.py`
+  - `tests/test_summary_reader.py`
+  - `tests/test_dev_data.py`
+  - `tests/test_dev_server.py`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不从分钟级汇总累加历史数据
+  - 不恢复 raw 原始日志 SearchLog 生产链路
+- 验证计划：补充/调整 SearchLog 日级基础统计 reader 测试；运行相关 Python 测试、全量 Python 测试、前端 build 和 `git diff --check`。
+- 当前状态：准备修改 reader 和 dev server 调用链路。
+
+#### 完成记录：历史数据查询已改回 SearchLog 日志 topic
+
+- 时间：2026-05-25 13:19
+- 状态：已完成
+- 已完成：移除请求链路中的 CLS metric API 读取方式，`/api/history` 和 dev dataset 的日级基础统计读取改为 `iter_daily_basic_summaries_from_search()`，只通过 `SearchLog` 读取 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 指向的日级基础统计日志 topic。`SearchLog` helper 支持显式 `start_at/end_at`，因此历史页按日期/操作员筛选时仍可即时查询对应日期窗口或最近 N 天窗口；查询结果在本地按 `active_date/operator_id` 过滤。同步更新 README 和 CLS 任务文档，明确该配置应指向日志 topic，若仍指向指标 topic 会读不到记录。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `README.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/consumer/cls_search.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/consumer/__init__.py`
+  - `src/boss_analysis/dev_data.py`
+  - `src/boss_analysis/dev_server.py`
+  - `src/boss_analysis/domain/summary.py`
+  - `tests/test_cls_search.py`
+  - `tests/test_summary_reader.py`
+  - `tests/test_dev_data.py`
+  - `tests/test_dev_server.py`
+- 当前验证结果：
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest tests.test_cls_search tests.test_summary_reader tests.test_dev_data tests.test_dev_server` 通过，54 tests。
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，125 tests。
+  - `npm --prefix frontend run build` 通过。
+  - `git diff --check -- ...` 通过。
+  - `rg -n "QueryRangeMetric|GetMetricSeries|iter_daily_basic_summaries_from_metric_topic|query_cls_metric_range|get_cls_metric_series|build_metric_range_payload|build_get_metric_series_payload|metric-topic|真实 metric topic|指标 topic reader" src tests README.md docs/modules/07-cls-scheduled-sql-tasks.md -S` 无命中。
+- 注意事项：本轮没有修改真实 CLS 资源。当前 `.env.local` 若仍把 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 指向第五个指标 topic，改回 SearchLog 后会查不到历史记录；需要把 `boss_daily_operator_basic_stats` 输出到日志 topic `boss_summary_daily_basic_prod`，或把该环境变量改为正确的日志 topic ID。
+
+### 任务：排查当日实时数据查询链路
+
+- 时间：2026-05-25 13:27
+- 执行者：AI
+- 状态：进行中
+- 目标：按用户要求，完整排查当日实时数据查询链路，包括前端轮询接口、后端刷新逻辑、CLS topic 读取、查询窗口、接口耗时和是否仍存在 metric 慢查询路径。
+- 当前理解：当日实时数据主要对应实时大盘 `/api/dashboard`、单人明细 `/api/operator/:id` 和数据质量 `/api/log-quality`；历史页 `/api/history` 已改回日志 topic，但需要确认它不会拖慢当日实时链路。本轮只做只读排查和必要的代码路径修正，不修改真实 CLS 任务、topic、索引或云资源。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 如发现运行链路仍有性能问题，可能修改 `src/boss_analysis/dev_data.py` 或 `src/boss_analysis/dev_server.py`
+  - 如涉及前端轮询行为，可能修改 `frontend/src/App.tsx`
+  - 相关测试文件
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不恢复 raw 原始日志 SearchLog 生产链路
+  - 不从分钟级汇总临时拼历史数据
+- 验证计划：阅读前端 API/轮询、dev server 刷新、dev dataset 加载和 summary reader；用只读 CLS client 对当前 summary 配置分段计时；确认实时接口是否仍触发日级基础历史查询；根据发现运行相关 Python 测试、前端 build 和 diff check。
+- 当前状态：准备阅读当日实时数据相关代码路径。
+
+#### 阶段记录：实时刷新链路已拆出历史日级基础查询
+
+- 时间：2026-05-25 13:32
+- 状态：已完成，继续排查前端轮询
+- 已完成：确认前端当日实时链路是 `/api/dashboard` 与 `/api/operator/:id` 每 15 秒轮询，`/api/log-quality` 只在质量页轮询；后端通用刷新原本会一起加载分钟汇总、日级活跃、日级基础历史和 10 分钟质量。已将 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 的记录加载改为可跳过，并让 dev server 的通用刷新只保留实时所需数据；历史页 `/api/history` 仍按筛选条件按需读取日级基础日志 topic 或文件。另给刷新入口加锁，减少大盘和单人明细轮询并发时的重复刷新。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/dev_data.py`
+  - `src/boss_analysis/dev_server.py`
+  - `tests/test_dev_data.py`
+  - `tests/test_dev_server.py`
+- 当前验证结果：`PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest tests.test_dev_data tests.test_dev_server` 通过，30 tests。
+- 中断续写入口：继续运行全量测试、前端 build 和 diff check；如需真实 CLS 计时，只做只读 SearchLog 分段计时。
+
+#### 阶段记录：前端实时轮询已按 tab 收敛
+
+- 时间：2026-05-25 13:35
+- 状态：已完成
+- 已完成：发现 React 页面切到历史或质量 tab 后，dashboard 与 operator detail 仍在后台每 15 秒请求。已拆分操作员配置加载和 dashboard 实时轮询：操作员配置仍启动时加载一次；`/api/dashboard` 与 `/api/operator/:id` 只在 dashboard tab 轮询；`/api/log-quality` 仍仅在质量 tab 轮询；历史页保持按需查询、不设 interval。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `frontend/src/App.tsx`
+- 当前验证结果：
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，128 tests。
+  - `npm --prefix frontend run build` 通过。
+- 中断续写入口：继续执行 diff check 和任务完成记录。
+
+#### 完成记录：当日实时数据查询链路排查完成
+
+- 时间：2026-05-25 13:35
+- 状态：已完成
+- 已完成：完整排查当日实时链路。前端轮询现状已收敛为 dashboard tab 才轮询 `/api/dashboard` 与 `/api/operator/:id`，quality tab 才轮询 `/api/log-quality`，history tab 按需查询 `/api/history`；后端通用刷新不再预取日级基础历史 topic，`CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 仅保留 source 元信息，历史页打开或筛选时再读取；刷新入口已加锁，避免并发请求重复触发同一轮 CLS 刷新。静态扫描确认运行代码中无 `QueryRangeMetric` / `GetMetricSeries` / metric reader 残留。
+- 真实 CLS 只读计时：
+  - `CLS_SUMMARY_TOPIC_ID` 分钟汇总 SearchLog：0.398s，58 条。
+  - `CLS_DAILY_SUMMARY_TOPIC_ID` 日级活跃 SearchLog：0.757s，0 条。
+  - `CLS_LOG_QUALITY_TOPIC_ID` 10 分钟质量 SearchLog：0.772s，0 条。
+  - 后端一次实时刷新（跳过 daily basic 预取）：2.033s，minute=58，daily_active=0，daily_basic_prefetched=0，log_quality=0。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `frontend/src/App.tsx`
+  - `src/boss_analysis/dev_data.py`
+  - `src/boss_analysis/dev_server.py`
+  - `tests/test_dev_data.py`
+  - `tests/test_dev_server.py`
+- 当前验证结果：
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest tests.test_dev_data tests.test_dev_server` 通过，30 tests。
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，128 tests。
+  - `npm --prefix frontend run build` 通过。
+  - `git diff --check -- frontend/src/App.tsx src/boss_analysis/dev_data.py src/boss_analysis/dev_server.py tests/test_dev_data.py tests/test_dev_server.py docs/ai-worklog.md` 通过。
+  - `rg -n "QueryRangeMetric|GetMetricSeries|query_cls_metric|metric_range|metric_topic|iter_daily_basic_summaries_from_metric" src tests README.md docs/modules -S` 无命中。
+- 注意事项：本轮没有修改真实 CLS topic、定时 SQL 或索引。真实计时显示当日实时慢点已不在 metric API；当前 `daily_active` 与 `log_quality` 今日查询返回 0 条，如果业务预期应该有值，需要另查对应定时 SQL 是否产出或目标 topic/env 是否正确。
+
+### 任务：单人明细优先使用分钟汇总插件版本
+
+- 时间：2026-05-25 13:21
+- 执行者：AI
+- 状态：进行中
+- 目标：按用户提醒，单人明细的插件版本号优先从分钟级汇总数据读取。
+- 当前理解：分钟级汇总真实数据中可能已带 `plugin_version`，但当前 `MinuteSummaryRecord` 和 parser 尚未建模该字段，导致 `/api/operator/:id` 只能从 raw events 或 10 分钟质量汇总推导。应补分钟汇总字段传递，并将其作为最近版本优先来源。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/domain/summary.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_summary_reader.py`
+  - `tests/test_query_service.py`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不调整前端布局，除非类型必须同步
+- 验证计划：补充分钟汇总 parser 和单人查询单测；运行 `tests.test_summary_reader`、`tests.test_query_service`、全量 Python 测试、前端 build 和 `git diff --check`。
+- 当前状态：准备补分钟汇总 `plugin_version` 字段。
+
+#### 阶段记录：分钟汇总插件版本字段已接入
+
+- 时间：2026-05-25 13:23
+- 状态：待验证
+- 已完成：`MinuteSummaryRecord` 新增 `plugin_version`；分钟汇总 parser 支持 `plugin_version` / `pluginVersion`；`AnalysisQueryService.operator_analytics()` 查询插件版本时优先使用该操作员分钟汇总中的最新分钟版本，再回退 raw events 和 10 分钟质量汇总。补充 parser 单测和“分钟汇总优先于 raw”单测。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/domain/summary.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_summary_reader.py`
+  - `tests/test_query_service.py`
+- 当前验证结果：尚未运行。
+- 中断续写入口：从 `PYTHONPATH=src python3 -m unittest tests.test_summary_reader tests.test_query_service` 开始验证。
+
+### 任务：CLS 分钟生产任务增加插件版本维度
+
+- 时间：2026-05-25 13:18
+- 执行者：AI
+- 状态：进行中
+- 目标：按用户要求，在 CLS 分钟级生产汇总任务产物中增加插件版本号汇总维度，使单人明细可直接从分钟汇总读取当前操作员插件版本。
+- 当前理解：代码侧已准备接收 `MinuteSummaryRecord.plugin_version`，但生产 CLS 定时 SQL 任务如果不输出 `plugin_version`，页面仍拿不到该字段。需要至少调整 `boss_minute_operator_funnel` 和 `boss_minute_chat` 的输出字段、内层 select 和 group by；实际修改云端生产任务属于真实云资源变更，执行前需要明确列出资源和风险并得到确认。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - 必要时同步 `docs/modules/04-aggregation-query-api.md` 或 README
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 未经确认不调用腾讯云 API 修改真实 CLS 生产任务
+  - 不改变事件采集契约，不新增插件端字段
+- 验证计划：静态检查 SQL 文档中目标字段、SQL select 和 group by 均包含 `plugin_version`；运行相关单测和 `git diff --check`。
+- 当前状态：准备修改 CLS 定时 SQL 文档。
+
+#### 完成记录：分钟任务 SQL 模板已补插件版本
+
+- 时间：2026-05-25 13:22
+- 状态：已完成
+- 已完成：在 `boss_summary_minute_prod` 的两条分钟任务模板中补充 `plugin_version` 输出。`boss_minute_operator_funnel` 和 `boss_minute_chat` 均在内层读取 `plugin_version`，外层使用 `max_by(plugin_version, event_at)` 输出该操作员该分钟最后一条事件版本；`group by` 仍保持 `minute, operator_id`，避免同一分钟跨版本时拆分计数。同步更新分钟汇总 topic 索引建议、聚合查询文档和 README。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `docs/modules/04-aggregation-query-api.md`
+  - `README.md`
+  - `src/boss_analysis/domain/summary.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `tests/test_summary_reader.py`
+  - `tests/test_query_service.py`
+- 当前验证结果：
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest tests.test_summary_reader tests.test_query_service` 通过，41 tests。
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，122 tests。
+  - `npm --prefix frontend run build` 通过。
+  - `rg -n "plugin_version|group by minute, operator_id|max_by\\(plugin_version" docs/modules/07-cls-scheduled-sql-tasks.md docs/modules/04-aggregation-query-api.md README.md` 已确认两条分钟 SQL 均有 `max_by(plugin_version, event_at)` 且仍按 `minute, operator_id` 分组。
+  - `git diff --check -- ...` 通过。
+- 后续/风险：本轮没有调用腾讯云 API 修改真实生产定时 SQL 任务。若要直接更新云端 `boss_minute_operator_funnel` 和 `boss_minute_chat` 生产任务，需要先确认目标 CLS region/topic/task，并接受短时间任务输出字段变化风险；更新后还要确认目标 topic 已为 `plugin_version` 开启键值索引和统计分析。当前工具启动的本地 dev 后台进程未能稳定存活，已清理 stale `.dev/*.pid`。
+
+### 任务：补充 SQL 修改输出协作规则
+
+- 时间：2026-05-25 13:24
+- 执行者：AI
+- 状态：进行中
+- 目标：按用户要求，后续修改 SQL 时除了沉淀到相关设计文件，还必须把完整 SQL 直接发到对话框方便复制；本轮也需要把刚修改的分钟汇总 SQL 直接发给用户。
+- 当前理解：需要修改 `analysis-system/AGENTS.md` 的协作规范，并在最终回复中贴出 `boss_minute_operator_funnel` 与 `boss_minute_chat` 两段完整 SQL。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `AGENTS.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 生产任务或云资源
+  - 不改 SQL 模板内容本身，除非发现刚才沉淀内容有明显错误
+- 验证计划：运行 `git diff --check -- AGENTS.md docs/ai-worklog.md`；最终回复直接贴 SQL。
+- 当前状态：准备补充 `AGENTS.md` 规则。
+
+#### 完成记录：SQL 输出规则已加入 AGENTS
+
+- 时间：2026-05-25 13:25
+- 状态：已完成
+- 已完成：在 `AGENTS.md` 新增“SQL 修改输出规则”，要求后续修改 SQL 时必须同步沉淀相关设计文件，并在最终回复中直接贴出完整 SQL；多段 SQL 需按任务名分别贴出，并说明是否已实际更新云端生产任务。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `AGENTS.md`
+- 当前验证结果：
+  - `git diff --check -- AGENTS.md docs/ai-worklog.md` 通过。
+- 后续：本轮最终回复需要直接贴出 `boss_minute_operator_funnel` 和 `boss_minute_chat` 两段 SQL；真实 CLS 云端任务仍未修改。
+
+### 任务：补充 CLS 与本地分析分层设计规则
+
+- 时间：2026-05-25 13:36
+- 执行者：AI
+- 状态：进行中
+- 目标：按用户要求，在开发约定中加入方案设计/功能升级时必须评估数据分析应落在 CLS 层还是本地代码层的规则。
+- 当前理解：近期性能问题暴露出方案设计容易默认在本地代码层做分析；需要把“从合理性和性能综合评估 CLS 预聚合、CLS 定时 SQL、下游同步、本地二次分析”的决策要求写入协作规范，避免把长周期或高频聚合放进 API 请求链路。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `AGENTS.md`
+  - `README.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改运行代码、测试代码或真实 CLS 云资源
+  - 不改既有 SQL 模板和查询口径
+- 验证计划：运行 `git diff --check -- AGENTS.md README.md docs/ai-worklog.md`。
+- 当前状态：准备补充开发约定规则。
+
+#### 完成记录：CLS/本地分析分层规则已加入开发约定
+
+- 时间：2026-05-25 13:37
+- 状态：已完成
+- 已完成：在 `AGENTS.md` 的实现规则中加入方案设计/功能升级必须评估数据分析落点的协作约束；在 `README.md` 的“开发约定”中同步加入同类规则，明确高频、长周期、SQL 可稳定表达的预聚合优先放 CLS 定时 SQL 或已批准下游同步链路，本地代码只做权限过滤、跨主题组合、查询范围内 rollup、离线重放校验和探索性补充。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `AGENTS.md`
+  - `README.md`
+- 当前验证结果：
+  - `git diff --check -- AGENTS.md README.md docs/ai-worklog.md` 通过。
+- 后续：本轮未修改运行代码、测试代码、SQL 模板或真实 CLS 云资源。
+
+### 任务：历史数据查询无结果排查
+
+- 时间：2026-05-25 13:40
+- 执行者：AI
+- 状态：进行中
+- 目标：排查用户反馈的“历史数据查不出来数据了”，定位是前端请求、后端 `/api/history`、本地/CLS 数据源、时间范围或字段解析导致无结果。
+- 当前理解：上一轮刚调整过实时刷新链路，使日级基础历史数据改为按需读取；历史页无结果很可能与 `/api/history` 的查询路径、环境变量、时间范围或 source 记录加载变化有关。需先只读排查，不修改真实 CLS topic、定时 SQL 或索引。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 如定位为代码回归，可能修改 `src/boss_analysis/dev_data.py`、`src/boss_analysis/dev_server.py`、`src/boss_analysis/api/query_service.py` 或前端历史页相关文件
+  - 相关测试文件
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不恢复正式环境 raw 原始日志 SearchLog 作为历史数据源
+  - 不引入新的业务判断或候选人质量分析
+- 验证计划：阅读历史查询 API 和数据加载链路；检查当前 diff 与环境变量；用本地测试或 dev server 直接调用 `/api/history` 复现；必要时只读验证 CLS 日级基础 summary topic 返回；补测试并运行相关 Python 测试、前端 build 和 diff check。
+- 当前状态：准备阅读分析系统基础文档、历史查询代码和现有未提交 diff。
+
+#### 完成记录：定位为日级基础 topic 类型/配置与当前读取方式不匹配
+
+- 时间：2026-05-25 13:44
+- 状态：已完成
+- 已完成：阅读历史查询链路和前序日志，确认当前 `/api/history` 已按上一轮要求改为只通过 `SearchLog` 读取 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 指向的日级基础统计日志 topic，不再走 `QueryRangeMetric/GetMetricSeries`，也不从分钟汇总临时拼历史。检查 `.env.local` 后确认该配置仍存在；本地 dev server 可正常读取分钟汇总。
+- 只读复现：
+  - `GET /api/dashboard` 返回分钟汇总 `summary_record_count=63`，说明实时分钟汇总链路有数据。
+  - `GET /api/history?active_date=2026-05-24` 返回 `status=empty`、`record_count=0`、`source_record_count=0`。
+  - `GET /api/history?active_date=2026-05-23` 返回 `status=empty`、`record_count=0`、`source_record_count=0`。
+  - 直接对分钟汇总 topic 做 `SearchLog`，最近 3 天返回 415 条。
+  - 直接对 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 做 `SearchLog`，2026-05-23、2026-05-24、2026-05-25 和最近 180 天均返回 0 条，且 CLS 无错误、`ListOver=True`。
+- 结论：历史数据查不出来的直接原因是当前后端期待 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 指向“日级基础统计日志 topic”，但当前配置对应的 topic 没有可被 `SearchLog` 读取的日志记录。结合前序日志，该 topic 大概率仍是此前的第五个指标 topic，或 `boss_daily_operator_basic_stats` 尚未输出到新的日志 topic。当前代码行为符合上一轮“从 metric 改回日志 topic 查询”的改动。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：未修改运行代码；本轮只做只读接口/CLS 查询和日志记录。
+- 后续：需要在 CLS 侧把 `boss_daily_operator_basic_stats` 输出到日志 topic `boss_summary_daily_basic_prod`，并把 `.env.local` 的 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 改为该日志 topic ID；或明确选择重新走指标 topic/同步缓存方案，但不建议恢复请求期串行 metric 查询。
+
+#### 接手记录：用户截图确认 topic 中存在指标样本
+
+- 时间：2026-05-25 13:46
+- 状态：进行中
+- 已完成：用户贴图显示当前 topic 中确有 `boss_daily_operator_basic_stats` 相关数据，行形态包含 `Time`、`__name__=session_count`、`active_date`、`boss_account_matched`、`boss_account_name`、`first_active_minute`、`last_active_minute`、`metric_name`、`operator_account_name` 等列；这更符合 CLS 指标 topic 的样本/标签表，而不是 SearchLog 返回的普通日志行。
+- 当前理解：上一条结论“topic 没有可被 SearchLog 读取的日志记录”仍成立，但表述为“topic 没数据”不准确。实际问题是 `/api/history` 当前只实现了日志 topic `SearchLog` 读取，而用户当前可见的数据在指标 topic 查询视图里；需要确认是否应恢复/优化指标 topic reader，或把定时 SQL 输出切到日志 topic。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证计划：只读检查当前代码中是否还保留 metric API helper；必要时恢复指标读取路径并补测试，但避免再次把 35 个字段串行查询挂到实时刷新链路上。
+
+#### 阶段记录：确认配置指向指标 topic
+
+- 时间：2026-05-25 13:48
+- 状态：实现中
+- 已完成：用户确认配置里的 ID 就是 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID`。结合截图中的 `__name__` 列，判断当前配置不是错配到别的 topic，而是这个配置当前实际指向 CLS 指标 topic；历史页无数据是因为上一轮把读取方式切到了 SearchLog 日志 topic。
+- 当前计划：恢复日级基础统计的 CLS metric topic 读取能力，并只在 `/api/history` 按需查询时调用；实时刷新仍跳过日级基础记录，避免重复引入 35 个 metric 查询拖慢实时接口。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/consumer/cls_search.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/consumer/__init__.py`
+  - `src/boss_analysis/dev_data.py`
+  - `src/boss_analysis/dev_server.py`
+  - `tests/test_cls_search.py`
+  - `tests/test_summary_reader.py`
+  - `tests/test_dev_data.py`
+  - `tests/test_dev_server.py`
+- 当前验证结果：尚未修改代码。
+
+#### 完成记录：历史数据已恢复按 CLS 指标 topic 读取
+
+- 时间：2026-05-25 15:11
+- 状态：已完成
+- 已完成：恢复 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 的指标 topic 读取路径。新增 `QueryRangeMetric` helper，并让日级基础统计 reader 用单次 PromQL label selector `{metric_name="boss_daily_operator_basic_stats", ...}` 读取目标日期/操作员范围内所有指标样本，再按 `active_date + operator_id` 重组为 `DailyBasicStatsRecord`。`SearchLog` 日志 topic 读取仍保留，可通过 `CLS_DAILY_BASIC_SUMMARY_SOURCE=log` 显式启用；默认 `metric` 与当前真实 topic 匹配。实时刷新仍 `include_daily_basic_summaries=False`，不会预取历史指标 topic。
+- 真实只读验证：
+  - `iter_daily_basic_summaries_from_metric_topic(active_date="2026-05-23")` 返回 2 条：`zhouxinyu`、`小图图`。
+  - `iter_daily_basic_summaries_from_metric_topic(active_date="2026-05-24")` 返回 1 条：`zhouxinyu`。
+  - 前台运行后端时，`GET /api/history?active_date=2026-05-23` 返回 `status=ok`、`record_count=2`；`GET /api/history?active_date=2026-05-24` 返回 `status=ok`、`record_count=1`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `.env.example`
+  - `README.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/consumer/cls_search.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/consumer/__init__.py`
+  - `src/boss_analysis/dev_data.py`
+  - `src/boss_analysis/dev_server.py`
+  - `tests/test_cls_search.py`
+  - `tests/test_summary_reader.py`
+  - `tests/test_dev_data.py`
+  - `tests/test_dev_server.py`
+- 当前验证结果：
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest tests.test_cls_search tests.test_summary_reader tests.test_dev_data tests.test_dev_server` 通过，62 tests。
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，133 tests。
+  - `npm --prefix frontend run build` 通过。
+  - `git diff --check -- ...` 通过。
+- 注意事项：本轮没有修改真实 CLS 任务、topic、索引或云资源。曾尝试用 `dev.sh` 后台启动本地服务，但该工具环境下后台进程没有稳定保留；前台启动后端验证接口可正常返回历史数据，验证后已停止临时进程并清理 stale dev 进程。
+
+### 任务：单日历史统计增加对话回复分析
+
+- 时间：2026-05-26 14:47
+- 执行者：AI
+- 状态：计划中
+- 目标：在单日级别历史数据统计中增加三类对话分析：候选人向 BOSS 打招呼后的双方第一轮对话中 BOSS 回复率、回复间隔中位数和平均值；全轮对话中 BOSS 作为最后发言人的比例；全轮对话中 BOSS 对候选人回复间隔的中位数和平均值。
+- 当前理解：这是分析系统历史日级统计能力，不应改插件端采集逻辑；需要先确认当前日级历史 API、日级基础 summary 数据结构、前端历史表格/明细和聊天事件/汇总字段的既有口径，再决定指标落在 CLS 预聚合、现有日级记录读取，还是本地按已同步汇总二次计算。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `src/boss_analysis/domain/summary.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `frontend/src/types.ts`
+  - `frontend/src/App.tsx`
+  - 相关测试文件
+  - 如需修改日级 SQL，则同步 `docs/modules/07-cls-scheduled-sql-tasks.md` 和相关模块文档
+- 不修改范围：
+  - 不修改 `analysis-system/` 之外文件
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不读取或输出聊天正文、联系方式、完整简历正文等敏感内容
+  - 不把候选人质量、员工绩效或话术评价写进插件端或分析指标
+- 验证计划：阅读 README、边界、概览、历史/聚合/聊天相关模块文档和当前代码；补充日级统计 parser/API/前端展示相关测试；运行相关 Python 单测、前端 build 和 `git diff --check`。
+- 当前状态：准备阅读基础文档和定位历史统计实现。
+
+#### 阶段记录：完成代码阅读和落点确认
+
+- 时间：2026-05-26 15:03
+- 状态：实现中
+- 已完成：阅读 `README.md`、`docs/boundary.md`、`docs/overview-design.md`、聚合/API、CLS 定时 SQL、事实投影、日志规范中聊天快照字段，以及当前历史页、`DailyBasicStatsRecord`、summary reader、query service 和相关测试。确认历史数据页面只消费 `boss_daily_operator_basic_stats` 日级基础统计，不从分钟汇总或 raw 日志临时拼接；聊天快照消息包含 `direction`、`messageAt`、`fingerprint`，可在 CLS 日级任务中只输出计数和耗时指标，不输出聊天正文。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：尚未修改运行代码，尚未运行测试。
+- 风险/阻塞：真实 CLS 任务不在本轮直接更新；需要把新增字段沉淀到 `docs/modules/07-cls-scheduled-sql-tasks.md` 并在最终回复贴完整 SQL，用户之后再更新云端任务。
+- 中断续写入口：从扩展 `DailyBasicStatsRecord` 与 `DAILY_BASIC_METRIC_FIELDS` 开始，再补 parser/API/前端展示和测试。
+
+#### 完成记录：日级历史对话指标已接入
+
+- 时间：2026-05-26 15:22
+- 状态：已完成
+- 已完成：`DailyBasicStatsRecord` 新增首轮候选人发起数、首轮 BOSS 回复数、首轮回复中位数/平均值、可解析会话数、BOSS 结束会话数、全轮 BOSS 回复数、全轮回复中位数/平均值；summary reader 支持日志 topic 和 metric topic 两种读取形态；历史表新增“首轮回复 / BOSS 结束 / 全轮回复”展示。`docs/modules/07-cls-scheduled-sql-tasks.md` 已补 `boss_daily_operator_basic_stats` 完整 SQL 模板和字段说明，`docs/modules/04-aggregation-query-api.md` 已补历史日级对话分析口径。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/04-aggregation-query-api.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+  - `src/boss_analysis/domain/summary.py`
+  - `src/boss_analysis/consumer/summary_reader.py`
+  - `src/boss_analysis/api/query_service.py`
+  - `frontend/src/types.ts`
+  - `frontend/src/App.tsx`
+  - `frontend/src/styles.css`
+  - `tests/test_summary_reader.py`
+  - `tests/test_query_service.py`
+- 当前验证结果：
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest tests.test_summary_reader tests.test_query_service` 通过，43 tests。
+  - `PYTHONPYCACHEPREFIX=/private/tmp/boss-analysis-pycache PYTHONPATH=src python3 -m unittest discover -s tests` 通过，133 tests。
+  - `npm --prefix frontend run build` 通过。
+  - `git diff --check -- ...` 通过。
+- 风险/阻塞：本轮没有修改真实 CLS 云端定时 SQL 任务、topic 或索引；新增指标需要用户把文档中的 `boss_daily_operator_basic_stats` SQL 更新到云端任务后，历史页才会出现非零值。已存在的本地 dev 进程显示 Vite 在跑，但后端接口 curl 时连接拒绝/历史日志里有 CLS 超时和 broken pipe，本轮未重启这些既有进程。
+- 中断续写入口：若继续上线，下一步是按最终回复中的完整 SQL 更新云端 `boss_daily_operator_basic_stats` 任务，并确认目标指标 topic 能看到新增 `__name__` 字段。
+
+### 任务：拆分日级聊天分析 SQL 避免 CLS 长度限制
+
+- 时间：2026-05-26 15:01
+- 执行者：AI
+- 状态：实现中
+- 目标：用户在 CLS 控制台粘贴上一版合并 SQL 后遇到 `param query must less than 12000`，需要把新增聊天回复分析 SQL 缩短到限制内，并保持历史页面可读取新增字段。
+- 当前理解：现有后端 metric topic reader 会把同一 `metric_name="boss_daily_operator_basic_stats"`、`active_date + operator_id` 下的多个 `__name__` 指标字段拼成一条历史记录。因此可以保留原日级基础统计任务不变，新增一个短的日级聊天回复分析任务，输出同一 `metric_name` 标签和新增字段，写入同一个日级基础统计指标 topic。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 不修改范围：
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不修改运行代码和前端代码
+  - 不输出聊天正文、联系方式或完整简历正文
+- 验证计划：用本地字符数检查确认新增短 SQL 小于 12000；运行 `git diff --check` 覆盖本轮文件。
+- 当前状态：准备在 SQL 文档中新增短任务 SQL，并把上一版合并 SQL 标注为不要直接创建。
+
+#### 完成记录：新增短 SQL 任务
+
+- 时间：2026-05-26 15:06
+- 状态：已完成
+- 已完成：在 `docs/modules/07-cls-scheduled-sql-tasks.md` 新增任务 6 `boss_daily_operator_chat_reply_stats`，输出同一 `metric_name='boss_daily_operator_basic_stats'` 和新增聊天回复字段，写入同一个日级基础统计指标 topic；文档已标注上一版合并 SQL 超过 CLS 12000 字符限制，不要直接创建任务。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 当前验证结果：
+  - `awk ... | wc -c` 检查任务 6 SQL 为 4295 字符。
+  - `git diff --check -- docs/ai-worklog.md docs/modules/07-cls-scheduled-sql-tasks.md` 通过。
+- 风险/阻塞：本轮没有修改真实 CLS 云端任务。新增任务适配当前 metric topic 读取方式；如果未来把日级基础统计切成日志 topic SearchLog 方式，需要在同步/读取层合并同一日期和操作员的多条局部记录。
+- 中断续写入口：到 CLS 控制台新建任务 6，目标 topic 选择 `boss_summary_daily_basic_prod`，时间窗口跟随任务 5。
+
+### 任务：修复聊天分析 SQL 的 CLS CTE 语法不兼容
+
+- 时间：2026-05-26 15:01
+- 执行者：AI
+- 状态：实现中
+- 目标：用户截图显示 `with s as (...)` 在 CLS 控制台报 `no viable alternative at input 's as'`，需要改成 CLS 管道可接受的不使用 CTE 的 SQL。
+- 当前理解：CLS 定时 SQL 在 `* |` 后不支持 `with` CTE；应把任务 6 改写为嵌套子查询版本，同时继续保持单条 SQL 小于 12000 字符。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 不修改范围：
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不修改运行代码和前端代码
+  - 不输出聊天正文、联系方式或完整简历正文
+- 验证计划：检查任务 6 SQL 字符数低于 12000；确认 SQL 中没有 `with`；运行 `git diff --check`。
+- 当前状态：准备改写任务 6 SQL。
+
+#### 完成记录：任务 6 改为无 CTE 嵌套查询
+
+- 时间：2026-05-26 15:08
+- 状态：已完成
+- 已完成：把任务 6 SQL 从 `with s as (...)` CTE 写法改为 `from (...)` 嵌套子查询写法；同时移除 `with ordinality`，避免 CLS 解析器继续在 `with` 关键字处报错。SQL 仍输出同一组日级聊天回复字段。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 当前验证结果：
+  - 任务 6 SQL 字符数为 4832，低于 12000。
+  - `rg "\bwith\b|\bs as \("` 检查任务 6 SQL 无命中。
+  - `git diff --check -- docs/ai-worklog.md docs/modules/07-cls-scheduled-sql-tasks.md` 通过。
+- 风险/阻塞：未连接真实 CLS 验证语法；如果 CLS 继续对 `first_value/last_value` 或 `cross join unnest` 报方言错误，需要继续按报错位置降级。
+- 中断续写入口：使用最终回复中的无 CTE SQL 覆盖任务 6。
+
+#### 阶段记录：缩短外层间隔表达式
+
+- 时间：2026-05-26 15:01
+- 状态：已完成
+- 已完成：根据用户截图中 `date_diff('millisecond', lm, nfm limit 10000` 的报错，把任务 6 外层超长 `date_diff` 表达式改成内层 `reply_ms` / `first_reply_ms` 字段，外层只做 `approx_percentile(reply_ms)` 和 `avg(reply_ms)`，减少复制或控制台默认 limit 拼接时的断点风险。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 当前验证结果：
+  - 任务 6 SQL 字符数为 4718，低于 12000。
+  - 任务 6 SQL 中无 `with` CTE。
+  - `git diff --check -- docs/ai-worklog.md docs/modules/07-cls-scheduled-sql-tasks.md` 通过。
+- 风险/阻塞：未连接真实 CLS 验证；如继续报错，优先按报错行检查是否是控制台自动追加 `limit` 或 CLS 不支持某个窗口函数。
+- 中断续写入口：使用最终回复中的新版任务 6 SQL 覆盖当前控制台内容，并确保从第一行 `* |` 到最后一行 `limit 10000` 完整复制。
+
+### 任务：修复任务 6 SQL 同层别名引用
+
+- 时间：2026-05-26 17:55
+- 执行者：AI
+- 状态：实现中
+- 目标：用户反馈 CLS 报 `Column 'nd' cannot be resolved`，需要修复任务 6 SQL 中同一层 `select` 先引用 `nd/nfm` 再定义别名的问题。
+- 当前理解：CLS/Presto 语法不允许在同一个 select 列表里引用同层别名；需要把 `lead(...) as nd/nfm` 的窗口函数放入内层子查询，再由外层计算 `reply_ms` 和 `first_reply_ms`。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 不修改范围：
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不修改运行代码和前端代码
+  - 不输出聊天正文、联系方式或完整简历正文
+- 验证计划：确认任务 6 SQL 字符数低于 12000、无 CTE，并运行 `git diff --check`。
+- 当前状态：准备给任务 6 SQL 增加一层子查询。
+
+#### 完成记录：别名引用已下沉到外层
+
+- 时间：2026-05-26 17:55
+- 状态：已完成
+- 已完成：任务 6 SQL 增加一层子查询，先在内层生成 `fd/ld/nd/nfm`，再在外层计算 `reply_ms/first_reply_ms`，避免同层 select 引用 `nd` alias 导致 CLS 报 `Column 'nd' cannot be resolved`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 当前验证结果：
+  - 任务 6 SQL 字符数为 4746，低于 12000。
+  - 任务 6 SQL 中无 `with` CTE。
+  - `git diff --check -- docs/ai-worklog.md docs/modules/07-cls-scheduled-sql-tasks.md` 通过。
+- 风险/阻塞：未连接真实 CLS 验证语法；如果继续报错，优先按报错字段检查是否仍有同层别名或窗口函数方言问题。
+- 中断续写入口：使用最终回复中的新版任务 6 SQL 覆盖当前控制台内容。
+
+### 任务：排查任务 6 近 3 天无结果
+
+- 时间：2026-05-26 18:13
+- 执行者：AI
+- 状态：排查中
+- 目标：用户反馈任务 6 SQL 查询最近 3 天一条数据都查不出来，需要判断是源事件不存在、字段过滤过严、时间字段解析失败，还是 `payload.chat.messages` 数组解析导致结果被过滤。
+- 当前理解：上一轮 SQL 已解决语法错误，但真实 CLS 结果为空。需要先提供分层探针 SQL，让用户在原始事实日志主题上确认 `candidate_chat.snapshot_captured`、`payload_json`、`payload.chat.messages` 和消息方向/时间字段是否存在，再决定是否改生产 SQL。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 如确认 SQL 过滤条件需要调整，再修改 `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 不修改范围：
+  - 不修改真实 CLS 任务、topic、索引或云资源
+  - 不修改运行代码和前端代码
+  - 不修改 `analysis-system` 外部文件
+- 验证计划：本地只做 SQL 文档和字符检查；真实数据可用性需要用户在 CLS 控制台运行探针 SQL 确认。
+- 当前状态：准备阅读任务 6 SQL 和日志契约字段，给出最小探针查询。
+
+#### 阶段记录：给出空结果分层排查口径
+
+- 时间：2026-05-26 18:13
+- 状态：待用户在 CLS 控制台验证
+- 已完成：对照任务 6 SQL、任务清单和日志契约，判断“最近 3 天 0 条”首先要确认查询是否跑在原始事实 topic；任务 6 的源主题必须是原始 `boss` 事实日志，目标才是 `boss_summary_daily_basic_prod`。若在目标 topic 上执行包含 `event_type = 'candidate_chat.snapshot_captured'` 的 SQL，会查不到源事件。已准备源事件计数、payload 覆盖和 messages 展开三条探针 SQL。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：本轮未访问真实 CLS 云资源；只做本地文档阅读和排障口径整理。
+- 中断续写入口：等待用户把三条探针 SQL 的结果或报错贴回；若探针 1 有 `snapshot_captured > 0` 但任务 6 仍为空，下一步优先改任务 6 的日期字段 `d` 为基于 `histogram(__TIMESTAMP__, interval 1 day)` 的日志日期，或按具体失败层继续收窄过滤条件。
+
+#### 阶段记录：源快照和 messages 已确认存在
+
+- 时间：2026-05-26 18:47
+- 状态：继续排查
+- 已完成：用户贴回第二条探针结果：`snapshot_rows=490`、`payload_empty=0`、`messages_present=490`、`visible_message_count=3170`、`conversation_count=238`。这说明原始事实 topic 中最近 3 天存在聊天快照，且 `payload.chat.messages` 覆盖正常；任务 6 返回 0 更可能发生在日期 `d`、操作员过滤、messages 展开、消息时间或方向解析层。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：真实数据计数由用户截图确认；本地未访问 CLS。
+- 中断续写入口：让用户运行下一条分层探针，确认 `d_not_null`、`valid_operator_rows`、`message_rows`、`message_time_ok` 和 `direction_ok` 哪个阶段归零。
+
+#### 阶段记录：定位到日期和方向解析不兼容
+
+- 时间：2026-05-26 19:49
+- 状态：继续排查
+- 已完成：用户反馈分层探针中 `direction_ok=0`、`d_from_timestamp_ok=0`。这说明任务 6 当前 SQL 中日期解析不能依赖 `from_iso8601_date(substr(cast(__TIMESTAMP__ as varchar), 1, 10))`，方向枚举也不能只认 `candidate/geek/recruiter/boss`。下一步需要读取真实 `messages[].direction` 分布和 `__TIMESTAMP__` 可格式化方式，再更新任务 6 SQL 文档。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：真实数据问题由用户截图/反馈确认；本地未访问 CLS。
+- 中断续写入口：让用户运行方向分布与时间格式探针；根据返回值扩展方向映射，并把日期改为 `histogram(__TIMESTAMP__, interval 1 day)` 或 CLS 实测可用的日期表达式。
+
+#### 阶段记录：真实 direction 全为 unknown
+
+- 时间：2026-05-26 20:12
+- 状态：继续排查
+- 已完成：用户贴回方向分布探针：`histogram(__TIMESTAMP__, interval 1 day)` 可以正常产生日桶；所有消息 `direction_value` 均为 `unknown`，`senderType/role/from/side` 均为空。日期问题可通过日桶修复，但当前 raw payload 尚未提供可直接区分候选人/BOSS 的消息方向字段。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：真实数据由用户反馈确认；本地未访问 CLS。
+- 中断续写入口：继续用不输出聊天正文的字段覆盖探针检查 message JSON 是否存在 `isSelf`、`sender`、`className` 等其它可映射字段；若没有，任务 6 的回复率/回复间隔无法从历史快照可靠回算，需要先修复插件采集方向后再统计新增数据。
+
+#### 阶段记录：用户授权直接只读查询 raw CLS
+
+- 时间：2026-05-26 20:14
+- 状态：排查中
+- 已完成：用户明确要求“你自己直接调用 raw 的 CLS 数据跑”。本轮将以本地开发/一次性排障方式只读查询 raw CLS，不接入生产链路；查询内容限制为事件计数、消息结构字段、方向枚举和时间字段，不输出聊天正文、联系方式或完整候选人敏感信息。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：尚未开始真实 CLS 调用。
+- 中断续写入口：先检查本地 CLS 配置和 `src/boss_analysis/consumer/cls_search.py` 用法；若沙箱网络阻断，按用户授权申请提权运行只读探针。
+
+#### 阶段记录：raw CLS 只读排障完成并更新 SQL 文档
+
+- 时间：2026-05-26 20:14
+- 状态：已完成
+- 已完成：使用用户授权的真实 raw CLS 只读查询完成排障。先通过 `DescribeTopics` 找到原始事实 topic `boss`；再用 `SearchLog` 查询 `candidate_chat.snapshot_captured`。最近窗口内 raw 结果为 370 条快照、178 个会话、2449 条消息；所有消息非正文字段只有 `direction/fingerprint/messageAt/messageIndex`，其中 `direction=unknown` 为 2449/2449，`messageAt` 和 `messageIndex` 均存在。按日期/操作员聚合也显示所有操作员的 `known_direction=0`。因此当前历史数据无法可靠回算候选人/BOSS 方向相关指标。已把任务 6 的日期表达式从不可解析的 `from_iso8601_date(substr(cast(__TIMESTAMP__ ...)))` 改为 `histogram(__TIMESTAMP__, interval 1 day)` 并输出 `YYYY-MM-DD`，避免后续方向采集修复后仍被日期解析卡住；同时在文档中记录历史 `direction=unknown` 的不可回算风险。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/04-aggregation-query-api.md`
+  - `docs/modules/07-cls-scheduled-sql-tasks.md`
+- 当前验证结果：
+  - 真实 CLS 只读排障已完成；未输出聊天正文。
+  - 任务 6 SQL 字符数为 4679，低于 CLS 12000 限制。
+  - 任务 6 SQL 不包含 `with` CTE，包含 `histogram(__TIMESTAMP__, interval 1 day)`。
+  - `git diff --check -- docs/ai-worklog.md docs/modules/04-aggregation-query-api.md docs/modules/07-cls-scheduled-sql-tasks.md` 通过。
+- 中断续写入口：最终回复需说明真实 raw 结果，并按 SQL 修改输出规则贴出完整任务 6 SQL；如果要让后续新数据产生回复指标，需要修复采集侧 `messages[].direction`，历史 `unknown` 数据不能可靠回算。

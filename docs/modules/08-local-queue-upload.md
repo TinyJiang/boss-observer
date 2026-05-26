@@ -34,9 +34,9 @@ BOSS 页面操作发生在浏览器中，网络、页面刷新、标签页关闭
 
 按模块维护 produced/uploaded/failed/pending 事件状态，用于 popup 显示绿色/红色健康状态。这里统计的是事实事件数，不是业务动作数；例如一次成功打招呼通常会产生点击和成功两条事件。
 
-### 3.5 预留事件类型
+### 3.5 运行链路状态
 
-`queue.write_failed`、`upload.started`、`upload.succeeded`、`upload.failed` 已在事件枚举中预留，但当前实现不把它们作为正式业务事件流主动上报；上传和队列状态以 debug/profile、popup 生产统计和控制台诊断为准。
+本地队列写入、上传开始、上传成功和上传失败不作为正式业务事件流主动上报；上传和队列状态以 debug/profile、popup 生产统计和控制台诊断为准。
 
 ## 4. 工作流程
 

@@ -34,9 +34,10 @@
 - `upload.lastUploadResult`：最近上传成功结果，包括目标类型、HTTP 状态、批大小、上传时间。
 - `upload.lastUploadError`：最近上传失败摘要，包括错误消息、发生时间、批大小。
 - `moduleHealth`：popup 红绿状态的直接计算结果。
-- `productionStats`：各模块生产统计和待补采聊天名单。
-- `networkDebug`：网络调试开关和请求摘要，不含 request/response body。
-- `recentEvents`：最近事件摘要，不含聊天 `messages` 正文。
+- `productionStats`：各模块生产统计。这里的 `pendingCount` 是本地队列中尚未成功上传的事实事件数，不是“可见聊天列表中还没点开的候选人数”。
+- `chatPendingCandidates`：popup 的“待上传聊天”本地-only名单，来自当前可见聊天列表与本地成功上报水位的比较，不写入 CLS。
+- `networkDebug`：网络调试开关和最多 80 条请求摘要，不含 request/response body。内部 Debug 页的网络捕获可以保留更长的本地响应预览，但会按约 2MB 总预算裁剪，不进入下载 Profile。
+- `recentEvents`：最多 1000 条最近事件摘要，不含聊天 `messages` 正文。后台仍只保留少量原始事件用于 raw debug，Profile 使用脱敏摘要历史来支持较长时间窗口排查。
 
 ## 4. 分析顺序
 
@@ -46,18 +47,20 @@
 2. `runtime.config.uploadEnabled` 和 `runtime.config.uploadTargetType`：确认上传开关和目标是否正确。
 3. `runtime.queueSize`、`runtime.upload.lastUploadResult`、`runtime.upload.lastUploadError`：判断是未上传、上传失败，还是已上传但本地状态未清。
 4. `runtime.moduleHealth`：确认 popup 哪一类显示红色。
-5. `runtime.productionStats.unreportedChats`：如果聊天记录红色，先看这里列出的姓名、职位、最近消息时间和 `reportRequiredEventId`。
-6. `runtime.recentEvents`：按时间从新到旧对比 `candidate_chat.report_required` 和 `candidate_chat.snapshot_captured`，重点看 `candidate.candidateId`、`candidate.profile.displayName`、`listItem.jobTitle`、`chat.jobTitle`、`listItem.lastMessageAt`、`chat.lastMessageAt`、`chat.coverageLastMessageAt`、`chat.listObservedLastMessageAt`。
-7. `runtime.networkDebug`：只有排查 BOSS 接口结构或候选人详情接口时才需要看；默认只用于确认请求类别、状态码和 URL 路径。
+5. `runtime.chatPendingCandidates`：如果 popup 提示“待上传聊天”，先看这里列出的姓名、职位和列表最近消息时间。
+6. `runtime.productionStats.modules.candidate_chat`：确认聊天模块的 produced/uploaded/failed/pending 事件数。聊天快照属于即时 flush 事件，上传成功很快时 `pendingCount = 0` 是正常状态。
+7. `runtime.recentEvents`：按时间从新到旧查看 `candidate_chat.opened`、`candidate_chat.snapshot_captured`、`candidate_chat.wechat_captured` 和 `candidate_chat.capture_failed`。排查聊天正文上传时优先看 `candidate_chat.snapshot_captured` 的 `candidate.profile.displayName`、`chat.jobTitle`、`chat.messageCount`、`chat.lastMessageAt`、`chat.coverageLastMessageAt`、`chat.listObservedLastMessageAt`。
+8. `runtime.networkDebug`：只有排查 BOSS 接口结构或候选人详情接口时才需要看；默认只用于确认请求类别、状态码和 URL 路径。
 
 ## 5. 常见判断
 
 - `queueSize > 0` 且无 `lastUploadError`：可能还没到 flush 时机，或刚生成事件等待下一次上传。
 - `queueSize > 0` 且有 `lastUploadError`：优先排查网络、CLS 匿名上传、topic 配置或 HTTP 状态。
-- `lastUploadResult.status = 200` 但聊天仍红：对比 `report_required` 和 `snapshot_captured` 的姓名、职位和消息时间，判断是否身份 key 未匹配或快照时间未覆盖。
+- `lastUploadResult.status = 200`、`queueSize = 0`、`candidate_chat.pendingCount = 0`：表示本地没有滞留待上传聊天事件；这不代表 `chatPendingCandidates` 一定为空。待上传聊天名单是本地-only提示，不是正式事件队列。
 - `snapshot_captured.chat.hasUncapturedListMessage = true`：说明用户手动从聊天列表打开时，列表显示的最新消息时间比详情 DOM 能解析到的最后一条文本更晚。此时本地水位使用 `coverageLastMessageAt` 判定补采完成，但聊天正文只代表详情 DOM 当时可见且可解析的文本。
-- 待补采列表出现日期、职位分组、按钮文案：说明聊天列表 DOM 解析误判，应回到 `recentEvents` 找到对应 `report_required` 的 `listItem.displayName` 和原页面结构。
-- `recentEvents` 没有目标事件：先确认 BOSS 页面是否注入、页面 URL 是否在 manifest 匹配范围内，以及插件是否刚重载清空了运行态。
+- `chatPendingCandidates.items` 非空但 `productionStats.candidate_chat.pendingCount = 0`：说明前台提示有可点开补采的会话，但本地事件队列没有积压；点开对应候选人后应生成 `candidate_chat.snapshot_captured` 并即时上传。
+- 看不到“待上传聊天人名”：先确认当前是否在聊天页、可见列表里是否有今天明确时间的会话，以及本地上报水位是否已经覆盖列表最近消息时间。
+- `recentEvents` 没有目标事件：先确认 BOSS 页面是否注入、页面 URL 是否在 manifest 匹配范围内，以及插件是否刚重载清空了运行态。当前 Profile 摘要上限是 1000 条，如果高频页面连续运行很久，仍可能被后续事件挤出。
 
 ## 6. 隐私边界
 
@@ -71,4 +74,4 @@ Profile 不应包含：
 - 完整上传 endpoint 或完整 CLS topic id。
 - 图片、语音、附件 URL 或二进制内容。
 
-如果某次排查确实需要原始事件或聊天正文，只能由用户明确确认后，从内部 Debug 页面或 CLS 中单独提供目标事件，且只提供排查所需的最小片段。
+如果某次排查确实需要原始事件或聊天正文，只能由用户明确确认后，从内部 Debug 页面或 CLS 中单独提供目标事件，且只提供排查所需的最小片段。网络调试预览只用于人工排查接口结构，默认上限为单请求 1MB、总历史约 2MB；不要把它当作业务日志导出渠道。

@@ -93,7 +93,7 @@
 - `context` 表示“采集当下”的页面快照，不保证和 `payload` 内的历史页对象一致。
 - `context.pageUrl` / `context.pageType` 适合做分析维度。
 - `context.pageTitle` 只作为辅助信息，不建议作为主键。
-- `context.jobContext` 会随候选人曝光、详情、打招呼等后续事件进入上下文，适合做岗位维度关联；第一版只包含 `jobId`、`jobIdSource`、`jobStatus`、`jobStatusSource`，不包含职位描述正文、识别来源 URL 或更新时间。
+- `context.jobContext` 会随候选人曝光、详情、打招呼、聊天等后续事件进入上下文，适合做岗位维度关联；当前包含 `jobId`、`jobIdSource`、`jobName`、`jobNameSource`、`jobStatus`、`jobStatusSource`。其中 `jobName` 只保存页面可见的当前职位展示名称，不包含职位描述正文、薪资详情正文、完整 JD、识别来源 URL 或更新时间。
 
 ## 5. 页面类型枚举
 
@@ -134,13 +134,11 @@
 | `page_session.boss_page_entered` | 进入 BOSS 页面 |
 | `page_session.boss_page_left` | 离开 BOSS 页面 |
 | `page_session.page_changed` | 页面切换 |
-| `page_session.page_dwell_recorded` | 页面停留记录 |
 | `page_session.plugin_exception` | 插件异常 |
 | `job_context.detected` | 识别到当前职位上下文 |
 | `job_context.changed` | 当前职位上下文变化 |
 | `candidate_filter.panel_opened` | 候选人筛选面板打开 |
 | `candidate_filter.applied` | 候选人筛选条件确认/应用 |
-| `candidate_list.list_viewed` | 候选人列表曝光 |
 | `candidate_list.card_exposed` | 候选人卡片曝光 |
 | `candidate_detail.opened` | 候选人详情打开 |
 | `candidate_detail.closed` | 候选人详情关闭 |
@@ -151,15 +149,11 @@
 | `candidate_chat.snapshot_captured` | 候选人聊天文本快照已采集 |
 | `candidate_chat.wechat_captured` | 已换微信候选人的微信信息已采集 |
 | `candidate_chat.capture_failed` | 聊天采集异常 |
-| `queue.write_failed` | 本地队列写入失败 |
-| `upload.started` | 开始上传 |
-| `upload.succeeded` | 上传成功 |
-| `upload.failed` | 上传失败 |
 
 说明：
 
-- 当前实现已经定义了这些枚举；部分事件可能在后续阶段才真正发出。
-- `queue.write_failed`、`upload.started`、`upload.succeeded`、`upload.failed` 当前属于预留运行链路事件类型；现阶段上传成功/失败主要记录在 debug state、诊断 profile 和 popup 生产统计中，不作为正式业务事件流主动上报。
+- 当前正式业务事件会过滤高频低价值或运行链路类打点；页面停留、列表页级曝光、本地队列和上传过程不作为正式事件类型写入业务日志。
+- 上传成功/失败、队列积压和丢弃风险主要记录在 debug state、诊断 profile 和 popup 生产统计中。
 - 后端应把 `type` 当成稳定分组键，不要把它映射成数字编码后丢掉原值。
 
 ## 7. 常见 payload 约定
@@ -203,18 +197,6 @@
 - `source`: 触发来源。
 - `leftPageType` / `leftPageUrl`: 只在离开事件里出现，用于在根部 `context` 已经变成非 BOSS 页面时保留离开前页面。
 
-### 7.3 `page_session.page_dwell_recorded`
-
-```json
-{
-  "dwellMs": 11999,
-  "reason": "route:poll"
-}
-```
-
-- `dwellMs`: 停留时长，毫秒。
-- `reason`: 触发原因。
-
 ### 7.5 `page_session.plugin_exception`
 
 ```json
@@ -232,12 +214,16 @@
   "previous": {
     "jobId": "old-job",
     "jobIdSource": "url.jobid",
+    "jobName": "直播中控",
+    "jobNameSource": "dom.job_menu",
     "jobStatus": "0",
     "jobStatusSource": "url.status"
   },
   "current": {
     "jobId": "80ddfe02037b9e230nd-3d27FlRT",
     "jobIdSource": "url.jobid",
+    "jobName": "主播运营",
+    "jobNameSource": "dom.selected_job_title",
     "jobStatus": "0",
     "jobStatusSource": "url.status"
   }
@@ -248,11 +234,13 @@
 - `job_context.changed`: 当前职位 ID 或状态参数变化时发出。
 - `jobId`: 当前职位 ID。第一版优先来自 URL 查询参数或 DOM dataset，例如 `jobid`、`jobId`、`encryptJobId`、`positionId`。
 - `jobIdSource`: 职位 ID 来源，例如 `url.jobid` 或 `dataset.jobId`。
+- `jobName`: 当前职位展示名称，例如 `主播运营`、`直播中控`；识别不到时省略。若页面顶部职位选择器展示为 `兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时`，该整段作为当前职位展示名称保存。插件只清理父容器误拼入的推荐 tab 文本和末尾图标字符，不从职位描述正文、薪资详情正文或完整 JD 中提取。
+- `jobNameSource`: 职位名称来源，当前常见值为 `dom.selected_job_title`、`dom.job_menu`、`page_title`；来源不明确时省略或使用 `unknown`。
 - `jobStatus`: URL 或 dataset 中可见的职位状态参数，识别不到时省略。
 - `jobStatusSource`: 职位状态来源，识别不到时省略。
-- `sourceUrl`、`confidence`、`updatedAt` 等识别诊断字段不进入正式 payload；岗位分析优先使用 `jobId` 和根部 `context.jobContext.jobId`。
+- `sourceUrl`、`confidence`、`updatedAt` 等识别诊断字段不进入正式 payload；岗位分析优先使用根部 `context.jobContext.jobId` 和 `context.jobContext.jobName`。
 
-识别成功后，后续事件的 `context.jobContext` 会携带同样结构。当前第一版不会从页面正文猜测职位名称，也不会采集职位描述正文。
+识别成功后，后续事件的 `context.jobContext` 会携带同样结构。如果同一职位先识别到 `jobId`，之后页面才渲染出可见 `jobName`，插件会更新职位上下文，后续事件会携带补齐后的名称。
 
 ### 7.7 `candidate_filter.panel_opened`
 
@@ -306,20 +294,6 @@
 当前会把每次可识别的筛选确认动作当作事实事件记录。如果用户重复点击确认，或 BOSS DOM 在一次操作中触发多次确认点击，可能出现同一 `openedEventId` 下多条 `candidate_filter.applied`；后端如需把“一次筛选操作”聚合为单条，应按 `openedEventId`、筛选摘要和时间窗口做分析侧去重，不要要求插件端吞掉事实点击。
 
 当前第一版会在探针内保留最近一次确认的筛选摘要，但尚未把筛选上下文写入候选人列表、详情或打招呼事件；后续待真机确认字段稳定后再接入跨事件上下文。
-
-### 7.9 `candidate_list.list_viewed`
-
-```json
-{
-  "source": "poll",
-  "listUrl": "https://www.zhipin.com/web/chat/recommend",
-  "listPageType": "candidate_recommend"
-}
-```
-
-- `source`: 触发来源，当前常见值为 `start` 或 `poll`。
-- `listUrl`: 候选人列表对应的顶层页面 URL。
-- `listPageType`: 列表页面类型，当前第一版覆盖推荐、搜索、意向沟通和互动候选人页面。
 
 ### 7.10 `candidate_list.card_exposed`
 
@@ -473,7 +447,7 @@
 ```
 
 - `entry`: 当前识别到的打招呼入口，常见值为 `candidate_list`、`candidate_detail`、`chat` 或 `unknown`。
-- `candidate`: 与候选人列表曝光/详情打开共用候选人身份和 `profile` 快照结构。
+- `candidate`: 与候选人卡片曝光/详情打开共用候选人身份和 `profile` 快照结构。
 - 如果点击目标能关联到已曝光卡片，`candidate` 会携带同一组 `candidateId`、`exposureKey` 和 `exposedEventId`；结果事件会沿用 clicked 事件里的 `candidate`。
 - 如果点击目标只能读到按钮局部文本，插件会按 `candidateId` 回查本地候选人快照；若最近打开的详情候选人仍处于可见/刷新有效期内，打招呼事件会继承该详情候选人的 `candidateId`、基础 `profile` 和已有关联字段，避免生成无法与列表/详情事件串联的按钮文本指纹 ID。详情关闭时会清理这份兜底上下文。
 - `page`、`sourceUrl`、`greeting.actionLabel`、`greeting.targetKey`、`greeting.matchedSignals` 不进入正式 payload；点击和结果通过事件根部 ID 与结果事件的 `clickedEventId` 关联。
@@ -588,7 +562,8 @@
 ```
 
 - 事件在打开或切换聊天窗口时尝试生成。插件端以本地成功上报水位判断是否提交：无水位、或本次快照 `chat.lastMessageAt` 晚于 `lastReportedMessageAt` 时进入上传流程；已经成功覆盖到最新消息时不重复提交。只有服务器返回成功后，background 才推进本地聊天上报水位。
-- `chat.messages` 只包含当前聊天窗口已渲染、可读取的文本消息。图片、语音、附件 URL 和二进制内容不进入 payload。
+- `chat.messages` 只包含当前聊天窗口已渲染、可读取的文本消息。插件会先按 `extension/src/shared/chat-message-cleanup-rules.json` 过滤 BOSS 系统卡片、操作控件和媒体占位文本；系统卡片文案默认按整行精确匹配，不使用 `contains` 模糊匹配。图片、语音、附件 URL 和二进制内容不进入 payload。
+- `chat.messages[].direction` 固定为 `candidate`、`recruiter` 或 `unknown`。采集侧不得根据聊天正文内容猜方向；当前优先使用消息气泡 DOM 结构判断，包括 BOSS 页面上的左右方向 class、发送方/当前账号属性、左右位置，以及 `已读`、`送达`、`未读` 这类归属于当前账号消息的状态文本。`candidate` 表示候选人/牛人/Geek 发出的文本消息，`recruiter` 表示 BOSS/招聘者/当前账号发出的文本消息；只有缺少上述稳定结构信号时才输出 `unknown`。
 - `chat.snapshotCompleteness` 当前固定为 `visible_dom`；`mayBeIncomplete: true` 表示插件没有自动滚动加载历史，不承诺完整覆盖所有历史消息。
 - `chat.mediaSummary` 只记录媒体节点数量，不记录媒体地址。
 
@@ -634,6 +609,7 @@
 - `sessionId`
 - `pageType`
 - `context.jobContext.jobId`
+- `context.jobContext.jobName`
 - `event.type`
 - `pluginVersion`
 - `sourceTabId`
@@ -665,7 +641,7 @@
 - `candidate_detail.opened`、`candidate_detail.closed`、`candidate_greeting.clicked`、`candidate_greeting.succeeded`、`candidate_greeting.failed`、`candidate_chat.snapshot_captured`、`candidate_chat.wechat_captured` 入队后会立即尝试 flush，减少详情、打招呼和聊天快照这类关键事件的等待时间。
 - 其他事件达到 `uploadBatchSize` 或后台 alarm 触发时批量上传。Chrome alarm 当前最小周期约 1 分钟，因此 `flushIntervalMs` 配置低于 1 分钟时不会得到更短的定时 flush。
 - 上传成功后从队列删除；上传失败时保留在队列并增加重试计数，上传结果进入 debug state、诊断 profile 和 popup 生产统计。
-- 当前不把 `upload.started`、`upload.succeeded`、`upload.failed` 作为正式业务事件写入 CLS；这些类型是运行链路事件预留值。
+- 当前不把本地队列和上传过程作为正式业务事件写入 CLS；上传成功/失败状态进入 debug state、诊断 profile 和 popup 生产统计。
 
 上传目标使用 CLS 匿名上传的 HTTP 入口：
 
@@ -703,6 +679,7 @@ https://{region}.cls.tencentcs.com/tracklog?topic_id={topic_id}
 | `page_title` | `context.pageTitle` |
 | `is_boss_page` | `context.isBossPage` |
 | `job_id` | `context.jobContext.jobId` |
+| `job_name` | `context.jobContext.jobName` |
 | `job_status` | `context.jobContext.jobStatus` |
 | `operator_id` | `operator.operatorId` |
 | `operator_account_name` | `operator.accountName` |
@@ -716,7 +693,7 @@ https://{region}.cls.tencentcs.com/tracklog?topic_id={topic_id}
 
 建议：
 
-- `event_type`、`page_type`、`session_id`、`job_id`、`operator_id`、`operator_account_name`、`plugin_version`、`source_tab_id`、`source_window_id` 作为主要索引字段。
+- `event_type`、`page_type`、`session_id`、`job_id`、`job_name`、`operator_id`、`operator_account_name`、`plugin_version`、`source_tab_id`、`source_window_id` 作为主要索引字段。
 - `payload_json` 和 `context_json` 作为原始备份，不作为主要查询字段。
 - 如果需要按事件附加字段检索，优先把该字段提到扁平列，不要依赖嵌套 JSON。
 - 匿名直传要求 CLS 日志主题开启匿名上传；如果后续数据污染风险不可接受，再切回自建接收服务代理写入 CLS。

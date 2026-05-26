@@ -155,6 +155,31 @@ def load_cls_daily_summary_search_config(env: Mapping[str, str] | None = None) -
   )
 
 
+def load_cls_daily_basic_summary_search_config(env: Mapping[str, str] | None = None) -> ClsSearchConfig:
+  """Load development SearchLog configuration for daily operator basic-stat output."""
+
+  values = env if env is not None else os.environ
+  return _load_prefixed_cls_search_config(
+    values,
+    prefix="CLS_DAILY_BASIC_SUMMARY",
+    default_query="*",
+    default_window="today",
+    token_name="CLS_DAILY_BASIC_SUMMARY_TOKEN",
+    secret_id_names=(
+      "TENCENTCLOUD_SECRET_ID",
+      "CLS_DAILY_BASIC_SUMMARY_SECRET_ID",
+      "CLS_DAILY_SUMMARY_SECRET_ID",
+      "CLS_SUMMARY_SECRET_ID",
+    ),
+    secret_key_names=(
+      "TENCENTCLOUD_SECRET_KEY",
+      "CLS_DAILY_BASIC_SUMMARY_SECRET_KEY",
+      "CLS_DAILY_SUMMARY_SECRET_KEY",
+      "CLS_SUMMARY_SECRET_KEY",
+    ),
+  )
+
+
 def load_cls_log_quality_search_config(env: Mapping[str, str] | None = None) -> ClsSearchConfig:
   """Load development SearchLog configuration for 10-minute log-quality output."""
 
@@ -174,6 +199,8 @@ def search_cls_log_values(
   config: ClsSearchConfig,
   *,
   now: datetime | None = None,
+  start_at: datetime | None = None,
+  end_at: datetime | None = None,
   client: Any | None = None,
 ) -> list[dict[str, Any]]:
   """Search CLS and return decoded log JSON values."""
@@ -189,7 +216,7 @@ def search_cls_log_values(
   for _ in range(config.max_pages):
     response = api_client.call(
       "SearchLog",
-      build_search_payload(config, now=now, context=context),
+      build_search_payload(config, now=now, start_at=start_at, end_at=end_at, context=context),
       version=CLS_SEARCH_VERSION,
       region=config.region,
     )
@@ -204,17 +231,55 @@ def search_cls_log_values(
   return values
 
 
+def query_cls_metric_range(
+  config: ClsSearchConfig,
+  *,
+  query: str,
+  start_at: datetime,
+  end_at: datetime,
+  step_seconds: int = 60,
+  client: Any | None = None,
+) -> list[dict[str, Any]]:
+  """Query a CLS metric topic with PromQL range syntax."""
+
+  api_client = client or TencentCloudApiClient(
+    config.credentials,
+    endpoint=config.endpoint,
+    service="cls",
+  )
+  response = api_client.call(
+    "QueryRangeMetric",
+    build_metric_range_payload(
+      config,
+      query=query,
+      start_at=start_at,
+      end_at=end_at,
+      step_seconds=step_seconds,
+    ),
+    version=CLS_SEARCH_VERSION,
+    region=config.region,
+  )
+  body = _response_body(response)
+  _raise_cls_error(body, "QueryRangeMetric")
+  return decode_metric_query_result(body.get("Result"))
+
+
 def build_search_payload(
   config: ClsSearchConfig,
   *,
   now: datetime | None = None,
+  start_at: datetime | None = None,
+  end_at: datetime | None = None,
   context: str | None = None,
 ) -> dict[str, Any]:
-  end_at = now or datetime.now(timezone.utc)
-  if end_at.tzinfo is None:
-    end_at = end_at.replace(tzinfo=timezone.utc)
-  end_ms = int(end_at.timestamp() * 1000)
-  start_ms = int(_search_start_at(config, end_at).timestamp() * 1000)
+  resolved_end_at = end_at or now or datetime.now(timezone.utc)
+  if resolved_end_at.tzinfo is None:
+    resolved_end_at = resolved_end_at.replace(tzinfo=timezone.utc)
+  resolved_start_at = start_at or _search_start_at(config, resolved_end_at)
+  if resolved_start_at.tzinfo is None:
+    resolved_start_at = resolved_start_at.replace(tzinfo=timezone.utc)
+  end_ms = int(resolved_end_at.timestamp() * 1000)
+  start_ms = int(resolved_start_at.timestamp() * 1000)
   payload = {
     "TopicId": config.topic_id,
     "From": start_ms,
@@ -230,15 +295,48 @@ def build_search_payload(
   return payload
 
 
+def build_metric_range_payload(
+  config: ClsSearchConfig,
+  *,
+  query: str,
+  start_at: datetime,
+  end_at: datetime,
+  step_seconds: int = 60,
+) -> dict[str, Any]:
+  """Build the payload for the CLS QueryRangeMetric API."""
+
+  if start_at.tzinfo is None:
+    start_at = start_at.replace(tzinfo=timezone.utc)
+  if end_at.tzinfo is None:
+    end_at = end_at.replace(tzinfo=timezone.utc)
+  return {
+    "TopicId": config.topic_id,
+    "Query": query,
+    "Start": int(start_at.timestamp()),
+    "End": int(end_at.timestamp()),
+    "Step": max(1, int(step_seconds)),
+  }
+
+
+def decode_metric_query_result(value: Any) -> list[dict[str, Any]]:
+  """Decode CLS metric API Result JSON into a list of series."""
+
+  decoded = value
+  if isinstance(value, str):
+    try:
+      decoded = json.loads(value)
+    except json.JSONDecodeError:
+      return []
+  if not isinstance(decoded, list):
+    return []
+  return [dict(item) for item in decoded if isinstance(item, Mapping)]
+
+
 def iter_log_values_from_search_response(response: Mapping[str, Any]) -> Iterable[dict[str, Any]]:
   body = _response_body(response)
   if not isinstance(body, Mapping):
     return
-  error = body.get("Error")
-  if isinstance(error, Mapping):
-    code = error.get("Code") or "Unknown"
-    message = error.get("Message") or "CLS SearchLog failed"
-    raise RuntimeError(f"CLS SearchLog failed: {code}: {message}")
+  _raise_cls_error(body, "SearchLog")
 
   results = body.get("Results") or []
   if not isinstance(results, list):
@@ -267,6 +365,14 @@ def _iter_values_from_log_info(item: Mapping[str, Any]) -> Iterable[dict[str, An
 def _response_body(response: Mapping[str, Any]) -> Mapping[str, Any]:
   body = response.get("Response", response)
   return body if isinstance(body, Mapping) else {}
+
+
+def _raise_cls_error(body: Mapping[str, Any], action: str) -> None:
+  error = body.get("Error")
+  if isinstance(error, Mapping):
+    code = error.get("Code") or "Unknown"
+    message = error.get("Message") or f"CLS {action} failed"
+    raise RuntimeError(f"CLS {action} failed: {code}: {message}")
 
 
 def _decode_json_object(value: str) -> dict[str, Any] | None:

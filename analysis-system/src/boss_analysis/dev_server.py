@@ -5,15 +5,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import asdict, is_dataclass
+import threading
+from dataclasses import asdict, is_dataclass, replace
 from datetime import date, datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from boss_analysis.api import AnalysisQueryService
+from boss_analysis.consumer import (
+  iter_daily_basic_summaries_from_file,
+  iter_daily_basic_summaries_from_metric_topic,
+  iter_daily_basic_summaries_from_search,
+)
 from boss_analysis.dev_data import create_dev_dataset
 from boss_analysis.operator_config import OperatorConfigProvider
 
@@ -44,14 +50,17 @@ class DevApp:
     self._fact_store = None
     self._minute_summaries = ()
     self._daily_active_durations = ()
+    self._daily_basic_summaries = ()
     self._log_quality_summaries = ()
     self._generated_at: datetime | None = None
     self.source = None
     self.summary_source = None
     self.daily_summary_source = None
+    self.daily_basic_summary_source = None
     self.log_quality_source = None
     self.query_service = None
     self._last_refresh_at: datetime | None = None
+    self._refresh_lock = threading.Lock()
     self._refresh()
 
   def _refresh(self) -> None:
@@ -59,6 +68,7 @@ class DevApp:
       data_file=self._data_file,
       data_source=self._data_source,
       use_demo_fallback=self._use_demo_fallback,
+      include_daily_basic_summaries=False,
     )
     if self._require_real_data and dataset.source.kind not in {"real_file", "summary"}:
       raise ValueError(
@@ -68,17 +78,24 @@ class DevApp:
     self.source = dataset.source
     self.summary_source = dataset.summary_source
     self.daily_summary_source = dataset.daily_summary_source
+    self.daily_basic_summary_source = dataset.daily_basic_summary_source
     self.log_quality_source = dataset.log_quality_source
     self._raw_repository = dataset.raw_repository
     self._fact_store = dataset.fact_store
     self._minute_summaries = dataset.minute_summaries
     self._daily_active_durations = dataset.daily_active_durations
+    self._daily_basic_summaries = dataset.daily_basic_summaries
     self._log_quality_summaries = dataset.log_quality_summaries
     self._generated_at = dataset.generated_at
     self.query_service = self._build_query_service(dataset.generated_at)
     self._last_refresh_at = datetime.now(timezone.utc)
 
-  def _build_query_service(self, generated_at: datetime | None = None) -> AnalysisQueryService:
+  def _build_query_service(
+    self,
+    generated_at: datetime | None = None,
+    *,
+    daily_basic_summaries=None,
+  ) -> AnalysisQueryService:
     source_kind = self.source.kind if self.source is not None else "empty"
     clock_value = generated_at or self._generated_at or datetime.now(timezone.utc)
     if self._fact_store is None:
@@ -88,6 +105,9 @@ class DevApp:
       raw_repository=self._raw_repository,
       minute_summaries=self._minute_summaries,
       daily_active_durations=self._daily_active_durations,
+      daily_basic_summaries=self._daily_basic_summaries
+        if daily_basic_summaries is None
+        else daily_basic_summaries,
       log_quality_summaries=self._log_quality_summaries,
       operator_profiles=self._operator_config_provider.load(),
       clock=lambda: clock_value if source_kind in {"demo", "empty"} else datetime.now(timezone.utc),
@@ -98,13 +118,23 @@ class DevApp:
 
   def _refresh_if_needed(self) -> None:
     if self.source is None or self._last_refresh_at is None:
-      self._refresh()
+      with self._refresh_lock:
+        if self.source is None or self._last_refresh_at is None:
+          self._refresh()
       return
     if self.source.kind not in {"summary", "real_file"}:
       return
     age_seconds = (datetime.now(timezone.utc) - self._last_refresh_at).total_seconds()
     if age_seconds >= self._refresh_seconds:
-      self._refresh()
+      with self._refresh_lock:
+        if self.source is None or self._last_refresh_at is None:
+          self._refresh()
+          return
+        if self.source.kind not in {"summary", "real_file"}:
+          return
+        age_seconds = (datetime.now(timezone.utc) - self._last_refresh_at).total_seconds()
+        if age_seconds >= self._refresh_seconds:
+          self._refresh()
 
   def dashboard_payload(self) -> dict[str, Any]:
     self._refresh_if_needed()
@@ -117,6 +147,7 @@ class DevApp:
       "source": _to_jsonable(self.source),
       "summary_source": _to_jsonable(self.summary_source),
       "daily_summary_source": _to_jsonable(self.daily_summary_source),
+      "daily_basic_summary_source": _to_jsonable(self.daily_basic_summary_source),
       "log_quality_source": _to_jsonable(self.log_quality_source),
     }
 
@@ -148,6 +179,43 @@ class DevApp:
       "log_quality_source": _to_jsonable(self.log_quality_source),
     }
 
+  def history_payload(
+    self,
+    *,
+    operator_id: str | None = None,
+    active_date: str | None = None,
+    days: int | None = None,
+  ) -> dict[str, Any]:
+    self._refresh_if_needed()
+    self._reload_operator_config()
+    query_service = self.query_service
+    source = self.daily_basic_summary_source
+    records = None
+    if source is not None and source.kind == "daily_basic_summary_topic":
+      reader_mode = _daily_basic_summary_reader_mode()
+      reader = (
+        iter_daily_basic_summaries_from_search
+        if reader_mode == "log"
+        else iter_daily_basic_summaries_from_metric_topic
+      )
+      records = tuple(reader(
+        active_date=active_date,
+        operator_id=operator_id,
+        lookback_days=(days or 31) if active_date is None and operator_id else None,
+      ))
+    elif source is not None and source.kind == "daily_basic_summary_file" and source.detail:
+      records = tuple(iter_daily_basic_summaries_from_file(source.detail))
+    if records is not None:
+      query_service = self._build_query_service(daily_basic_summaries=records)
+      source = replace(source, record_count=len(records), loaded_at=datetime.now(timezone.utc))
+    return {
+      "history": _to_jsonable(query_service.history(
+        operator_id=operator_id,
+        active_date=active_date,
+      )),
+      "daily_basic_summary_source": _to_jsonable(source),
+    }
+
 
 def make_handler(app: DevApp):
   class DevRequestHandler(BaseHTTPRequestHandler):
@@ -176,8 +244,16 @@ def make_handler(app: DevApp):
           plugin_version=_first_query_value(query, "plugin_version"),
         ))
         return
+      if path == "/api/history":
+        query = parse_qs(parsed.query)
+        self._send_json(app.history_payload(
+          operator_id=_first_query_value(query, "operator_id"),
+          active_date=_first_query_value(query, "active_date"),
+          days=_int_query_value(query, "days"),
+        ))
+        return
       if path.startswith("/api/operator/"):
-        operator_id = path.rsplit("/", 1)[-1]
+        operator_id = _decode_path_segment(path.rsplit("/", 1)[-1])
         self._send_json(app.operator_payload(operator_id))
         return
       self.send_error(HTTPStatus.NOT_FOUND, "Not found")
@@ -318,6 +394,29 @@ def _first_query_value(query: dict[str, list[str]], key: str) -> str | None:
     return None
   value = values[0].strip()
   return value or None
+
+
+def _int_query_value(query: dict[str, list[str]], key: str) -> int | None:
+  value = _first_query_value(query, key)
+  if value is None:
+    return None
+  try:
+    parsed = int(value)
+  except ValueError:
+    return None
+  return max(1, min(parsed, 366))
+
+
+def _decode_path_segment(value: str) -> str:
+  return unquote(value)
+
+
+def _daily_basic_summary_reader_mode() -> str:
+  raw = os.environ.get("CLS_DAILY_BASIC_SUMMARY_SOURCE") or os.environ.get("CLS_DAILY_BASIC_SUMMARY_MODE")
+  value = (raw or "metric").strip().lower().replace("_", "-")
+  if value in {"log", "logs", "search", "searchlog", "search-log"}:
+    return "log"
+  return "metric"
 
 
 INDEX_HTML = """<!doctype html>
@@ -582,7 +681,7 @@ function renderOperators(operators) {
     row.innerHTML = `
       <div>
         <div class="operator-main"><span class="status-dot"></span>${operator.operator_id}</div>
-        <div class="operator-meta">${operator.last_action} · ${operator.job_id || "no job"}</div>
+        <div class="operator-meta">${operator.last_action} · ${operator.job_name || operator.job_id || "no job"}</div>
       </div>
       <div class="operator-time">${operator.minutes_since_active}m ago</div>
     `;

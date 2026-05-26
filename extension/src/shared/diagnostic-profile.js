@@ -1,12 +1,18 @@
-import { normalizeNetworkDebugState } from "./network-debug.js";
+import {
+  NETWORK_DEBUG_MAX_RECENT_REQUESTS,
+  normalizeNetworkDebugState
+} from "./network-debug.js";
 import {
   getModuleHealthStatus,
   MODULE_REPORT_DEFINITIONS,
   normalizeProductionStats
 } from "./production-stats.js";
+import { normalizeChatPendingCandidatesState } from "./chat-pending-candidates.js";
 import { nowLocalIsoString } from "./time.js";
 
 export const DIAGNOSTIC_PROFILE_SCHEMA_VERSION = "1.0.0";
+export const DIAGNOSTIC_PROFILE_RECENT_EVENT_LIMIT = 1000;
+export const DIAGNOSTIC_PROFILE_NETWORK_REQUEST_LIMIT = NETWORK_DEBUG_MAX_RECENT_REQUESTS;
 
 export function buildDiagnosticProfile(state = {}, {
   manifest = {},
@@ -14,6 +20,7 @@ export function buildDiagnosticProfile(state = {}, {
 } = {}) {
   const productionStats = normalizeProductionStats(state.productionStats);
   const networkDebug = normalizeNetworkDebugState(state.networkDebug);
+  const chatPendingCandidates = normalizeChatPendingCandidatesState(state.chatPendingCandidates);
 
   return {
     schemaVersion: DIAGNOSTIC_PROFILE_SCHEMA_VERSION,
@@ -36,11 +43,13 @@ export function buildDiagnosticProfile(state = {}, {
       },
       moduleHealth: buildModuleHealth(productionStats, {
         uploadEnabled: state.config?.uploadEnabled === true,
-        hasUploadError: Boolean(state.lastUploadError)
+        hasUploadError: Boolean(state.lastUploadError),
+        hasPendingChatCandidates: chatPendingCandidates.items.length > 0
       }),
+      chatPendingCandidates,
       productionStats: summarizeProductionStats(productionStats),
       networkDebug: summarizeNetworkDebug(networkDebug),
-      recentEvents: summarizeRecentEvents(state.recentEvents)
+      recentEvents: summarizeProfileRecentEvents(state)
     }
   };
 }
@@ -53,12 +62,16 @@ export function buildDiagnosticProfileFilename(profile = {}) {
   return `boss-observer-profile-${version}-${timestamp}.json`;
 }
 
-function buildModuleHealth(productionStats, { uploadEnabled, hasUploadError }) {
+function buildModuleHealth(productionStats, { uploadEnabled, hasUploadError, hasPendingChatCandidates }) {
   return Object.fromEntries(MODULE_REPORT_DEFINITIONS.map((definition) => {
     const moduleStats = productionStats.modules[definition.id] || {};
-    const status = definition.id === "queue_upload" && (!uploadEnabled || hasUploadError)
-      ? "problem"
-      : getModuleHealthStatus(moduleStats);
+    let status = getModuleHealthStatus(moduleStats);
+    if (definition.id === "queue_upload" && (!uploadEnabled || hasUploadError)) {
+      status = "problem";
+    }
+    if (definition.id === "candidate_chat" && hasPendingChatCandidates) {
+      status = "problem";
+    }
     return [definition.id, {
       label: definition.label,
       status
@@ -76,10 +89,25 @@ function summarizeRecentEvents(events = []) {
   if (!Array.isArray(events)) {
     return [];
   }
-  return events.slice(0, 50).map(summarizeEvent);
+  return events.slice(0, DIAGNOSTIC_PROFILE_RECENT_EVENT_LIMIT).map(summarizeDiagnosticEvent);
 }
 
-function summarizeEvent(event = {}) {
+function summarizeProfileRecentEvents(state = {}) {
+  const summaryEvents = Array.isArray(state.recentEventSummaries) ? state.recentEventSummaries : [];
+  const rawEvents = Array.isArray(state.recentEvents) ? state.recentEvents : [];
+  if (summaryEvents.length === 0) {
+    return summarizeRecentEvents(rawEvents);
+  }
+
+  const seenIds = new Set(summaryEvents.map((event) => event?.id || event?.eventId).filter(Boolean));
+  const rawBackfill = rawEvents.filter((event) => {
+    const eventId = event?.id || event?.eventId;
+    return !eventId || !seenIds.has(eventId);
+  });
+  return summarizeRecentEvents([...summaryEvents, ...rawBackfill]);
+}
+
+export function summarizeDiagnosticEvent(event = {}) {
   return compactObject({
     id: event.id || event.eventId || "",
     type: event.type || "",
@@ -121,7 +149,7 @@ function summarizePayload(payload = {}) {
     current: summarizeContext(payload.current),
     previous: summarizeContext(payload.previous),
     upload: summarizeUploadPayload(payload),
-    payloadKeys: Object.keys(payload).sort()
+    payloadKeys: Array.isArray(payload.payloadKeys) ? payload.payloadKeys : Object.keys(payload).sort()
   });
 }
 
@@ -425,7 +453,7 @@ function summarizeNetworkDebug(networkDebug = {}) {
     stoppedAt: networkDebug.stoppedAt || null,
     requestCount: toCount(networkDebug.requestCount),
     recentRequestCount: Array.isArray(networkDebug.recentRequests) ? networkDebug.recentRequests.length : 0,
-    recentRequests: (networkDebug.recentRequests || []).slice(0, 30).map((request) => compactObject({
+    recentRequests: (networkDebug.recentRequests || []).slice(0, DIAGNOSTIC_PROFILE_NETWORK_REQUEST_LIMIT).map((request) => compactObject({
       id: request.id || "",
       observedAt: request.observedAt || "",
       sourcePageUrl: sanitizeUrl(request.sourcePageUrl),

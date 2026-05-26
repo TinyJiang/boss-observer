@@ -14,6 +14,8 @@ class MinuteSummaryRecord:
   minute: datetime
   operator_id: str | None = None
   job_id: str | None = None
+  job_name: str | None = None
+  plugin_version: str | None = None
   raw_operator_id: str | None = None
   card_exposed: int = 0
   detail_opened: int = 0
@@ -64,6 +66,67 @@ class DailyActiveDurationRecord:
   source_minute_count: int = 0
   source_row_count: int = 0
   recorded_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class DailyBasicStatsRecord:
+  """One daily operator basic-stat snapshot from the CLS log topic."""
+
+  metric_name: str
+  active_date: date
+  operator_id: str
+  operator_account_name: str | None = None
+  boss_account_name: str | None = None
+  boss_account_matched: str | None = None
+  first_active_minute: datetime | None = None
+  last_active_minute: datetime | None = None
+  active_minutes: int = 0
+  active_seconds: int = 0
+  observed_minutes: int = 0
+  session_count: int = 0
+  touched_job_count: int = 0
+  plugin_started: int = 0
+  boss_page_entered: int = 0
+  boss_page_left: int = 0
+  page_changed: int = 0
+  plugin_exception: int = 0
+  job_context_detected: int = 0
+  job_context_changed: int = 0
+  filter_panel_opened: int = 0
+  filter_applied: int = 0
+  card_exposed: int = 0
+  detail_opened: int = 0
+  detail_closed: int = 0
+  greeting_clicked: int = 0
+  greeting_succeeded: int = 0
+  greeting_failed: int = 0
+  chat_opened: int = 0
+  snapshot_captured: int = 0
+  wechat_captured: int = 0
+  capture_failed: int = 0
+  card_unique_candidates: int = 0
+  detail_unique_candidates: int = 0
+  greeting_unique_candidates: int = 0
+  chat_unique_candidates: int = 0
+  wechat_unique_candidates: int = 0
+  visible_message_count: int = 0
+  may_be_incomplete_count: int = 0
+  first_round_candidate_initiated_count: int = 0
+  first_round_boss_replied_count: int = 0
+  first_round_boss_reply_elapsed_median_ms: int = 0
+  first_round_boss_reply_elapsed_avg_ms: int = 0
+  chat_conversation_count: int = 0
+  boss_ended_conversation_count: int = 0
+  boss_reply_count: int = 0
+  boss_reply_elapsed_median_ms: int = 0
+  boss_reply_elapsed_avg_ms: int = 0
+  detail_duration_ms: int = 0
+  greeting_result_elapsed_ms: int = 0
+  total_events: int = 0
+  source_row_count: int = 0
+  recorded_at: datetime | None = None
+  has_values: bool = True
+  value_status: str = "ok"
 
 
 @dataclass(frozen=True)

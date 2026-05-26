@@ -12,6 +12,7 @@ import {
 
 const overallStatusEl = document.getElementById("overallStatus");
 const moduleStatusEl = document.getElementById("moduleStatus");
+const chatPendingCandidatesEl = document.getElementById("chatPendingCandidates");
 const downloadProfileButton = document.getElementById("downloadProfileButton");
 const openDebugButton = document.getElementById("openDebugButton");
 const refreshButton = document.getElementById("refreshButton");
@@ -56,10 +57,12 @@ async function render() {
   const collectionGate = evaluateCollectionGate(config, state.collectionGate?.bossAccount);
   const productionStats = state.productionStats || {};
   const modules = productionStats.modules || {};
+  const chatPendingCandidates = state.chatPendingCandidates?.items || [];
   const rows = buildStatusRows({
     modules,
     uploadEnabled: config.uploadEnabled === true,
-    hasUploadError: Boolean(state.lastUploadError)
+    hasUploadError: Boolean(state.lastUploadError),
+    hasPendingChatCandidates: chatPendingCandidates.length > 0
   });
   const overallStatus = !collectionGate.canCollect || rows.some((row) => row.status === "problem")
     ? "problem"
@@ -68,6 +71,7 @@ async function render() {
   renderOperatorConfig(config, collectionGate);
   renderOverallStatus(overallStatus);
   renderStatusRows(rows);
+  renderChatPendingCandidates(chatPendingCandidates);
 }
 
 async function saveOperatorConfig() {
@@ -162,13 +166,19 @@ function buildCollectionGateText(collectionGate) {
   return "严重：请先配置操作员ID和账号姓名，采集已停止";
 }
 
-function buildStatusRows({ modules = {}, uploadEnabled = false, hasUploadError = false } = {}) {
+function buildStatusRows({
+  modules = {},
+  uploadEnabled = false,
+  hasUploadError = false,
+  hasPendingChatCandidates = false
+} = {}) {
   return MODULE_REPORT_DEFINITIONS.map((definition) => {
     const status = getRowStatus({
       definition,
       moduleStats: modules[definition.id] || {},
       uploadEnabled,
-      hasUploadError
+      hasUploadError,
+      hasPendingChatCandidates
     });
     return {
       id: definition.id,
@@ -178,8 +188,11 @@ function buildStatusRows({ modules = {}, uploadEnabled = false, hasUploadError =
   });
 }
 
-function getRowStatus({ definition, moduleStats, uploadEnabled, hasUploadError }) {
+function getRowStatus({ definition, moduleStats, uploadEnabled, hasUploadError, hasPendingChatCandidates }) {
   if (definition.id === "queue_upload" && (!uploadEnabled || hasUploadError)) {
+    return "problem";
+  }
+  if (definition.id === "candidate_chat" && hasPendingChatCandidates) {
     return "problem";
   }
   return getModuleHealthStatus(moduleStats);
@@ -203,6 +216,37 @@ function renderStatusRows(rows) {
       <span class="state-text">${row.status === "ok" ? "正常" : "需处理"}</span>
     `;
     moduleStatusEl.appendChild(rowEl);
+  });
+}
+
+function renderChatPendingCandidates(items = []) {
+  chatPendingCandidatesEl.innerHTML = "";
+  if (!items.length) {
+    const rowEl = document.createElement("div");
+    rowEl.className = "chat-row ok";
+    rowEl.innerHTML = `
+      <span class="dot" aria-hidden="true"></span>
+      <span class="label">暂无</span>
+    `;
+    chatPendingCandidatesEl.appendChild(rowEl);
+    return;
+  }
+
+  items.forEach((item) => {
+    const rowEl = document.createElement("div");
+    rowEl.className = "chat-row problem";
+    const displayName = item.displayName || item.candidateId || "未识别候选人";
+    const meta = [item.lastMessageTimeText || item.lastMessageAt || "", item.jobTitle || ""]
+      .filter(Boolean)
+      .join(" · ");
+    rowEl.innerHTML = `
+      <span class="dot" aria-hidden="true"></span>
+      <span class="chat-main">
+        <span class="label">${escapeHtml(displayName)}</span>
+        ${meta ? `<span class="chat-meta">${escapeHtml(meta)}</span>` : ""}
+      </span>
+    `;
+    chatPendingCandidatesEl.appendChild(rowEl);
   });
 }
 

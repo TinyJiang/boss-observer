@@ -3,13 +3,11 @@ export const EVENT_TYPES = Object.freeze({
   BOSS_PAGE_ENTERED: "page_session.boss_page_entered",
   BOSS_PAGE_LEFT: "page_session.boss_page_left",
   PAGE_CHANGED: "page_session.page_changed",
-  PAGE_DWELL_RECORDED: "page_session.page_dwell_recorded",
   PLUGIN_EXCEPTION: "page_session.plugin_exception",
   JOB_CONTEXT_DETECTED: "job_context.detected",
   JOB_CONTEXT_CHANGED: "job_context.changed",
   CANDIDATE_FILTER_PANEL_OPENED: "candidate_filter.panel_opened",
   CANDIDATE_FILTER_APPLIED: "candidate_filter.applied",
-  CANDIDATE_LIST_VIEWED: "candidate_list.list_viewed",
   CANDIDATE_CARD_EXPOSED: "candidate_list.card_exposed",
   CANDIDATE_DETAIL_OPENED: "candidate_detail.opened",
   CANDIDATE_DETAIL_CLOSED: "candidate_detail.closed",
@@ -19,9 +17,5 @@ export const EVENT_TYPES = Object.freeze({
   CANDIDATE_CHAT_OPENED: "candidate_chat.opened",
   CANDIDATE_CHAT_SNAPSHOT_CAPTURED: "candidate_chat.snapshot_captured",
   CANDIDATE_CHAT_WECHAT_CAPTURED: "candidate_chat.wechat_captured",
-  CANDIDATE_CHAT_CAPTURE_FAILED: "candidate_chat.capture_failed",
-  QUEUE_WRITE_FAILED: "queue.write_failed",
-  UPLOAD_STARTED: "upload.started",
-  UPLOAD_SUCCEEDED: "upload.succeeded",
-  UPLOAD_FAILED: "upload.failed"
+  CANDIDATE_CHAT_CAPTURE_FAILED: "candidate_chat.capture_failed"
 });

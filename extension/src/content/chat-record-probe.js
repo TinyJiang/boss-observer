@@ -16,6 +16,10 @@ import {
   getChatSnapshotCoverageLastMessageAt,
   isIsoTimeAfter
 } from "../shared/chat-snapshot-coverage.js";
+import {
+  DEFAULT_CHAT_MESSAGE_CLEANUP_RULES,
+  shouldIgnoreChatMessageText
+} from "../shared/chat-message-cleanup.js";
 import { toLocalIsoString } from "../shared/time.js";
 
 const LEGACY_CHAT_REPORT_PROMPT_ATTRIBUTE = "data-boss-observer-chat-report-required";
@@ -34,18 +38,19 @@ const ACTIVE_STATUS_PATTERN = /(刚刚活跃|今日活跃|在线|本周活跃|�
 const MESSAGE_STATUS_PATTERN = /^(已读|送达|未读)\s+/;
 const WECHAT_CONTEXT_PATTERN = /(?:微信号?|wx|wechat|vx|v信|加我微信|加微信)/i;
 const WECHAT_ACCOUNT_PATTERN_SOURCE = "(?:微信号?|wx|wechat|vx|v信|加我微信|加微信)\\s*(?:是|为|:|：)?\\s*([A-Za-z][A-Za-z0-9_-]{4,30}|1[3-9]\\d{9})";
-const MESSAGE_CONTROL_TEXTS = new Set([
-  "求简历",
-  "换电话",
-  "换微信",
-  "约面试",
-  "不合适",
-  "发送",
-  "在线简历",
-  "附件简历",
-  "牛人分析器"
-]);
-
+const CHAT_PENDING_CANDIDATES_MESSAGE_KIND = "bossObserver.chatPendingCandidatesObserved";
+const CHAT_MESSAGE_DIRECTION_ELEMENT_SELECTOR = "div, li, p, span, section, article";
+const STRUCTURAL_DIRECTION_MAX_ANCESTOR_DEPTH = 6;
+const DIRECTION_UNKNOWN = "unknown";
+const DIRECTION_CANDIDATE = "candidate";
+const DIRECTION_RECRUITER = "recruiter";
+const RECRUITER_CLASS_PATTERN = /(?:^|[\s_-])(?:item-myself|myself|mine|self|me|right|outgoing|sent|recruiter|employer|owner|current-user|from-me)(?:$|[\s_-])/i;
+const CANDIDATE_CLASS_PATTERN = /(?:^|[\s_-])(?:item-friend|friend|other|left|incoming|received|geek|candidate|visitor|applicant|from-other|from-user)(?:$|[\s_-])/i;
+const RECRUITER_SIGNAL_PATTERN = /(?:^|[\s_:-])(?:myself|mine|self|right|outgoing|sent|boss|recruiter|employer|hr|owner|current-user|from-me|我|自己|本人|当前账号|招聘者|老板)(?:$|[\s_:-])/i;
+const CANDIDATE_SIGNAL_PATTERN = /(?:^|[\s_:-])(?:friend|other|left|incoming|received|geek|candidate|visitor|applicant|from-other|from-user|牛人|候选人|对方|应聘者|求职者)(?:$|[\s_:-])/i;
+const SELF_SIGNAL_KEY_PATTERN = /(?:^|[\s_:-])(?:is-self|self|mine|myself|from-me)(?:$|[\s_:-])/i;
+const TRUTHY_ATTRIBUTE_PATTERN = /^(?:true|1|yes|y)$/i;
+const FALSY_ATTRIBUTE_PATTERN = /^(?:false|0|no|n)$/i;
 // Responsibilities:
 // - capture already-rendered chat text when a recruiter opens a conversation
 // - use recruiter list clicks to carry list freshness into the next snapshot
@@ -56,18 +61,21 @@ export class ChatRecordProbe {
     sessionContext,
     scanIntervalMs = SCAN_INTERVAL_MS,
     now = () => new Date(),
-    readReportState = () => readChatReportState()
+    readReportState = () => readChatReportState(),
+    messageCleanupRules = DEFAULT_CHAT_MESSAGE_CLEANUP_RULES
   }) {
     this.collector = collector;
     this.sessionContext = sessionContext;
     this.scanIntervalMs = scanIntervalMs;
     this.now = now;
     this.readReportState = readReportState;
+    this.messageCleanupRules = messageCleanupRules;
     this.started = false;
     this.pollHandle = null;
     this.activeConversationKey = "";
     this.lastObservedSnapshotKeyByConversation = new Map();
     this.pendingManualOpenKeys = new Map();
+    this.lastPendingChatCandidatesKey = "";
     this.wechatReportKeys = new Set();
     this.handleDocumentClick = (event) => {
       if (this.recordChatListOpenAttempt(event?.target)) {
@@ -106,12 +114,50 @@ export class ChatRecordProbe {
 
   async scan(source = "poll") {
     if (!isChatPage(this.sessionContext.page) || !globalThis.document) {
+      this.publishPendingChatCandidates([], source);
       return;
     }
 
     const reportState = await this.readReportState();
     removeLegacyChatReportPrompts(globalThis.document);
+    this.scanPendingChatCandidates({ source, reportState });
     this.scanActiveChatSnapshot({ source, reportState });
+  }
+
+  scanPendingChatCandidates({ source, reportState }) {
+    const pendingCandidates = buildPendingChatCandidatesFromListItems(
+      findChatListItems(globalThis.document, { now: this.now }),
+      reportState
+    );
+    this.publishPendingChatCandidates(pendingCandidates, source);
+  }
+
+  publishPendingChatCandidates(candidates, source) {
+    const pendingKey = JSON.stringify(candidates.map((candidate) => [
+      candidate.candidateId || "",
+      candidate.displayName || "",
+      candidate.jobTitle || "",
+      candidate.lastMessageAt || "",
+      candidate.lastReportedMessageAt || ""
+    ]));
+    if (pendingKey === this.lastPendingChatCandidatesKey) {
+      return;
+    }
+
+    this.lastPendingChatCandidatesKey = pendingKey;
+    const runtime = globalThis.chrome?.runtime;
+    if (!runtime?.sendMessage) {
+      return;
+    }
+
+    runtime.sendMessage({
+      kind: CHAT_PENDING_CANDIDATES_MESSAGE_KIND,
+      source,
+      observedAt: toLocalIsoString(asDate(this.now)),
+      candidates
+    }, () => {
+      void globalThis.chrome?.runtime?.lastError;
+    });
   }
 
   scanActiveChatSnapshot({ source, reportState }) {
@@ -123,7 +169,8 @@ export class ChatRecordProbe {
     const rawPayload = buildChatSnapshotPayload(panel, {
       source,
       chatPageUrl: this.sessionContext.page.url,
-      now: this.now
+      now: this.now,
+      messageCleanupRules: this.messageCleanupRules
     });
     if (!rawPayload || !rawPayload.chat?.messageCount) {
       return;
@@ -426,6 +473,12 @@ export function shouldSubmitChatSnapshot(payload, reportState = {}) {
   return isIsoTimeAfter(lastMessageAt, record.lastReportedMessageAt);
 }
 
+export function buildPendingChatCandidatesFromListItems(items = [], reportState = {}) {
+  return items
+    .filter((item) => shouldIncludePendingChatCandidate(item, reportState))
+    .map((item) => buildPendingChatCandidatePayload(item, reportState));
+}
+
 export function findActiveChatPanel(rootDocument) {
   if (!rootDocument?.querySelectorAll) {
     return null;
@@ -451,7 +504,8 @@ export function findActiveChatPanel(rootDocument) {
 export function buildChatSnapshotPayload(panel, {
   source = "poll",
   chatPageUrl = "",
-  now = () => new Date()
+  now = () => new Date(),
+  messageCleanupRules = DEFAULT_CHAT_MESSAGE_CLEANUP_RULES
 } = {}) {
   const text = readElementTextExcludingPluginNodes(panel);
   const lines = normalizeLines(text);
@@ -464,7 +518,11 @@ export function buildChatSnapshotPayload(panel, {
     jobTitle,
     sourceUrl: chatPageUrl
   });
-  const messages = collectChatMessagesFromText(text, { now });
+  const messages = collectChatMessagesFromPanel(panel, {
+    text,
+    now,
+    messageCleanupRules
+  });
   if (!candidate.candidateId || messages.length === 0) {
     return null;
   }
@@ -493,7 +551,10 @@ export function buildChatSnapshotPayload(panel, {
   });
 }
 
-export function collectChatMessagesFromText(text = "", { now = () => new Date() } = {}) {
+export function collectChatMessagesFromText(text = "", {
+  now = () => new Date(),
+  messageCleanupRules = DEFAULT_CHAT_MESSAGE_CLEANUP_RULES
+} = {}) {
   const lines = normalizeLines(stripPluginPromptText(text));
   const messages = [];
   let currentMessageAt = "";
@@ -505,7 +566,7 @@ export function collectChatMessagesFromText(text = "", { now = () => new Date() 
       continue;
     }
 
-    if (!currentMessageAt || shouldIgnoreChatMessageLine(line)) {
+    if (!currentMessageAt || shouldIgnoreChatMessageLine(line, { messageCleanupRules })) {
       continue;
     }
 
@@ -530,6 +591,336 @@ export function collectChatMessagesFromText(text = "", { now = () => new Date() 
   }
 
   return messages;
+}
+
+function collectChatMessagesFromPanel(panel, {
+  text = "",
+  now = () => new Date(),
+  messageCleanupRules = DEFAULT_CHAT_MESSAGE_CLEANUP_RULES
+} = {}) {
+  const messages = collectChatMessagesFromText(text, { now, messageCleanupRules });
+  if (messages.length === 0) {
+    return messages;
+  }
+
+  return applyDomDirectionHintsToMessages(messages, panel, { messageCleanupRules });
+}
+
+function applyDomDirectionHintsToMessages(messages = [], panel, {
+  messageCleanupRules = DEFAULT_CHAT_MESSAGE_CLEANUP_RULES
+} = {}) {
+  const hints = collectDomMessageDirectionHints(panel, messages, { messageCleanupRules });
+  if (hints.length === 0) {
+    return messages;
+  }
+
+  let nextHintIndex = 0;
+  return messages.map((message) => {
+    const matchedIndex = findNextDirectionHintIndex(hints, message, nextHintIndex);
+    if (matchedIndex < 0) {
+      return message;
+    }
+
+    nextHintIndex = matchedIndex + 1;
+    const hint = hints[matchedIndex];
+    const direction = hint.direction !== DIRECTION_UNKNOWN ? hint.direction : message.direction;
+    const status = message.status || hint.status || "";
+    if (direction === message.direction && status === (message.status || "")) {
+      return message;
+    }
+
+    return compactPayloadObject({
+      ...message,
+      direction,
+      status,
+      fingerprint: buildMessageFingerprint({
+        messageAt: message.messageAt,
+        direction,
+        text: message.text
+      })
+    });
+  });
+}
+
+function collectDomMessageDirectionHints(panel, messages = [], {
+  messageCleanupRules = DEFAULT_CHAT_MESSAGE_CLEANUP_RULES
+} = {}) {
+  if (!panel?.querySelectorAll) {
+    return [];
+  }
+
+  const targetTextKeys = new Set(messages.map((message) => buildMessageTextMatchKey(message.text)));
+  const elements = Array.from(panel.querySelectorAll(CHAT_MESSAGE_DIRECTION_ELEMENT_SELECTOR));
+  const hints = elements
+    .map((element) => buildDomMessageDirectionHint(element, panel, targetTextKeys, { messageCleanupRules }))
+    .filter(Boolean);
+
+  return dedupeDomMessageDirectionHints(hints);
+}
+
+function buildDomMessageDirectionHint(element, panel, targetTextKeys, {
+  messageCleanupRules = DEFAULT_CHAT_MESSAGE_CLEANUP_RULES
+} = {}) {
+  const parsed = parseSingleMessageElementText(element, { messageCleanupRules });
+  if (!parsed?.text) {
+    return null;
+  }
+
+  const textKey = buildMessageTextMatchKey(parsed.text);
+  if (!targetTextKeys.has(textKey)) {
+    return null;
+  }
+
+  const structuralDirection = inferMessageDirectionFromDom(element, panel);
+  const direction = structuralDirection !== DIRECTION_UNKNOWN
+    ? structuralDirection
+    : parsed.status
+      ? DIRECTION_RECRUITER
+      : DIRECTION_UNKNOWN;
+  if (direction === DIRECTION_UNKNOWN && !parsed.status) {
+    return null;
+  }
+
+  return {
+    element,
+    text: parsed.text,
+    textKey,
+    direction,
+    status: parsed.status
+  };
+}
+
+function parseSingleMessageElementText(element, {
+  messageCleanupRules = DEFAULT_CHAT_MESSAGE_CLEANUP_RULES
+} = {}) {
+  const lines = normalizeLines(readElementTextExcludingPluginNodes(element));
+  const messageLines = [];
+  let pendingStatus = "";
+
+  for (const line of lines) {
+    const normalized = normalizeText(line);
+    if (!normalized || parseChatMessageTimeLine(normalized)) {
+      continue;
+    }
+
+    const statusOnlyMatch = normalized.match(/^(已读|送达|未读)$/);
+    if (statusOnlyMatch) {
+      pendingStatus = statusOnlyMatch[1];
+      continue;
+    }
+
+    if (shouldIgnoreChatMessageLine(normalized, { messageCleanupRules })) {
+      continue;
+    }
+
+    const parsed = parseMessageLine(normalized);
+    if (!parsed.text) {
+      continue;
+    }
+
+    messageLines.push({
+      direction: parsed.direction,
+      status: parsed.status || pendingStatus,
+      text: parsed.text
+    });
+    pendingStatus = "";
+  }
+
+  if (messageLines.length !== 1) {
+    return null;
+  }
+
+  return messageLines[0];
+}
+
+function findNextDirectionHintIndex(hints = [], message = {}, startIndex = 0) {
+  const textKey = buildMessageTextMatchKey(message.text);
+  for (let index = startIndex; index < hints.length; index += 1) {
+    if (hints[index].textKey === textKey) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function dedupeDomMessageDirectionHints(hints = []) {
+  return hints.filter((hint, index) => !hints.some((other, otherIndex) =>
+    otherIndex !== index &&
+    hint.textKey === other.textKey &&
+    hint.direction === other.direction &&
+    containsElement(hint.element, other.element)
+  ));
+}
+
+function buildMessageTextMatchKey(text = "") {
+  return normalizeText(text);
+}
+
+function inferMessageDirectionFromDom(element, panel) {
+  let current = element;
+  for (let depth = 0; current && current !== panel && depth < STRUCTURAL_DIRECTION_MAX_ANCESTOR_DEPTH; depth += 1) {
+    const direction = readStructuralDirectionSignal(current);
+    if (direction !== DIRECTION_UNKNOWN) {
+      return direction;
+    }
+    current = current.parentElement;
+  }
+
+  // TODO(real-boss-dom): verify whether BOSS keeps recruiter bubbles on the
+  // right and candidate bubbles on the left across current chat layouts.
+  return inferDirectionFromElementPosition(element, panel);
+}
+
+function readStructuralDirectionSignal(element) {
+  const classDirection = normalizeClassDirectionSignal(readElementClassText(element));
+  if (classDirection !== DIRECTION_UNKNOWN) {
+    return classDirection;
+  }
+
+  const attributeDirection = readAttributeDirectionSignal(element);
+  if (attributeDirection !== DIRECTION_UNKNOWN) {
+    return attributeDirection;
+  }
+
+  return DIRECTION_UNKNOWN;
+}
+
+function normalizeClassDirectionSignal(value = "") {
+  const normalized = normalizeDirectionSignalText(value);
+  if (!normalized) {
+    return DIRECTION_UNKNOWN;
+  }
+  if (RECRUITER_CLASS_PATTERN.test(normalized)) {
+    return DIRECTION_RECRUITER;
+  }
+  if (CANDIDATE_CLASS_PATTERN.test(normalized)) {
+    return DIRECTION_CANDIDATE;
+  }
+  return DIRECTION_UNKNOWN;
+}
+
+function readAttributeDirectionSignal(element) {
+  const dataset = element?.dataset || {};
+  for (const [key, value] of Object.entries(dataset)) {
+    const direction = normalizeAttributeDirectionSignal(key, value);
+    if (direction !== DIRECTION_UNKNOWN) {
+      return direction;
+    }
+  }
+
+  const attributeNames = [
+    "data-direction",
+    "data-message-direction",
+    "data-side",
+    "data-from",
+    "data-sender",
+    "data-sender-type",
+    "data-role",
+    "data-is-self",
+    "data-self",
+    "data-mine",
+    "aria-label",
+    "title"
+  ];
+  for (const name of attributeNames) {
+    const value = element?.getAttribute?.(name);
+    if (value === null || value === undefined) {
+      continue;
+    }
+    const direction = normalizeAttributeDirectionSignal(name, value);
+    if (direction !== DIRECTION_UNKNOWN) {
+      return direction;
+    }
+  }
+
+  return DIRECTION_UNKNOWN;
+}
+
+function normalizeAttributeDirectionSignal(key = "", value = "") {
+  const normalizedKey = normalizeDirectionSignalText(key);
+  const normalizedValue = normalizeDirectionSignalText(value);
+  if (!normalizedKey && !normalizedValue) {
+    return DIRECTION_UNKNOWN;
+  }
+
+  if (SELF_SIGNAL_KEY_PATTERN.test(normalizedKey)) {
+    if (TRUTHY_ATTRIBUTE_PATTERN.test(normalizedValue)) {
+      return DIRECTION_RECRUITER;
+    }
+    if (FALSY_ATTRIBUTE_PATTERN.test(normalizedValue)) {
+      return DIRECTION_CANDIDATE;
+    }
+  }
+
+  const combined = `${normalizedKey}:${normalizedValue}`;
+  if (RECRUITER_SIGNAL_PATTERN.test(combined)) {
+    return DIRECTION_RECRUITER;
+  }
+  if (CANDIDATE_SIGNAL_PATTERN.test(combined)) {
+    return DIRECTION_CANDIDATE;
+  }
+
+  return DIRECTION_UNKNOWN;
+}
+
+function normalizeDirectionSignalText(value = "") {
+  return String(value ?? "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/[./]+/g, "-")
+    .trim()
+    .toLowerCase();
+}
+
+function readElementClassText(element) {
+  const className = element?.className;
+  if (typeof className === "string") {
+    return className;
+  }
+  if (typeof className?.baseVal === "string") {
+    return className.baseVal;
+  }
+  return element?.getAttribute?.("class") || "";
+}
+
+function inferDirectionFromElementPosition(element, panel) {
+  const rect = readValidClientRect(element);
+  const panelRect = readValidClientRect(panel);
+  if (!rect || !panelRect || panelRect.width <= 0) {
+    return DIRECTION_UNKNOWN;
+  }
+
+  const panelCenterX = panelRect.left + panelRect.width / 2;
+  const elementCenterX = rect.left + rect.width / 2;
+  const deadZone = Math.max(24, panelRect.width * 0.08);
+  if (elementCenterX >= panelCenterX + deadZone) {
+    return DIRECTION_RECRUITER;
+  }
+  if (elementCenterX <= panelCenterX - deadZone) {
+    return DIRECTION_CANDIDATE;
+  }
+
+  const leftInset = rect.left - panelRect.left;
+  const rightInset = panelRect.right - rect.right;
+  if (leftInset > panelRect.width * 0.45 && rightInset < panelRect.width * 0.2) {
+    return DIRECTION_RECRUITER;
+  }
+  if (rightInset > panelRect.width * 0.45 && leftInset < panelRect.width * 0.2) {
+    return DIRECTION_CANDIDATE;
+  }
+
+  return DIRECTION_UNKNOWN;
+}
+
+function readValidClientRect(element) {
+  const rect = element?.getBoundingClientRect?.();
+  if (!rect ||
+    !Number.isFinite(rect.left) ||
+    !Number.isFinite(rect.right) ||
+    !Number.isFinite(rect.width) ||
+    rect.width <= 0) {
+    return null;
+  }
+  return rect;
 }
 
 export function parseChatMessageTimeLine(line = "", { now = () => new Date() } = {}) {
@@ -687,10 +1078,35 @@ function parseChatListIdentityText(text = "") {
   });
 }
 
+function shouldIncludePendingChatCandidate(item = {}, reportState = {}) {
+  const candidateId = item.candidate?.candidateId || "";
+  const lastMessageAt = item.lastMessageAt || "";
+  if (!candidateId || !lastMessageAt) {
+    return false;
+  }
+
+  const record = reportState?.candidates?.[candidateId] || null;
+  return !record?.lastReportedMessageAt || isIsoTimeAfter(lastMessageAt, record.lastReportedMessageAt);
+}
+
+function buildPendingChatCandidatePayload(item = {}, reportState = {}) {
+  const candidateId = item.candidate?.candidateId || "";
+  const record = reportState?.candidates?.[candidateId] || null;
+  return compactPayloadObject({
+    candidateId,
+    displayName: item.displayName || item.candidate?.profile?.displayName || "",
+    jobTitle: item.jobTitle || "",
+    lastMessageAt: item.lastMessageAt || "",
+    lastMessageTimeText: item.lastMessageTimeText || "",
+    lastReportedMessageAt: record?.lastReportedMessageAt || "",
+    identityConfidence: item.candidate?.identityConfidence || ""
+  });
+}
+
 function extractListPreviewFromLines(lines = []) {
   for (const line of lines) {
     const normalized = normalizeText(line);
-      if (!normalized ||
+    if (!normalized ||
       normalized === LEGACY_CHAT_REPORT_PROMPT_TEXT ||
       normalized === "[已读]" ||
       normalized === "[送达]" ||
@@ -740,19 +1156,14 @@ function parseMessageLine(line = "") {
   };
 }
 
-function shouldIgnoreChatMessageLine(line = "") {
+function shouldIgnoreChatMessageLine(line = "", {
+  messageCleanupRules = DEFAULT_CHAT_MESSAGE_CLEANUP_RULES
+} = {}) {
   const normalized = normalizeText(line);
-  if (!normalized || MESSAGE_CONTROL_TEXTS.has(normalized)) {
+  if (shouldIgnoreChatMessageText(normalized, messageCleanupRules)) {
     return true;
   }
-  return normalized === LEGACY_CHAT_REPORT_PROMPT_TEXT ||
-    normalized.includes("沟通的职位-") ||
-    normalized.startsWith("沟通职位：") ||
-    normalized.startsWith("期望：") ||
-    /^\/?\S+\.(?:png|jpe?g|webp|gif|mp3|wav|m4a|mp4)(?:\?\S*)?$/i.test(normalized) ||
-    normalized === "已读" ||
-    normalized === "送达" ||
-    normalized === "未读";
+  return normalized === LEGACY_CHAT_REPORT_PROMPT_TEXT;
 }
 
 function shouldIgnoreHeaderCandidateLine(line = "") {

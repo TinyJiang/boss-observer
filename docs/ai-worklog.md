@@ -4479,3 +4479,685 @@
 - 验证结果：`npm test` 通过，189 tests；`git diff --check -- ...` 通过。
 - 风险/阻塞：已写入 CLS 的历史误记事件没有保存动作按钮原始文本，无法自动可靠纠正；需要重新加载 Chrome 插件后，新采集逻辑才会生效。
 - 中断续写入口：如果用户继续看到新产生的数据异常，下一步从 raw `candidate_greeting.clicked/succeeded` 的 `occurred_at`、`candidateId` 哈希、`entry`、`detectedBy` 和重复候选人分布继续查，重点看是否仍有非动作点击被记录。
+
+### 任务：评估并调整诊断 profile 日志容量
+
+- 时间：2026-05-21 18:00 CST
+- 执行者：AI
+- 状态：已完成
+- 任务目标：根据用户希望“分析的日志更详细一点”的要求，排查插件 debug/profile 诊断日志数量或体积上限，评估调到 1m/2m 是否能承受，并在安全范围内调整。
+- 当前理解：用户提到的 `profile` 更可能指 debug/profile 诊断快照或分析日志采样上限，不是候选人业务 `profile` 字段；本次应优先增加诊断细节可见性，同时避免让 content/background 内存、chrome storage 或上传队列失控。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 待定位的 debug/profile 或诊断配置源码
+  - 对应测试文件
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不修改日志契约中的业务事实口径
+  - 不采集新的敏感个人信息
+- 验证计划：阅读相关模块文档和源码；补充或更新容量上限测试；运行相关 `node --test` 或 `npm test`。
+- 当前状态：已阅读根工作日志、概要设计、`package.json` 和当前未提交状态；准备定位 debug/profile 相关实现。
+
+#### 阶段记录：已完成容量方案和代码修改
+
+- 时间：2026-05-21 18:13 CST
+- 状态：待验证
+- 已完成：定位到下载 Profile 由 `extension/src/shared/diagnostic-profile.js` 生成，后台原始 debug state 只保留最近 50 条事件；网络调试预览默认 12k 字符、最多 80 条请求，Profile 只导出其中 30 条请求摘要且不含正文。
+- 已完成：采用安全扩容方案：后台继续保留 50 条原始事件，但额外维护最多 1000 条脱敏事件摘要供 Profile 导出；Profile 网络请求摘要上限提升到 80 条；网络调试响应预览提升到单请求 1MB，并用约 2MB 总预算裁剪本地请求历史。
+- 已完成：补充测试覆盖 Profile 摘要上限、网络请求摘要上限、网络预览总预算和 debug state 新字段；同步更新诊断 Profile 分析约定。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/diagnostic-profile-analysis.md`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/network-debug-hook.js`
+  - `extension/src/shared/debug-state.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `extension/src/shared/network-debug.js`
+  - `test/debug-state.test.js`
+  - `test/diagnostic-profile.test.js`
+  - `test/network-debug.test.js`
+- 当前验证结果：尚未运行。
+- 中断续写入口：先运行 `node --test test/diagnostic-profile.test.js test/network-debug.test.js test/debug-state.test.js`，再运行 `npm test` 和 `git diff --check`。
+
+#### 完成记录：诊断 Profile 容量已安全扩容
+
+- 时间：2026-05-21 18:13 CST
+- 状态：已完成
+- 已完成：下载 Profile 现在可导出最多 1000 条脱敏事件摘要，网络请求摘要最多 80 条；raw debug 仍保留 50 条原始事件，避免把聊天正文等大 payload 随事件历史一起放大。
+- 已完成：网络调试响应预览默认提升到单请求 1MB，并用约 2MB 总预算裁剪本地请求历史；同时修复大段非 JSON 预览的脱敏性能短路，避免测试中发现的长文本兜底正则卡顿。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/diagnostic-profile-analysis.md`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/network-debug-hook.js`
+  - `extension/src/shared/debug-state.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `extension/src/shared/network-debug.js`
+  - `test/debug-state.test.js`
+  - `test/diagnostic-profile.test.js`
+  - `test/network-debug.test.js`
+- 验证结果：
+  - `node --test test/network-debug.test.js` 通过，9 tests。
+  - `node --test test/diagnostic-profile.test.js test/debug-state.test.js` 通过，8 tests。
+  - `node --check extension/src/shared/network-debug.js`、`node --check extension/src/background/service-worker.js`、`node --check extension/src/shared/diagnostic-profile.js`、`node --check extension/src/content/network-debug-hook.js` 通过。
+  - `npm test` 通过，192 tests。
+  - `git diff --check` 通过。
+- 风险/阻塞：不建议把 Profile 事件数量调到 1M/2M 条；这会超过 Chrome 扩展本地存储和隐私边界。当前实现按 1000 条脱敏摘要和 1MB/2MB 网络调试预算折中。需要重新加载 Chrome 插件后，新上限才会生效；未修改 `analysis-system/` 和 `strategy/`。
+- 中断续写入口：如果后续仍觉得 Profile 不够排查，应优先按事件类型/候选人 ID 做定向导出，而不是继续提高无差别历史数量。
+
+### 任务：精简正式业务打点类型
+
+- 时间：2026-05-21 18:26 CST
+- 执行者：AI
+- 状态：已完成
+- 任务目标：按用户确认的口径精简正式业务事件类型，过滤高频低价值或运行链路类打点，同时明确保留聊天记录相关事件用于后续打点质量分析。
+- 当前理解：不是简单删除所有非核心事件；低频且有排障/上下文价值的事件可以保留。优先从正式业务流移除 `page_session.page_dwell_recorded`、`candidate_list.list_viewed`、`queue.*`、`upload.*`，保留 `candidate_chat.opened`、`candidate_chat.snapshot_captured`、`candidate_chat.wechat_captured`、`candidate_chat.capture_failed`。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/overview-design.md`
+  - `docs/modules/04-candidate-list.md`
+  - `docs/modules/08-local-queue-upload.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/shared/event-types.js`
+  - `extension/src/content/page-session-probe.js`
+  - `extension/src/content/candidate-list-probe.js`
+  - `extension/src/background/service-worker.js`
+  - 相关测试
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不删除或降级聊天记录事件
+  - 不改变候选人详情、打招呼、聊天快照 payload 结构
+- 验证计划：更新相关单测；运行候选人列表、页面会话、生产统计、上传策略测试；最后运行 `npm test` 和 `git diff --check`。
+- 当前状态：已定位待精简枚举、触发点、测试和文档引用，准备修改。
+
+#### 完成记录：正式业务事件类型已收敛
+
+- 时间：2026-05-21 18:28 CST
+- 状态：已完成
+- 已完成：从 `EVENT_TYPES` 和正式事件流中移除 `page_session.page_dwell_recorded`、`candidate_list.list_viewed`、`queue.*`、`upload.*`；页面停留、列表页级曝光、本地队列和上传过程不再作为正式业务事件类型写入 CLS。
+- 已完成：`CandidateListProbe` 只发 `candidate_list.card_exposed`，仍会注册候选人卡片、回写曝光事件 ID，并保留后续详情/打招呼关联能力。
+- 已完成：聊天记录事件全部保留，包括 `candidate_chat.opened`、`candidate_chat.snapshot_captured`、`candidate_chat.wechat_captured`、`candidate_chat.capture_failed`，用于后续打点质量分析。
+- 已完成：同步更新日志规范、候选人列表、页面会话、上传队列和相关模块文档，避免继续把列表页级曝光或上传过程描述成正式事件。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/overview-design.md`
+  - `docs/modules/00-core-runtime-architecture.md`
+  - `docs/modules/01-page-session.md`
+  - `docs/modules/02-job-context.md`
+  - `docs/modules/03-filter.md`
+  - `docs/modules/04-candidate-list.md`
+  - `docs/modules/05-candidate-detail.md`
+  - `docs/modules/06-greeting.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/08-local-queue-upload.md`
+  - `docs/modules/11-runtime-monitoring-alert.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/page-session-probe.js`
+  - `extension/src/content/candidate-list-probe.js`
+  - `extension/src/shared/event-types.js`
+  - `test/candidate-list-probe.test.js`
+  - `test/production-stats.test.js`
+- 验证结果：
+  - `node --test test/candidate-list-probe.test.js test/page-session-probe.test.js test/production-stats.test.js test/upload-policy.test.js` 通过，13 tests。
+  - `node --check extension/src/shared/event-types.js`、`node --check extension/src/content/page-session-probe.js`、`node --check extension/src/content/candidate-list-probe.js` 通过。
+  - `npm test` 通过，192 tests。
+  - `git diff --check` 通过。
+- 风险/阻塞：需要重新加载 Chrome 插件后，新的事件类型枚举和候选人列表探针行为才会生效；未修改 `analysis-system/` 和 `strategy/`。工作区仍存在本轮之前已有的 `strategy/` 未提交改动。
+- 中断续写入口：如果继续精简，下一步应基于真实 CLS 频率看是否还要降级 `candidate_filter.panel_opened` 或 `candidate_detail.closed`，但不要删除聊天记录事件。
+
+### 任务：升级版本到 0.1.2 并打包
+
+- 时间：2026-05-21 19:45 CST
+- 执行者：AI
+- 状态：已完成
+- 任务目标：将插件版本升级到 `0.1.2`，并生成可安装的 Chrome 插件 zip 包。
+- 当前理解：构建脚本使用 `extension/manifest.json` 的版本生成包名，同时会读取 `package.json` 并提示版本不一致；本次应同步修改两处版本号。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `package.json`
+  - `extension/manifest.json`
+  - `dist/` 下新增打包产物
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不改变本轮已完成的打点精简和 Profile 扩容逻辑
+- 验证计划：运行版本相关/构建相关测试或全量测试；运行 `npm run build`；确认生成 `0.1.2` zip 包。
+- 当前状态：已确认当前版本为 `0.1.1`，构建脚本以 manifest 版本命名产物，准备同步升级版本号。
+
+#### 完成记录：0.1.2 打包完成
+
+- 时间：2026-05-21 19:45 CST
+- 状态：已完成
+- 已完成：同步将 `package.json` 和 `extension/manifest.json` 版本升级为 `0.1.2`。
+- 已完成：运行 `npm run build` 生成 `dist/boss-observer-0.1.2.zip`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `package.json`
+  - `extension/manifest.json`
+  - `dist/boss-observer-0.1.2.zip`
+- 验证结果：
+  - `npm test` 通过，192 tests。
+  - `node --test test/build-extension.test.js` 通过，3 tests。
+  - `node --check scripts/build-extension.js` 通过。
+  - `npm run build` 成功，生成 `dist/boss-observer-0.1.2.zip`。
+  - `unzip -p dist/boss-observer-0.1.2.zip manifest.json | rg '"version"'` 确认为 `"version": "0.1.2"`。
+  - `git diff --check` 通过。
+- 风险/阻塞：需要在 Chrome 扩展管理页重新加载/安装新 zip 后才会运行 0.1.2；未修改 `analysis-system/` 和 `strategy/`，工作区仍存在本轮之前已有的 `strategy/` 未提交改动。
+- 中断续写入口：如需发布，下一步确认是否提交当前插件改动和新增 zip，或将 zip 发给安装环境使用。
+
+### 任务：配置化清理聊天系统卡片消息
+
+- 时间：2026-05-21 19:55 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：新增聊天消息清理规则 JSON，并让聊天快照解析按规则过滤 BOSS 系统卡片/操作控件文本，例如“快速沟通小技巧！”、“觉得合适，直接联系牛人吧~”、“暂不考虑”、“获取联系方式”等。
+- 当前理解：聊天记录事件不能删除，后续打点质量分析依赖 `candidate_chat.snapshot_captured` 中的真实聊天文本；本次只清理明显不是双方聊天内容的系统卡片和控件文案。规则需要放在 JSON 文件里，方便后续继续追加不要的消息规则。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/manifest.json`
+  - `extension/src/shared/chat-message-cleanup-rules.json`
+  - 可能新增共享清理工具
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/content/main.js`
+  - `test/chat-record-probe.test.js`
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不删除聊天记录事件类型
+  - 不采集新的敏感信息
+- 验证计划：补充单测覆盖用户给出的系统卡片清理；运行聊天记录相关测试、manifest 测试、全量 `npm test` 和 `git diff --check`。
+- 当前状态：已定位聊天消息解析和现有控制文案过滤逻辑，准备新增 JSON 规则和接入解析。
+
+#### 阶段记录：已接入聊天消息清理规则
+
+- 时间：2026-05-21 20:08 CST
+- 状态：待验证
+- 已完成：新增聊天消息清理规则 JSON 和共享加载/匹配工具；`ChatRecordProbe` 在构造快照消息前按规则过滤 BOSS 系统卡片、操作控件和媒体占位文本；content bootstrap 会加载扩展内 JSON 并传入聊天探针；manifest 已暴露 `src/shared/*.json`；补充测试覆盖用户给出的“快速沟通小技巧！”、“觉得合适，直接联系牛人吧~”、“暂不考虑”、“获取联系方式”等系统卡片清理。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/manifest.json`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/content/main.js`
+  - `extension/src/shared/chat-message-cleanup-rules.json`
+  - `extension/src/shared/chat-message-cleanup.js`
+  - `test/chat-record-probe.test.js`
+  - `test/manifest.test.js`
+- 当前验证结果：`node --check extension/src/shared/chat-message-cleanup.js`、`node --check extension/src/content/chat-record-probe.js`、`node --check extension/src/content/main.js` 通过；`node --test test/chat-record-probe.test.js test/manifest.test.js` 通过，22 tests。
+- 风险/阻塞：尚未运行全量 `npm test`、重新打包和 diff 空白检查；已有 `dist/boss-observer-0.1.2.zip` 不包含这次聊天清理改动，需要重新构建生成新的 0.1.2 zip。
+- 中断续写入口：继续运行全量 `npm test`、`git diff --check` 和 `npm run build`，确认新 zip 包包含 `src/shared/chat-message-cleanup-rules.json`。
+
+#### 完成记录：聊天系统卡片清理规则已配置化
+
+- 时间：2026-05-21 20:09 CST
+- 状态：已完成
+- 已完成：聊天快照继续保留 `candidate_chat.snapshot_captured` 事件和真实聊天原文，但 `chat.messages` 会先按 `extension/src/shared/chat-message-cleanup-rules.json` 清理系统卡片、操作控件和媒体占位文本；content script 启动时会加载该 JSON，加载失败时回退到内置默认规则。
+- 已完成：用户样例中的“快速沟通小技巧！”、“觉得合适，直接联系牛人吧~”、“暂不考虑”、“获取联系方式”已纳入默认 JSON 规则；manifest 已允许 content script 读取共享 JSON；文档说明后续新增规则优先改 JSON。
+- 已完成：重新打包生成包含聊天清理规则的新安装包 `dist/boss-observer-0.1.2-2026-05-21T12-09-14-503Z.zip`，原先的 `dist/boss-observer-0.1.2.zip` 仍是接入清理规则前生成的包。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/manifest.json`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/content/main.js`
+  - `extension/src/shared/chat-message-cleanup-rules.json`
+  - `extension/src/shared/chat-message-cleanup.js`
+  - `test/chat-record-probe.test.js`
+  - `test/manifest.test.js`
+  - `dist/boss-observer-0.1.2-2026-05-21T12-09-14-503Z.zip`
+- 验证结果：
+  - `node --check extension/src/shared/chat-message-cleanup.js`、`node --check extension/src/content/chat-record-probe.js`、`node --check extension/src/content/main.js` 通过。
+  - `node --test test/chat-record-probe.test.js test/manifest.test.js` 通过，22 tests。
+  - `npm test` 通过，194 tests。
+  - `git diff --check` 通过。
+  - `npm run build` 成功，生成 `dist/boss-observer-0.1.2-2026-05-21T12-09-14-503Z.zip`。
+  - `unzip -p dist/boss-observer-0.1.2-2026-05-21T12-09-14-503Z.zip manifest.json | rg '"version"|src/shared/\*\.json'` 确认版本为 `0.1.2` 且 manifest 暴露共享 JSON。
+  - `unzip -l dist/boss-observer-0.1.2-2026-05-21T12-09-14-503Z.zip src/shared/chat-message-cleanup-rules.json src/shared/chat-message-cleanup.js src/content/main.js` 确认新规则和接入代码已进入 zip。
+- 风险/阻塞：需要安装/重新加载新 zip 后规则才生效；未修改 `analysis-system/` 和 `strategy/`，工作区仍存在本轮之前已有的 `strategy/` 未提交改动。
+- 中断续写入口：如果后续发现新的系统卡片文案，优先追加到 `extension/src/shared/chat-message-cleanup-rules.json` 并补一条聊天解析测试。
+
+### 任务：收紧聊天清理规则为精确匹配
+
+- 时间：2026-05-21 20:12 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：按用户反馈收紧聊天消息清理规则，让前面确认的系统卡片文案走完全匹配，暂时不要使用 `contains` 模糊匹配，降低误删真实聊天的风险。
+- 当前理解：聊天记录仍需保留；本次只调整规则匹配方式，不删除聊天事件、不新增敏感采集。需要移除 `ignoreContains` 配置和匹配逻辑，并用测试确认包含相同片段的真实聊天不会被过滤。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/shared/chat-message-cleanup-rules.json`
+  - `extension/src/shared/chat-message-cleanup.js`
+  - `test/chat-record-probe.test.js`
+  - 可能更新聊天记录/日志规范文档描述
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不删除 `candidate_chat.*` 聊天事件
+  - 不改变版本号
+- 验证计划：运行聊天记录相关测试、语法检查、全量 `npm test` 和 `git diff --check`；因 zip 包已生成且代码变更会影响插件产物，完成后重新构建 0.1.2 包。
+- 当前状态：已确认当前 JSON 和默认规则包含 `ignoreContains: ["沟通的职位-"]`，准备删除 contains 支持并收窄测试。
+
+#### 完成记录：已移除 contains 模糊匹配
+
+- 时间：2026-05-21 20:15 CST
+- 状态：已完成
+- 已完成：从聊天清理 JSON、默认规则和匹配器中移除 `ignoreContains` 和 `ignorePrefixes`；系统卡片/控件文案默认只按整行精确匹配过滤。保留的 `ignoreRegexes` 仅用于窄形态非聊天占位，例如 BOSS 职位时间线行和媒体文件 URL。
+- 已完成：测试补充了“真实聊天只是包含系统卡片文案片段时不能被过滤”的断言，例如“我看到快速沟通小技巧！这个提示了”“暂不考虑这个按钮是什么意思”会保留。
+- 已完成：重新构建包含无 contains 规则的新安装包 `dist/boss-observer-0.1.2-2026-05-21T12-14-43-745Z.zip`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/shared/chat-message-cleanup-rules.json`
+  - `extension/src/shared/chat-message-cleanup.js`
+  - `test/chat-record-probe.test.js`
+  - `dist/boss-observer-0.1.2-2026-05-21T12-14-43-745Z.zip`
+- 验证结果：
+  - `node --check extension/src/shared/chat-message-cleanup.js` 通过。
+  - `node --check extension/src/content/chat-record-probe.js`、`node --check extension/src/content/main.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，21 tests。
+  - `npm test` 通过，194 tests。
+  - `git diff --check` 通过。
+  - `npm run build` 成功，生成 `dist/boss-observer-0.1.2-2026-05-21T12-14-43-745Z.zip`。
+  - `unzip -p dist/boss-observer-0.1.2-2026-05-21T12-14-43-745Z.zip src/shared/chat-message-cleanup-rules.json` 确认规则中不再包含 `ignoreContains`。
+- 风险/阻塞：需要安装/重新加载最新 zip 后才会生效；未修改 `analysis-system/` 和 `strategy/`，工作区仍存在本轮之前已有的 `strategy/` 未提交改动。
+- 中断续写入口：如果后续要加入非精确规则，应先基于真实样例设计更窄的 anchored regex，并补“误伤真实聊天”的反例测试。
+
+### 任务：排查待上传聊天人名展示为空
+
+- 时间：2026-05-21 20:20 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：排查新安装插件后 popup/debug 中待上传聊天人名一直为空，但点击候选人聊天记录又能正常上传日志的问题，判断是展示口径问题、队列即时上传导致的瞬时为空，还是聊天 pending 名单解析/统计缺失。
+- 当前理解：聊天快照事件属于关键事件，入队后会立即 flush；如果上传成功很快，本地队列可能正常为空。但用户关注的是“待上传聊天人名展示”，需要检查 debug/popup 生产统计是否依赖已移除的聊天待处理状态，或是否没有从队列/快照事件中提取候选人姓名。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - 待定位的 debug/popup 展示或 production stats 相关源码
+  - 相关测试
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不删除聊天记录事件
+  - 不改变上传成功水位规则，除非确认展示逻辑依赖错误
+- 验证计划：先阅读 debug/popup、production stats、队列、后台上传成功路径和相关测试；若发现展示 bug，补测试后运行相关 `node --test`、全量 `npm test` 和 `git diff --check`。
+- 当前状态：已阅读工作日志、概要设计、聊天模块、本地队列模块和脚本；准备定位“待上传”展示来源。
+
+#### 完成记录：确认是旧展示口径，不是上传链路故障
+
+- 时间：2026-05-21 20:23 CST
+- 状态：已完成
+- 已完成：排查 `debug`、`debug-raw`、`production-stats`、`service-worker`、上传策略和测试后确认：当前版本已移除旧的 `candidate_chat.report_required` 和 `productionStats.unreportedChats` 待补采姓名名单；popup/debug 不再维护“可见聊天列表里待点开的人名”。聊天快照事件仍然会在点开会话后生成 `candidate_chat.snapshot_captured`，并因属于即时 flush 事件很快上传成功，因此 `queueSize = 0` / `candidate_chat.pendingCount = 0` 是正常状态。
+- 已完成：同步修正 `docs/diagnostic-profile-analysis.md` 中仍引用旧 `unreportedChats` / `report_required` 的排障说明，改为当前口径：用 `candidate_chat` 模块 produced/uploaded/failed/pending 事件数、`recentEvents` 中的 `candidate_chat.snapshot_captured` 和 `lastUploadResult` 判断聊天是否已采集上传。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/diagnostic-profile-analysis.md`
+- 验证结果：
+  - `npm test` 通过，194 tests。
+  - `git diff --check` 通过。
+- 风险/阻塞：如果后续仍希望看到“还没点开的可见聊天人名列表”，需要新增一个本地-only列表扫描状态；不能恢复为正式 `candidate_chat.report_required` 打点，否则会重新引入之前想过滤掉的高频无用事件。
+- 中断续写入口：如果要恢复人名展示，下一步设计本地-only `chatListPendingCandidates`，只进 debug/profile/popup，不写 CLS 正式事件，并补充误判过滤测试。
+
+### 任务：恢复本地-only待上传聊天人名提示
+
+- 时间：2026-05-22 10:55 CST
+- 执行者：AI
+- 状态：已完成
+- 任务目标：按用户确认的方案恢复“还没点开的聊天人名列表”，但只做成本地-only前台/profile提示，不生成 `candidate_chat.report_required`，不写入 CLS 正式业务事件。
+- 当前理解：前台仍需要提醒哪些可见聊天会话需要点开补采；判断口径应是“聊天列表最近消息时间晚于本地成功上报水位”。这份名单是操作提示，不是业务日志。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/shared/debug-state.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `extension/src/shared/chat-pending-candidates.js`
+  - `extension/debug/index.html`
+  - `extension/debug/debug.js`
+  - `extension/debug-raw/debug.js`
+  - 相关测试和文档
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不恢复 `candidate_chat.report_required`
+  - 不把待上传聊天人名写入 CLS 业务事件
+- 验证计划：补充聊天列表扫描本地消息、debug/profile 摘要测试；运行相关 `node --test`、全量 `npm test`、`git diff --check`；重新打包 0.1.2。
+- 当前状态：已完成实现、验证和打包。
+
+#### 完成记录：本地-only待上传聊天提示已接入
+
+- 时间：2026-05-22 11:03 CST
+- 状态：已完成
+- 已完成：`ChatRecordProbe` 会扫描当前可见聊天列表，基于本地 `chat-report-state` 成功上报水位计算待上传候选人；只通过 `bossObserver.chatPendingCandidatesObserved` 发给 background 更新 debug state，不生成正式事件、不入队、不上传 CLS。
+- 已完成：新增 `chatPendingCandidates` debug state/profile 字段，popup 新增“待上传聊天”区域；有待上传候选人时聊天模块和整体状态标红，列表展示候选人姓名、列表时间和职位；无待上传时显示“暂无”。
+- 已完成：Debug 原始页 summary 增加 `Pending chat candidates` 计数；诊断 Profile 会输出本地-only名单，并在模块健康里反映前台提示状态。
+- 已完成：同步更新聊天模块、运行监控、概要设计和 Profile 分析文档，明确这份名单只进 popup/profile，不进入 CLS。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/diagnostic-profile-analysis.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/11-runtime-monitoring-alert.md`
+  - `docs/overview-design.md`
+  - `extension/debug-raw/debug.js`
+  - `extension/debug/debug.js`
+  - `extension/debug/index.html`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/chat-record-probe.js`
+  - `extension/src/shared/chat-pending-candidates.js`
+  - `extension/src/shared/debug-state.js`
+  - `extension/src/shared/diagnostic-profile.js`
+  - `test/chat-record-probe.test.js`
+  - `test/debug-state.test.js`
+  - `test/diagnostic-profile.test.js`
+  - `dist/boss-observer-0.1.2-2026-05-22T03-02-50-072Z.zip`
+- 验证结果：
+  - `node --check extension/src/content/chat-record-probe.js`、`node --check extension/src/background/service-worker.js`、`node --check extension/src/shared/debug-state.js`、`node --check extension/src/shared/diagnostic-profile.js`、`node --check extension/debug/debug.js`、`node --check extension/debug-raw/debug.js` 通过。
+  - `node --test test/chat-record-probe.test.js test/debug-state.test.js test/diagnostic-profile.test.js` 通过，32 tests。
+  - `npm test` 通过，197 tests。
+  - `git diff --check` 通过。
+  - `npm run build` 成功，生成 `dist/boss-observer-0.1.2-2026-05-22T03-02-50-072Z.zip`。
+  - `unzip -l dist/boss-observer-0.1.2-2026-05-22T03-02-50-072Z.zip src/shared/chat-pending-candidates.js src/content/chat-record-probe.js debug/index.html debug/debug.js` 确认新前台提示和本地状态代码已进入 zip。
+- 风险/阻塞：尚未真机验证 BOSS 页面真实聊天列表 DOM 下的候选人名单展示；需要重新安装/加载最新 zip 后才能看到 popup 新区域。工作区仍有之前已有的 `strategy/` 未提交改动，本任务未修改 `analysis-system/` 和 `strategy/`。
+- 中断续写入口：真机验证时打开 BOSS 聊天页，等待 popup “待上传聊天”出现姓名；点开对应会话后确认生成 `candidate_chat.snapshot_captured`，上传成功后下一轮扫描该姓名从名单消失。
+
+### 任务：职位上下文增加职位名称上报
+
+- 时间：2026-05-23 15:57 CST
+- 执行者：AI
+- 状态：实现中
+- 任务目标：让插件在 `context.jobContext` 中随现有 `jobId/jobStatus` 一起携带可见职位名称，并在 CLS 扁平字段中输出 `job_name`，同步更新日志契约文档和单元测试。
+- 当前理解：职位名称只能来自 BOSS 页面可见职位标题或页面标题等事实来源，不能采集职位描述正文、薪资详情或完整 JD；识别不到时保持为空/不写。所有后续候选人曝光、详情、打招呼、聊天等事件依赖 `SessionContext` 快照，只要职位上下文探针更新了 `SessionContext`，这些事件会自然带上职位名称。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/02-job-context.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/job-context.js`
+  - `extension/src/content/job-context-probe.js`
+  - `extension/src/shared/cls-log-format.js`
+  - `test/job-context.test.js`
+  - `test/cls-log-format.test.js`
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不采集职位描述正文、薪资详情、完整 JD 或候选人敏感文本
+  - 不改变现有 `jobId/jobStatus` 识别兼容行为
+- 验证计划：补充职位名称识别、事件上下文和 CLS 扁平字段测试；运行相关 `node --test`、全量 `npm test` 和 `git diff --check`。
+- 当前状态：已读取最新工作日志、总体设计、脚本和当前 `git status`；准备阅读职位上下文、日志规范和相关源码测试。
+
+#### 阶段记录：插件职位名上报链路已接入
+
+- 时间：2026-05-23 16:13 CST
+- 状态：待验证
+- 已完成：阅读职位上下文、日志规范、CLS 扁平化和对应测试后，完成 `jobName/jobNameSource` 采集链路：`JobContextProbe` 会从可见选中职位标题、职位菜单文本和窄格式页面标题收集职位名称候选；`SessionContext` 中的 `jobContext` 会随 `jobId` 一起保存 `jobName`；CLS 扁平字段增加 `job_name`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/02-job-context.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/job-context.js`
+  - `extension/src/content/job-context-probe.js`
+  - `extension/src/shared/cls-log-format.js`
+  - `test/job-context.test.js`
+  - `test/cls-log-format.test.js`
+- 当前验证结果：`node --check extension/src/content/job-context.js`、`node --check extension/src/content/job-context-probe.js`、`node --check extension/src/shared/cls-log-format.js` 通过；`node --test test/job-context.test.js test/cls-log-format.test.js` 通过，11 tests。
+- 风险/阻塞：职位名称 DOM 选择器仍需真机验证；当前实现只做保守可见文本和页面标题提取，并清理明显薪资片段。CLS 分钟汇总 SQL 模板位于受保护的 `analysis-system/` 子项目，下一步按子项目协作规范只修改 SQL 文档模板。
+- 中断续写入口：继续阅读 `analysis-system/docs/ai-worklog.md`、README、boundary、overview 和定时 SQL 文档后，追加子项目日志，再给 `boss_minute_operator_funnel` / `boss_minute_chat` 文档 SQL 增加 `job_name` 输出与分组。
+
+#### 完成记录：职位名称上报与汇总模板完成
+
+- 时间：2026-05-23 16:15 CST
+- 状态：已完成
+- 时间补正：本条最初误写为 `2026-05-23 16:28 CST`，与本机实际时间不符；已按 `date` 输出校正。
+- 已完成：`context.jobContext` 现在支持 `jobName/jobNameSource`，来源包括可见选中职位标题、职位菜单文本和窄格式页面标题；同一 `jobId` 后续扫描暂时读不到标题时会保留上一轮确认的 `jobName`，避免页面菜单收起导致上下文丢失。
+- 已完成：CLS 扁平字段增加 `job_name`，日志契约文档同步说明 `jobName` 的采集边界、来源和索引建议；职位模块文档同步说明不采集职位描述正文、薪资详情或完整 JD。
+- 已完成：按 `analysis-system/AGENTS.md` 进入子项目，只更新文档模板：raw/summary 字段增加 `job_name`，`boss_minute_operator_funnel` 和 `boss_minute_chat` SQL 模板输出 `job_name`，并按 `minute + operator_id + job_id + job_name` 分组。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/02-job-context.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/job-context.js`
+  - `extension/src/content/job-context-probe.js`
+  - `extension/src/shared/cls-log-format.js`
+  - `test/job-context.test.js`
+  - `test/cls-log-format.test.js`
+  - `analysis-system/docs/ai-worklog.md`
+  - `analysis-system/docs/boundary.md`
+  - `analysis-system/docs/modules/04-aggregation-query-api.md`
+  - `analysis-system/docs/modules/07-cls-scheduled-sql-tasks.md`
+- 验证结果：
+  - `node --check extension/src/content/job-context.js`、`node --check extension/src/content/job-context-probe.js`、`node --check extension/src/shared/cls-log-format.js` 通过。
+  - `node --test test/job-context.test.js test/cls-log-format.test.js` 通过，12 tests。
+  - `npm test` 通过，201 tests。
+  - `git diff --check -- ...` 针对本次修改文件通过。
+- 风险/阻塞：尚未在真实 BOSS 页面验证职位标题 DOM 选择器；真实 CLS 定时 SQL 云端任务尚未修改，只有文档模板更新。工作区仍有本轮之前已经存在的大量未提交改动和打包产物，本次未清理或回滚。
+- 中断续写入口：重新加载插件后，在推荐/详情/聊天链路抓一条 raw CLS 或 debug raw 事件，确认 `context.jobContext.jobName` 和 CLS `job_name`；上线分钟汇总时按 `analysis-system/docs/modules/07-cls-scheduled-sql-tasks.md` 更新真实 CLS 定时任务。
+
+### 任务：真机定位职位名称 DOM 来源
+
+- 时间：2026-05-23 16:15 CST
+- 执行者：AI + Computer Use
+- 状态：实现中
+- 任务目标：按用户要求使用 Computer Use 查看真实 BOSS 推荐页，确认如何正确取得当前职位名称和职位切换菜单，从而修复 `jobName` 为空。
+- 当前理解：用户已重新加载插件，但 profile 中仍没有 `jobName`，说明问题更可能是真实页面职位标题 DOM 没命中当前选择器。Computer Use 观察到推荐 iframe 顶部当前职位显示为普通可见文本：`兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时`；点击后下拉菜单包含搜索框和职位列表。现有代码只扫 `data-job-title/data-job-name` 等属性，确实不会命中这类普通文本。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/job-context.js`
+  - `extension/src/content/job-context-probe.js`
+  - `test/job-context.test.js`
+  - 必要时同步 `docs/modules/02-job-context.md`、`docs/modules/12-log-specification.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 运行代码
+  - 不修改 `strategy/`
+  - 不点击打招呼、发送、提交等业务动作
+  - 不使用 CDP/DevTools/远程调试
+- 验证计划：补充实际职位标题行解析测试；运行 `node --test test/job-context.test.js test/cls-log-format.test.js`、相关语法检查、全量 `npm test` 和 `git diff --check`。
+- 当前状态：已通过 Computer Use 打开真实职位下拉并确认候选文本结构，准备让职位探针扫描可见职位标题行。
+
+#### 完成记录：真实职位选择器文本解析已接入
+
+- 时间：2026-05-23 16:23 CST
+- 状态：已完成
+- 已完成：通过 Computer Use 观察真实推荐页和职位下拉，确认当前职位显示在推荐 iframe 顶部普通可见短文本中，并且格式为 `职位标题 _ 城市 薪资`；下拉菜单也使用同类文本。未点击切换到其他岗位，避免当前开启上传时产生正式 CLS 切换日志。
+- 已完成：`JobContextProbe` 新增可见职位标题短文本扫描，优先从真实顶部职位选择器文本解析 `dom.selected_job_title`，下拉列表其他行作为 `dom.job_menu` 候选；`job-context` 新增 `extractJobNameFromVisibleText()`，会把 `兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时` 清理为 `居家黑板主播`，把 `0基础抖音主播｜保底6~10K起｜包住 _ 杭州 6-11K` 清理为 `0基础抖音主播`。
+- 已完成：同步文档说明真实页面职位选择器格式；重新打包生成 `dist/boss-observer-0.1.2-2026-05-23T08-22-50-875Z.zip`，并确认 zip 内包含可见标题解析和 CLS `job_name` 字段。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/02-job-context.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/job-context.js`
+  - `extension/src/content/job-context-probe.js`
+  - `test/job-context.test.js`
+  - `dist/boss-observer-0.1.2-2026-05-23T08-22-50-875Z.zip`
+- 验证结果：
+  - `node --check extension/src/content/job-context.js`、`node --check extension/src/content/job-context-probe.js` 通过。
+  - `node --test test/job-context.test.js test/cls-log-format.test.js` 通过，14 tests。
+  - `npm test` 通过，203 tests。
+  - `git diff --check -- ...` 针对本次修改文件通过。
+  - `npm run build` 成功，生成 `dist/boss-observer-0.1.2-2026-05-23T08-22-50-875Z.zip`。
+  - `unzip -p ... src/content/job-context.js` / `src/content/job-context-probe.js` / `src/shared/cls-log-format.js` 确认新解析函数、可见文本扫描和 `job_name` 已进入 zip。
+- 风险/阻塞：尚未用新 zip 真机重新安装后验证 raw CLS 中的 `job_name`；真实切换岗位会产生正式 `job_context.changed` 日志，本轮未主动点击切换。
+- 中断续写入口：安装或加载 `dist/boss-observer-0.1.2-2026-05-23T08-22-50-875Z.zip` 后，打开推荐页等待 2 秒，再看 debug raw/profile 或 CLS raw，预期 `context.jobContext.jobName` 为 `居家黑板主播`，CLS 扁平字段 `job_name` 同步非空。
+
+#### 阶段记录：修复父容器导航文本污染职位名
+
+- 时间：2026-05-23 16:28 CST
+- 状态：已完成
+- 已完成：用户反馈 debug 中出现 `jobName: 推荐 精选 13 最新 兼职·【8000+】居家黑板主播`。通过 Computer Use 查看 live debug，确认职位名扫描命中了包含推荐页 tab 的父容器。`normalizeJobName()` 新增推荐页导航前缀清理，会在 `推荐/精选/数字/最新` 之后只保留真实职位标题，再执行薪资和福利片段清理。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/job-context.js`
+  - `test/job-context.test.js`
+  - `dist/boss-observer-0.1.2-2026-05-23T08-27-59-366Z.zip`
+- 验证结果：
+  - `node --check extension/src/content/job-context.js` 通过。
+  - `node --test test/job-context.test.js test/cls-log-format.test.js` 通过，16 tests。
+  - `npm test` 通过，205 tests。
+  - `git diff --check -- ...` 针对本次修改文件通过。
+  - `npm run build` 成功，生成 `dist/boss-observer-0.1.2-2026-05-23T08-27-59-366Z.zip`。
+  - `unzip -p dist/boss-observer-0.1.2-2026-05-23T08-27-59-366Z.zip src/content/job-context.js | rg "stripLeadingRecommendationTabs|推荐|最新|extractJobNameFromVisibleText"` 确认修复进入 zip。
+- 风险/阻塞：当前 Chrome live debug 仍显示旧污染值，需要安装/重载包含本修复的包后重新打开推荐页触发新扫描；历史已上传的污染 `job_name` 不会自动更正。
+- 中断续写入口：安装或加载 `dist/boss-observer-0.1.2-2026-05-23T08-27-59-366Z.zip` 后，刷新 BOSS 推荐页并等待 2 秒，debug raw 中 `jobName` 应从 `推荐 精选 13 最新 兼职·【8000+】居家黑板主播` 变为 `居家黑板主播`。
+
+#### 阶段记录：职位名改为保留 BOSS 完整展示值
+
+- 时间：2026-05-23 16:31 CST
+- 状态：已完成
+- 已完成：按用户确认，`jobName` 应保存 BOSS 顶部职位选择器的完整可见展示值，例如 `兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时`，而不是清理成短标题 `居家黑板主播`。现在只删除父容器误拼入的 `推荐 精选 13 最新` 导航前缀和末尾图标字符，不再删除 `兼职·`、薪资括号、城市薪资尾巴或菜单中的 `保底/包住` 等展示片段。
+- 已完成：同步更新职位模块和日志契约文档，明确“不采集薪资详情正文/完整 JD”，但保留职位选择器本身的完整展示值。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/02-job-context.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/job-context.js`
+  - `test/job-context.test.js`
+  - `dist/boss-observer-0.1.2-2026-05-23T08-31-02-472Z.zip`
+- 验证结果：
+  - `node --check extension/src/content/job-context.js` 通过。
+  - `node --test test/job-context.test.js test/cls-log-format.test.js` 通过，16 tests。
+  - `npm test` 通过，205 tests。
+  - `git diff --check -- ...` 针对本次修改文件通过。
+  - `npm run build` 成功，生成 `dist/boss-observer-0.1.2-2026-05-23T08-31-02-472Z.zip`。
+  - `unzip -p dist/boss-observer-0.1.2-2026-05-23T08-31-02-472Z.zip src/content/job-context.js | rg "stripLeadingRecommendationTabs|extractJobNameFromVisibleText|keepLikelyTitleSegment|兼职"` 确认新包保留前缀清理函数且已移除短标题截断函数。
+- 风险/阻塞：需要加载新包后刷新 BOSS 推荐页重新验证；历史已上传的短标题或污染标题不会自动回写。
+- 中断续写入口：加载 `dist/boss-observer-0.1.2-2026-05-23T08-31-02-472Z.zip` 后刷新推荐页，debug raw 中 `jobName` 应为 `兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时`。
+
+#### 阶段记录：截断父容器里的二次城市/筛选文本
+
+- 时间：2026-05-23 17:01 CST
+- 状态：已完成
+- 已完成：用户反馈完整展示值后面又混入 `杭州 筛选`。根因是父容器文本为 `职位展示名 _ 城市 薪资 杭州 筛选`；现在 `extractJobNameFromVisibleText()` 会优先按 `职位展示名 _ 城市 薪资` 的第一个薪资表达截断，保留完整职位展示值，但不带后续页面筛选入口。无薪资时兜底只保留到 `职位展示名 _ 城市`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/job-context.js`
+  - `test/job-context.test.js`
+  - `dist/boss-observer-0.1.2-2026-05-23T09-01-01-587Z.zip`
+- 验证结果：
+  - `node --check extension/src/content/job-context.js` 通过。
+  - `node --test test/job-context.test.js test/cls-log-format.test.js` 通过，17 tests。
+  - 手动 Node 样例确认：
+    - `推荐 精选 13 最新 兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时 杭州 筛选` -> `兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时`
+    - `0基础抖音主播｜保底6~10K起｜包住 _ 杭州 6-11K 杭州 筛选` -> `0基础抖音主播｜保底6~10K起｜包住 _ 杭州 6-11K`
+  - `npm test` 通过，206 tests。
+  - `git diff --check -- ...` 针对本次修改文件通过。
+  - `npm run build` 成功，生成 `dist/boss-observer-0.1.2-2026-05-23T09-01-01-587Z.zip`。
+- 风险/阻塞：需要加载新包后刷新 BOSS 推荐页重新验证；历史已上传的污染标题不会自动回写。
+- 中断续写入口：加载 `dist/boss-observer-0.1.2-2026-05-23T09-01-01-587Z.zip` 后刷新推荐页，debug raw 中 `jobName` 应为 `兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时`，不再带末尾 `杭州 筛选`。
+
+### 任务：优化聊天快照消息方向字段
+
+- 时间：2026-05-26 20:35 CST
+- 执行者：AI
+- 状态：已完成
+- 任务目标：修复 `candidate_chat.snapshot_captured` 中 `chat.messages[].direction` 大面积为 `unknown` 的问题，让文本消息尽量基于 BOSS 聊天 DOM 结构输出 `candidate` 或 `recruiter`。
+- 当前理解：analysis-system 只读检查历史 CLS raw 数据发现 370 条快照、2449 条消息的 `direction` 全部为 `unknown`，导致回复率、结束率和回复间隔无法可靠计算。采集侧需要从消息气泡左右位置、发送方样式、头像/已读状态归属、当前账号消息容器等结构化 DOM 信息判断方向，不能根据聊天正文猜测。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `test/chat-record-probe.test.js`
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不改变 `messageIndex`、`messageAt`、`fingerprint` 语义
+  - 不新增敏感信息采集，不采集联系方式、图片/语音/附件 URL 或额外简历正文
+- 验证计划：阅读现有聊天采集实现和测试，补充方向判断单元测试；运行 `node --test test/chat-record-probe.test.js`、必要的语法检查、`npm test` 和相关 `git diff --check`。
+- 当前状态：已阅读最新工作日志、仓库状态、概要设计、聊天模块文档和 package 脚本；工作区存在大量既有未提交改动，本任务只触碰聊天方向相关文件。
+
+#### 完成记录：聊天方向结构化采集已接入
+
+- 时间：2026-05-26 20:59 CST
+- 状态：已完成
+- 已完成：`candidate_chat.snapshot_captured` 现在仍先用原有文本时间线生成 `messageIndex`、`messageAt`、文本和指纹，再用匹配到同一条文本消息的 DOM 气泡结构补 `direction`；支持左右气泡 class、发送方/当前账号属性、左右位置，以及 `已读/送达/未读` 状态归属。缺少稳定结构信号时保留 `unknown`。
+- 已完成：补充测试覆盖候选人消息输出 `candidate`、招聘者消息输出 `recruiter`、无结构信号输出 `unknown`，并确认方向提示不会改变消息顺序、时间戳和重复解析下的指纹稳定性。
+- 已完成：同步更新聊天记录模块和日志契约文档，明确 `chat.messages[].direction` 枚举语义，以及不得根据聊天正文猜方向。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/07-chat-record.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/content/chat-record-probe.js`
+  - `test/chat-record-probe.test.js`
+- 验证结果：
+  - `node --check extension/src/content/chat-record-probe.js` 通过。
+  - `node --test test/chat-record-probe.test.js` 通过，27 tests。
+  - `npm test` 通过，210 tests。
+  - `git diff --check -- docs/ai-worklog.md docs/modules/07-chat-record.md docs/modules/12-log-specification.md extension/src/content/chat-record-probe.js test/chat-record-probe.test.js` 通过。
+  - 真机非 CDP 抽样：重新加载本地 unpacked 插件后打开 BOSS 聊天页，观察到 3 条新上传的 `candidate_chat.snapshot_captured`，时间分别为 2026-05-26 20:45:51、20:46:59、21:00:39，上传结果均为 200；抽样核对可见左右气泡后，左侧候选人文本输出 `candidate`，右侧当前账号文本输出 `recruiter`。期间额外打开多个会话只产生 `candidate_chat.opened`，因为本地成功上传水位已覆盖最新消息，未清空水位强制重复上报。
+- 风险/阻塞：真实 BOSS DOM 仍保留 `TODO(real-boss-dom)`：需要持续验证招聘者气泡始终在右、候选人气泡始终在左的页面假设。部分非双方聊天文本的系统提示在无法稳定归属时仍会保留 `unknown`。
+- 中断续写入口：如果后续继续真机复验，优先等待真实新消息或找尚未覆盖的会话；不要直接清空上报水位，除非用户明确允许产生重复历史快照。
+
+### 任务：拉取 2026-05-26 原始日志并分析采集端问题
+
+- 时间：2026-05-26 20:47 CST
+- 执行者：AI
+- 状态：计划中
+- 目标：按用户要求拉出今天所有原始日志，基于事实事件分析当前采集端仍存在的问题。
+- 当前理解：本次以只读分析为主；需要优先确认原始日志来源、时间范围和事件结构，再统计事件类型、字段缺失、上下文污染、聊天方向、职位上下文、候选人标识等采集端问题。上一条进行中的聊天方向修复记录提示 `candidate_chat.snapshot_captured` 的 `messages[].direction` 可能是重点问题。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改 `analysis-system/` 代码或文档
+  - 不修改 `strategy/` 策略文档
+  - 不修改插件采集端代码、测试或打包产物
+  - 不保存完整候选人敏感信息或完整聊天原文到策略文档
+- 验证计划：使用只读命令定位并导出/查询今天原始日志；用脚本或命令做统计校验；最终说明数据来源、时间范围、样本量、发现的问题和残余风险。
+- 下一步：查找本地/CLS 原始日志读取入口，确认是否已有 analysis-system 查询工具或导出文件可用。
+
+#### 阶段记录：今日 raw CLS 只读统计完成
+
+- 时间：2026-05-26 20:55 CST
+- 状态：待汇报
+- 已完成：通过一次性 `/private/tmp` 脚本使用 CLS `SearchLog` 只读查询 raw 事实日志 topic `5407c0a7-3e37-4c45-a204-bf5d40f157a1`（`ap-shanghai`），窗口为 2026-05-26 Asia/Shanghai 当天 00:00 至 20:48:09。分页 8 页，`ListOver=true`，共 7418 行 raw 日志、7375 个唯一 `event_id`。脚本只输出统计和异常事件 ID，不输出聊天正文、联系方式或完整候选人敏感信息。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 当前验证结果：
+  - 基础字段健康：`payload_json/context_json` 均可解析，`event_id/event_type/occurred_at/plugin_version/operator_id/page_type/session_id` 无缺失，`boss_account_matched=true` 覆盖 7418/7418。
+  - 主要事件量：`candidate_list.card_exposed=4305`、`candidate_detail.opened=1037`、`candidate_detail.closed=951`、`candidate_greeting.clicked=143`、`candidate_greeting.succeeded=117`、`candidate_greeting.failed=1`、`candidate_chat.opened=150`、`candidate_chat.snapshot_captured=132`。
+  - 采集端主要问题：聊天消息方向仍 930/933 为 `unknown`；候选人身份仍全部退化为 `text_fingerprint` 或 `chat_name_job_fingerprint`；职位名缺失 641 条且集中在 `beihai=584`；raw topic 有 43 条重复 `event_id`；筛选确认 69 条里 23 条没有 `openedEventId`，且存在同一 `openedEventId` 多次 applied；打招呼 143 次点击中 25 次没有观察到成功/失败结果。
+- 风险/阻塞：真实 raw 查询依赖开发/排障用 SearchLog，不应接入生产链路；本轮未修改 `analysis-system/`、`strategy/` 或插件采集端代码。由于未输出原文，聊天方向和候选人身份问题只能基于结构字段统计和采集端源码归因，仍需真机 DOM 验证进一步修复。
+- 中断续写入口：优先修复 `extension/src/content/chat-record-probe.js` 的真实 BOSS 聊天气泡方向识别，其次修复候选人稳定 ID 提取和 `beihai` 路径职位名识别；若要处理重复 raw，需要在后端按 `event_id` 幂等，并评估插件上传成功/超时后的重试行为。
+
+#### 完成记录：原始日志问题分析已汇总
+
+- 时间：2026-05-26 20:55 CST
+- 状态：已完成
+- 已完成：完成今日 raw 事件拉取、字段覆盖统计、事件类型统计、操作员维度统计和采集端问题归因；最终回复将按优先级说明聊天方向、候选人稳定 ID、职位名缺失、重复事件、筛选关联和打招呼结果覆盖缺口。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `PYTHONDONTWRITEBYTECODE=1 python3 /private/tmp/boss_cls_raw_today_analysis.py` 通过，CLS raw 查询 `ListOver=true`。
+  - `git diff --check -- ../docs/ai-worklog.md` 通过。
+- 风险/阻塞：未运行 `npm test`，因为本轮没有修改采集端代码；未保存完整 raw 日志文件，避免落地聊天正文和候选人敏感信息。
+- 中断续写入口：如继续修复，先从聊天方向 DOM 真机验证与 `chat-record-probe.js` 方向匹配逻辑入手；修复后重新加载插件，再按同一 raw 查询观察 20:00 后新快照的 `direction` 覆盖率。
+
+### 任务：修复非聊天方向 raw 日志质量问题
+
+- 时间：2026-05-26 21:01 CST
+- 执行者：AI
+- 状态：进行中
+- 任务目标：排查并修复 Chrome 插件采集端除 `candidate_chat.snapshot_captured.messages[].direction` 以外的 raw 日志质量问题，优先覆盖候选人稳定 ID、beihai 职位名缺失、重复上传边界、筛选事件关联和打招呼结果覆盖。
+- 当前理解：2026-05-26 raw CLS 统计显示候选人 ID 仍大面积退化为文本指纹，`job_name` 缺失集中在 `beihai` 路径，raw topic 存在少量重复 `event_id`，筛选 applied 与 panel_opened 关联不稳，打招呼点击有部分没有后续成功/失败观察。聊天方向已有单独修复任务，本轮不处理方向字段，不新增聊天正文、联系方式或完整简历正文采集。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `extension/src/content/candidate-card.js`
+  - `extension/src/content/candidate-list-probe.js`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `extension/src/content/greeting-probe.js`
+  - `extension/src/content/candidate-card-registry.js`
+  - `extension/src/content/job-context.js`
+  - `extension/src/content/job-context-probe.js`
+  - `extension/src/content/filter-probe.js`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/shared/storage-queue.js`
+  - `extension/src/shared/upload-policy.js`
+  - 相关 `test/*candidate*`、`test/greeting-probe.test.js`、`test/job-context.test.js`、`test/filter-probe.test.js`、`test/storage-queue.test.js` 和必要文档
+- 不修改范围：
+  - 不修改 `analysis-system/`
+  - 不修改 `strategy/`
+  - 不处理聊天方向问题
+  - 不采集额外聊天正文、联系方式或完整简历正文
+  - 不使用 CDP/DevTools/远程调试方式读取 BOSS 页面
+- 验证计划：为每个行为变化补充 `node:test` 单测；运行相关测试，若跨模块改动较多则运行 `npm test`；运行 `git diff --check`；最终记录修复点、验证命令和残余风险。
+- 当前状态：已阅读最新工作日志、`git status --short`、相关文件 diff、概要设计和 package 脚本；准备继续阅读相关模块文档和源码后小步修复。

@@ -1,7 +1,8 @@
 import { nowLocalIsoString } from "./time.js";
 
 export const NETWORK_DEBUG_MAX_RECENT_REQUESTS = 80;
-export const NETWORK_DEBUG_MAX_PREVIEW_CHARS = 12000;
+export const NETWORK_DEBUG_MAX_PREVIEW_CHARS = 1_000_000;
+export const NETWORK_DEBUG_MAX_STORED_CHARS = 2_000_000;
 export const NETWORK_DEBUG_REQUEST_CATEGORY_ALL = "all";
 export const NETWORK_DEBUG_REQUEST_CATEGORY_OPTIONS = [
   {
@@ -44,6 +45,8 @@ export const NETWORK_DEBUG_REQUEST_CATEGORY_OPTIONS = [
 
 const CONTACT_TEXT_PATTERN = /(?:微信|手机号|手机|电话|联系方式|wechat|weixin|wx)/i;
 const CONTACT_FIELD_KEY_PATTERN = /(?:微信|手机号|手机|电话|联系方式|wechat|weixin|wx|mobile|phone|tel|contact|email|mail)/i;
+const PHONE_PATTERN = /1[3-9]\d{9}/g;
+const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const DETAIL_INFO_PATH = "/wapi/zpjob/view/geek/info/v2";
 const CANDIDATE_LIST_PATHS = new Set([
   "/wapi/zpitem/web/boss/search/getRelatedInfo",
@@ -73,7 +76,8 @@ export function createEmptyNetworkDebugState() {
     requestCount: 0,
     recentRequests: [],
     maxRecentRequests: NETWORK_DEBUG_MAX_RECENT_REQUESTS,
-    maxPreviewChars: NETWORK_DEBUG_MAX_PREVIEW_CHARS
+    maxPreviewChars: NETWORK_DEBUG_MAX_PREVIEW_CHARS,
+    maxStoredChars: NETWORK_DEBUG_MAX_STORED_CHARS
   };
 }
 
@@ -108,7 +112,11 @@ export function appendNetworkDebugRequest(state, request, { now = nowLocalIsoStr
     ...current,
     updatedAt: now(),
     requestCount: current.requestCount + 1,
-    recentRequests: [sanitized, ...current.recentRequests].slice(0, current.maxRecentRequests)
+    recentRequests: trimNetworkDebugRequests(
+      [sanitized, ...current.recentRequests],
+      current.maxRecentRequests,
+      current.maxStoredChars
+    )
   };
 }
 
@@ -207,19 +215,72 @@ export function filterNetworkDebugRequests(requests = [], category = NETWORK_DEB
 
 export function normalizeNetworkDebugState(state = {}) {
   const empty = createEmptyNetworkDebugState();
+  const maxRecentRequests = normalizePositiveInteger(state.maxRecentRequests, empty.maxRecentRequests);
+  const maxPreviewChars = Math.max(
+    normalizePositiveInteger(state.maxPreviewChars, empty.maxPreviewChars),
+    empty.maxPreviewChars
+  );
+  const maxStoredChars = Math.max(
+    normalizePositiveInteger(state.maxStoredChars, empty.maxStoredChars),
+    empty.maxStoredChars
+  );
   return {
     ...empty,
     ...state,
     enabled: state.enabled === true,
     requestCount: Number.isFinite(Number(state.requestCount)) ? Number(state.requestCount) : 0,
-    recentRequests: Array.isArray(state.recentRequests) ? state.recentRequests : [],
-    maxRecentRequests: Number.isFinite(Number(state.maxRecentRequests)) ?
-      Number(state.maxRecentRequests) :
-      empty.maxRecentRequests,
-    maxPreviewChars: Number.isFinite(Number(state.maxPreviewChars)) ?
-      Number(state.maxPreviewChars) :
-      empty.maxPreviewChars
+    recentRequests: trimNetworkDebugRequests(
+      Array.isArray(state.recentRequests) ? state.recentRequests : [],
+      maxRecentRequests,
+      maxStoredChars
+    ),
+    maxRecentRequests,
+    maxPreviewChars,
+    maxStoredChars
   };
+}
+
+function trimNetworkDebugRequests(requests = [], maxRecentRequests, maxStoredChars) {
+  const requestLimit = normalizePositiveInteger(maxRecentRequests, NETWORK_DEBUG_MAX_RECENT_REQUESTS);
+  const storedBudget = normalizePositiveInteger(maxStoredChars, NETWORK_DEBUG_MAX_STORED_CHARS);
+  const limitedRequests = Array.isArray(requests) ? requests.slice(0, requestLimit) : [];
+  if (storedBudget <= 0) {
+    return limitedRequests;
+  }
+
+  const kept = [];
+  let usedChars = 0;
+  for (const request of limitedRequests) {
+    const requestChars = estimateNetworkDebugRequestChars(request);
+    if (kept.length === 0 || usedChars + requestChars <= storedBudget) {
+      kept.push(request);
+      usedChars += requestChars;
+    }
+  }
+  return kept;
+}
+
+function estimateNetworkDebugRequestChars(request = {}) {
+  if (!request || typeof request !== "object") {
+    return 0;
+  }
+
+  const fieldChars = Object.values(request).reduce((sum, value) => {
+    if (typeof value === "string") {
+      return sum + value.length;
+    }
+    if (value === null || value === undefined) {
+      return sum;
+    }
+    return sum + String(value).length;
+  }, 0);
+  return fieldChars + 200;
+}
+
+function normalizePositiveInteger(value, fallback) {
+  return Number.isFinite(Number(value)) && Number(value) > 0
+    ? Math.floor(Number(value))
+    : fallback;
 }
 
 function sanitizePreviewText(value, maxPreviewChars, {
@@ -246,7 +307,19 @@ function redactSensitivePreview(value, { preserveContactKeywordStructure }) {
     return JSON.stringify(redactSensitiveJson(parsed.value));
   }
 
-  return redactContactFieldText(redactDirectContacts(value));
+  if (
+    !CONTACT_TEXT_PATTERN.test(value) &&
+    !CONTACT_FIELD_KEY_PATTERN.test(value) &&
+    !hasDirectContact(value)
+  ) {
+    return value;
+  }
+
+  const directRedacted = redactDirectContacts(value);
+  if (!CONTACT_TEXT_PATTERN.test(directRedacted) && !CONTACT_FIELD_KEY_PATTERN.test(directRedacted)) {
+    return directRedacted;
+  }
+  return redactContactFieldText(directRedacted);
 }
 
 function tryParseJson(value) {
@@ -304,9 +377,18 @@ function stringifyPreviewValue(value) {
 }
 
 function redactDirectContacts(value) {
+  PHONE_PATTERN.lastIndex = 0;
+  EMAIL_PATTERN.lastIndex = 0;
   return value
-    .replace(/1[3-9]\d{9}/g, "[redacted_phone]")
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[redacted_email]");
+    .replace(PHONE_PATTERN, "[redacted_phone]")
+    .replace(EMAIL_PATTERN, "[redacted_email]");
+}
+
+function hasDirectContact(value = "") {
+  PHONE_PATTERN.lastIndex = 0;
+  EMAIL_PATTERN.lastIndex = 0;
+  return (value.includes("1") && PHONE_PATTERN.test(value)) ||
+    (value.includes("@") && EMAIL_PATTERN.test(value));
 }
 
 function redactContactFieldText(value) {

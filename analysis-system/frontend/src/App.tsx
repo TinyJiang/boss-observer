@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchDashboard, fetchLogQuality, fetchOperator, fetchOperators } from "./api";
-import type { ActiveOperator, DailyActiveDuration, DashboardPayload, HealthStatus, LogQualityPayload, OperatorMinutePoint, OperatorPayload, OperatorProfile } from "./types";
+import { fetchDashboard, fetchHistory, fetchLogQuality, fetchOperator, fetchOperators } from "./api";
+import type { ActiveOperator, DailyActiveDuration, DailyBasicStatsRecord, DashboardPayload, HealthStatus, HistoryPayload, LogQualityPayload, OperatorMinutePoint, OperatorPayload, OperatorProfile } from "./types";
 import "./styles.css";
 
 type LoadState = "loading" | "ready" | "error";
-type AppTab = "dashboard" | "quality";
+type AppTab = "dashboard" | "history" | "quality";
 
 const REFRESH_INTERVAL_MS = 15_000;
 
@@ -13,6 +13,13 @@ const STATUS_LABELS: Record<HealthStatus, string> = {
   warning: "预警",
   critical: "严重",
   unknown: "未知"
+};
+
+const HISTORY_STATUS_LABELS: Record<HistoryPayload["history"]["status"], string> = {
+  ok: "正常",
+  partial: "部分缺值",
+  missing_values: "指标值暂不可查",
+  empty: "无记录"
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -54,17 +61,27 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
   const [operator, setOperator] = useState<OperatorPayload | null>(null);
   const [quality, setQuality] = useState<LogQualityPayload | null>(null);
+  const [history, setHistory] = useState<HistoryPayload | null>(null);
   const [operatorProfiles, setOperatorProfiles] = useState<OperatorProfile[]>([]);
   const [selectedOperatorId, setSelectedOperatorId] = useState("");
+  const [historyOperatorId, setHistoryOperatorId] = useState("");
+  const [historyActiveDate, setHistoryActiveDate] = useState(getYesterdayDateInput());
+  const [historySubmittedFilters, setHistorySubmittedFilters] = useState({
+    operatorId: "",
+    activeDate: getYesterdayDateInput()
+  });
+  const [historyQueryVersion, setHistoryQueryVersion] = useState(0);
   const [qualityOperatorId, setQualityOperatorId] = useState("");
   const [qualityPluginVersion, setQualityPluginVersion] = useState("");
   const [operatorLoadState, setOperatorLoadState] = useState<LoadState>("loading");
   const [dashboardLoadState, setDashboardLoadState] = useState<LoadState>("loading");
   const [detailLoadState, setDetailLoadState] = useState<LoadState>("loading");
+  const [historyLoadState, setHistoryLoadState] = useState<LoadState>("ready");
   const [qualityLoadState, setQualityLoadState] = useState<LoadState>("loading");
   const [operatorErrorMessage, setOperatorErrorMessage] = useState<string | null>(null);
   const [dashboardErrorMessage, setDashboardErrorMessage] = useState<string | null>(null);
   const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
+  const [historyErrorMessage, setHistoryErrorMessage] = useState<string | null>(null);
   const [qualityErrorMessage, setQualityErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -84,6 +101,17 @@ export default function App() {
         setOperatorErrorMessage(error instanceof Error ? error.message : "未知错误");
       }
     }
+    loadOperators();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "dashboard") {
+      return;
+    }
+    let cancelled = false;
     async function loadDashboard(showLoading = false) {
       try {
         if (showLoading) {
@@ -108,7 +136,6 @@ export default function App() {
         setDashboardErrorMessage(error instanceof Error ? error.message : "未知错误");
       }
     }
-    loadOperators();
     loadDashboard(true);
     const dashboardTimer = window.setInterval(() => {
       loadDashboard(false);
@@ -117,9 +144,12 @@ export default function App() {
       cancelled = true;
       window.clearInterval(dashboardTimer);
     };
-  }, []);
+  }, [activeTab]);
 
   useEffect(() => {
+    if (activeTab !== "dashboard") {
+      return;
+    }
     if (!selectedOperatorId) {
       setDetailLoadState("ready");
       return;
@@ -150,7 +180,7 @@ export default function App() {
       cancelled = true;
       window.clearInterval(detailTimer);
     };
-  }, [selectedOperatorId]);
+  }, [activeTab, selectedOperatorId]);
 
   useEffect(() => {
     if (activeTab !== "quality") {
@@ -186,6 +216,36 @@ export default function App() {
     };
   }, [activeTab, qualityOperatorId, qualityPluginVersion]);
 
+  useEffect(() => {
+    if (activeTab !== "history") {
+      return;
+    }
+    let cancelled = false;
+    async function loadHistory(showLoading = false) {
+      try {
+        if (showLoading) {
+          setHistoryLoadState("loading");
+        }
+        setHistoryErrorMessage(null);
+        const payload = await fetchHistory({
+          operatorId: historySubmittedFilters.operatorId || undefined,
+          activeDate: historySubmittedFilters.activeDate || undefined
+        });
+        if (cancelled) return;
+        setHistory(payload);
+        setHistoryLoadState("ready");
+      } catch (error) {
+        if (cancelled) return;
+        setHistoryLoadState("error");
+        setHistoryErrorMessage(error instanceof Error ? error.message : "未知错误");
+      }
+    }
+    loadHistory(true);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, historySubmittedFilters, historyQueryVersion]);
+
   const issueCount = (dashboard?.health.parse_error_count ?? 0)
     + (dashboard?.health.projection_error_count ?? 0)
     + (dashboard?.health.unknown_event_type_count ?? 0)
@@ -202,6 +262,13 @@ export default function App() {
     [dashboard, quality]
   );
   const activityLoading = dashboardLoadState === "loading";
+  const handleHistoryQuery = () => {
+    setHistorySubmittedFilters({
+      operatorId: historyOperatorId.trim(),
+      activeDate: historyActiveDate
+    });
+    setHistoryQueryVersion((version) => version + 1);
+  };
 
   return (
     <div className="shell">
@@ -219,6 +286,13 @@ export default function App() {
             实时大盘
           </button>
           <button
+            className={`navItem ${activeTab === "history" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveTab("history")}
+          >
+            历史数据
+          </button>
+          <button
             className={`navItem ${activeTab === "quality" ? "active" : ""}`}
             type="button"
             onClick={() => setActiveTab("quality")}
@@ -231,7 +305,7 @@ export default function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">本地开发</p>
-            <h1>{activeTab === "quality" ? "数据质量" : "招聘活动实时大盘"}</h1>
+            <h1>{formatTabTitle(activeTab)}</h1>
           </div>
           <div className={`freshness ${dashboardLoadState}`}>
             {dashboardLoadState === "ready" && dashboard
@@ -241,6 +315,7 @@ export default function App() {
                     <span className="sourceLine">{formatSource(dashboard)}</span>
                     <span className="sourceLine">{formatSummarySource(dashboard)}</span>
                     <span className="sourceLine">{formatDailySummarySource(dashboard)}</span>
+                    <span className="sourceLine">{formatDailyBasicSummarySource(dashboard)}</span>
                   </>
                 )
               : dashboardLoadState === "error"
@@ -293,7 +368,7 @@ export default function App() {
               </section>
             </section>
           </>
-        ) : (
+        ) : activeTab === "quality" ? (
           <DataQualityTab
             payload={quality}
             loadState={qualityLoadState}
@@ -304,6 +379,18 @@ export default function App() {
             pluginVersion={qualityPluginVersion}
             onOperatorIdChange={setQualityOperatorId}
             onPluginVersionChange={setQualityPluginVersion}
+          />
+        ) : (
+          <HistoryTab
+            payload={history}
+            loadState={historyLoadState}
+            errorMessage={historyErrorMessage}
+            operators={operatorRows.map((item) => item.profile)}
+            operatorId={historyOperatorId}
+            activeDate={historyActiveDate}
+            onOperatorIdChange={setHistoryOperatorId}
+            onActiveDateChange={setHistoryActiveDate}
+            onQuery={handleHistoryQuery}
           />
         )}
       </main>
@@ -367,8 +454,11 @@ function OperatorRow({
   const dailyText = item.daily
     ? `今日 ${formatDuration(item.daily.active_minutes)}`
     : "今日暂无时长";
+  const jobText = active
+    ? active.job_name ?? active.job_id ?? "未关联职位"
+    : "未关联职位";
   const statusText = active
-    ? `${formatAction(active.last_action)} · ${active.job_id ?? "未关联职位"}`
+    ? `${formatAction(active.last_action)} · ${jobText}`
     : activityLoading
       ? "状态加载中"
       : "暂无活跃";
@@ -420,6 +510,8 @@ function OperatorDetail({
   const funnel = payload?.operator.funnel;
   const chat = payload?.operator.chat;
   const dailyDuration = payload?.operator.daily_active_duration ?? null;
+  const pluginVersion = payload?.operator.plugin_version ?? null;
+  const pluginVersionObservedAt = payload?.operator.plugin_version_observed_at ?? null;
   const detailOpened = funnel?.detail_opened ?? 0;
   const bossLikeDetailOpened = detailOpened + (chat?.chat_opened ?? funnel?.chat_opened ?? 0);
   const greetingClicked = funnel?.greeting_clicked ?? 0;
@@ -457,6 +549,13 @@ function OperatorDetail({
             <small>{dailyDuration.source_row_count} 行来源记录</small>
           )}
         </div>
+        <div>
+          <span>插件版本</span>
+          <strong>{pluginVersion ?? "--"}</strong>
+          {pluginVersionObservedAt && (
+            <small>最近观测 {formatDateTime(pluginVersionObservedAt)}</small>
+          )}
+        </div>
       </div>
       <div className="funnel">
         <FunnelCell label="卡片" value={funnel?.card_exposed ?? 0} />
@@ -481,6 +580,400 @@ function OperatorDetail({
       </div>
       <MinuteLineChart points={payload?.operator.minute_points ?? []} />
     </>
+  );
+}
+
+function HistoryTab({
+  payload,
+  loadState,
+  errorMessage,
+  operators,
+  operatorId,
+  activeDate,
+  onOperatorIdChange,
+  onActiveDateChange,
+  onQuery
+}: {
+  payload: HistoryPayload | null;
+  loadState: LoadState;
+  errorMessage: string | null;
+  operators: OperatorProfile[];
+  operatorId: string;
+  activeDate: string;
+  onOperatorIdChange: (operatorId: string) => void;
+  onActiveDateChange: (activeDate: string) => void;
+  onQuery: () => void;
+}) {
+  const [detailOperatorId, setDetailOperatorId] = useState("");
+  const [detailPayload, setDetailPayload] = useState<HistoryPayload | null>(null);
+  const [detailLoadState, setDetailLoadState] = useState<LoadState>("ready");
+  const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
+  const operatorById = useMemo(
+    () => new Map(operators.map((operator) => [operator.operator_id, operator])),
+    [operators]
+  );
+  const history = payload?.history;
+  const sourceText = payload ? formatHistoryPayloadSource(payload) : "日级基础指标：加载中";
+  const records = history?.records ?? [];
+  const isQuerying = loadState === "loading";
+
+  useEffect(() => {
+    if (!detailOperatorId) {
+      return;
+    }
+    let cancelled = false;
+    async function loadOperatorHistory() {
+      try {
+        setDetailLoadState("loading");
+        setDetailErrorMessage(null);
+        setDetailPayload(null);
+        const nextPayload = await fetchHistory({
+          operatorId: detailOperatorId,
+          days: 31
+        });
+        if (cancelled) return;
+        setDetailPayload(nextPayload);
+        setDetailLoadState("ready");
+      } catch (error) {
+        if (cancelled) return;
+        setDetailLoadState("error");
+        setDetailErrorMessage(error instanceof Error ? error.message : "未知错误");
+      }
+    }
+    loadOperatorHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [detailOperatorId]);
+
+  if (detailOperatorId) {
+    return (
+      <HistoryOperatorDetail
+        operatorId={detailOperatorId}
+        profile={operatorById.get(detailOperatorId) ?? null}
+        payload={detailPayload}
+        loadState={detailLoadState}
+        errorMessage={detailErrorMessage}
+        operatorById={operatorById}
+        onBack={() => setDetailOperatorId("")}
+      />
+    );
+  }
+
+  return (
+    <>
+      <section className="panel historyFilters">
+        <label>
+          <span>统计日期</span>
+          <input
+            type="date"
+            value={activeDate}
+            onChange={(event) => onActiveDateChange(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>操作员 ID</span>
+          <input
+            value={operatorId}
+            list="history-operator-options"
+            placeholder="全部操作员"
+            onChange={(event) => onOperatorIdChange(event.target.value)}
+          />
+          <datalist id="history-operator-options">
+            {operators.map((operator) => (
+              <option key={operator.operator_id} value={operator.operator_id}>
+                {operator.display_name}
+              </option>
+            ))}
+          </datalist>
+        </label>
+        <button
+          className="queryButton"
+          type="button"
+          onClick={onQuery}
+          disabled={isQuerying}
+        >
+          {isQuerying ? (
+            <LoadingText label="查询中" />
+          ) : "查询"}
+        </button>
+        <span className={`queryState ${loadState}`}>
+          {loadState === "loading"
+            ? "正在查询日级基础指标"
+            : loadState === "error"
+              ? "查询失败"
+              : payload
+                ? "查询完成"
+                : "等待查询"}
+        </span>
+      </section>
+
+      {loadState === "error" && (
+        <div className="inlineError qualityError">{errorMessage}</div>
+      )}
+
+      <section className="panel historyPanel">
+        <div className="panelHead">
+          <h2>历史数据</h2>
+          <span className="panelNote">{isQuerying ? "查询中" : sourceText}</span>
+        </div>
+        {loadState === "loading" && payload === null ? (
+          <LoadingText label="正在加载历史数据" />
+        ) : (
+          <>
+            {isQuerying && payload !== null && (
+              <div className="historyLoadingBanner">
+                <LoadingText label="正在刷新查询结果" />
+              </div>
+            )}
+            <div className="historySummary">
+              <div>
+                <span>查询状态</span>
+                <strong>{HISTORY_STATUS_LABELS[history?.status ?? "empty"]}</strong>
+              </div>
+              <div>
+                <span>匹配记录</span>
+                <strong>{history?.record_count ?? 0}</strong>
+              </div>
+              <div>
+                <span>来源记录</span>
+                <strong>{history?.source_record_count ?? 0}</strong>
+              </div>
+              <div>
+                <span>最新写入</span>
+                <strong>{history?.latest_recorded_at ? formatDateTime(history.latest_recorded_at) : "--"}</strong>
+              </div>
+            </div>
+            <div className="historyNotice">
+              来源：CLS 日级基础指标库；本页不使用分钟汇总累加。
+            </div>
+            <HistoryTable
+              records={records}
+              operatorById={operatorById}
+              onOperatorDetail={setDetailOperatorId}
+            />
+          </>
+        )}
+      </section>
+    </>
+  );
+}
+
+function HistoryTable({
+  records,
+  operatorById,
+  onOperatorDetail
+}: {
+  records: DailyBasicStatsRecord[];
+  operatorById: Map<string, OperatorProfile>;
+  onOperatorDetail?: (operatorId: string) => void;
+}) {
+  if (records.length === 0) {
+    return <div className="emptyQuality">暂无日级基础统计</div>;
+  }
+  return (
+    <div className="historyTableWrap">
+      <table className="historyTable">
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>操作员</th>
+            <th>账号</th>
+            <th>活跃</th>
+            <th>曝光/详情</th>
+            <th>招呼</th>
+            <th>聊天</th>
+            <th>首轮回复</th>
+            <th>BOSS 结束</th>
+            <th>全轮回复</th>
+            <th>微信</th>
+            <th>总事件</th>
+            <th>状态</th>
+            {onOperatorDetail && <th>操作</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((record) => (
+            <HistoryRow
+              key={`${record.active_date}-${record.operator_id}`}
+              record={record}
+              profile={operatorById.get(record.operator_id) ?? null}
+              onOperatorDetail={onOperatorDetail}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HistoryRow({
+  record,
+  profile,
+  onOperatorDetail
+}: {
+  record: DailyBasicStatsRecord;
+  profile: OperatorProfile | null;
+  onOperatorDetail?: (operatorId: string) => void;
+}) {
+  const operatorLabel = profile?.display_name ?? record.operator_id;
+  const accountName = record.operator_account_name ?? record.boss_account_name ?? profile?.account_name ?? "--";
+  const activeText = record.has_values
+    ? formatDuration(record.active_minutes)
+    : "--";
+  const rangeText = record.first_active_minute && record.last_active_minute
+    ? `${formatTime(record.first_active_minute).slice(0, 5)}-${formatTime(record.last_active_minute).slice(0, 5)}`
+    : "--";
+  const firstRoundRate = formatRatio(
+    record.first_round_boss_replied_count,
+    record.first_round_candidate_initiated_count
+  );
+  const bossEndRate = formatRatio(record.boss_ended_conversation_count, record.chat_conversation_count);
+  return (
+    <tr className={record.has_values ? "" : "missingValues"}>
+      <td>{record.active_date}</td>
+      <td>
+        <span className="historyOperator">{operatorLabel}</span>
+        <small>{record.operator_id}</small>
+      </td>
+      <td>{accountName}</td>
+      <td>
+        <strong>{activeText}</strong>
+        <small>{rangeText}</small>
+      </td>
+      <td>{record.has_values ? `${record.card_exposed} / ${record.detail_opened}` : "--"}</td>
+      <td>{record.has_values ? `${record.greeting_clicked} / ${record.greeting_succeeded}` : "--"}</td>
+      <td>{record.has_values ? `${record.chat_opened} / ${record.snapshot_captured}` : "--"}</td>
+      <td>
+        {record.has_values ? (
+          <HistoryMetricCell
+            primary={firstRoundRate}
+            secondary={`中 ${formatElapsedMs(record.first_round_boss_reply_elapsed_median_ms)} / 均 ${formatElapsedMs(record.first_round_boss_reply_elapsed_avg_ms)}`}
+          />
+        ) : "--"}
+      </td>
+      <td>
+        {record.has_values ? (
+          <HistoryMetricCell
+            primary={bossEndRate}
+            secondary={`${record.boss_ended_conversation_count}/${record.chat_conversation_count} 会话`}
+          />
+        ) : "--"}
+      </td>
+      <td>
+        {record.has_values ? (
+          <HistoryMetricCell
+            primary={`${record.boss_reply_count} 次`}
+            secondary={`中 ${formatElapsedMs(record.boss_reply_elapsed_median_ms)} / 均 ${formatElapsedMs(record.boss_reply_elapsed_avg_ms)}`}
+          />
+        ) : "--"}
+      </td>
+      <td>{record.has_values ? record.wechat_captured : "--"}</td>
+      <td>{record.has_values ? record.total_events : "--"}</td>
+      <td>
+        <span className={`historyStatus ${record.has_values ? "ok" : "missing"}`}>
+          {record.has_values ? "有数值" : "指标值暂不可查"}
+        </span>
+      </td>
+      {onOperatorDetail && (
+        <td>
+          <button
+            className="tableActionButton"
+            type="button"
+            onClick={() => onOperatorDetail(record.operator_id)}
+          >
+            查询详情
+          </button>
+        </td>
+      )}
+    </tr>
+  );
+}
+
+function HistoryMetricCell({
+  primary,
+  secondary
+}: {
+  primary: string;
+  secondary: string;
+}) {
+  return (
+    <span className="historyMetricCell">
+      <strong>{primary}</strong>
+      <small>{secondary}</small>
+    </span>
+  );
+}
+
+function HistoryOperatorDetail({
+  operatorId,
+  profile,
+  payload,
+  loadState,
+  errorMessage,
+  operatorById,
+  onBack
+}: {
+  operatorId: string;
+  profile: OperatorProfile | null;
+  payload: HistoryPayload | null;
+  loadState: LoadState;
+  errorMessage: string | null;
+  operatorById: Map<string, OperatorProfile>;
+  onBack: () => void;
+}) {
+  const records = payload?.history.records ?? [];
+  const totalActiveMinutes = records.reduce((total, record) => total + record.active_minutes, 0);
+  const totalEvents = records.reduce((total, record) => total + record.total_events, 0);
+  const operatorLabel = profile?.display_name ?? operatorId;
+  return (
+    <section className="panel historyPanel">
+      <div className="detailTopbar">
+        <button className="backButton" type="button" onClick={onBack}>
+          返回
+        </button>
+        <div>
+          <p className="eyebrow">操作员历史详情</p>
+          <h2>{operatorLabel}</h2>
+        </div>
+      </div>
+      {loadState === "error" && (
+        <div className="inlineError qualityError">{errorMessage}</div>
+      )}
+      {loadState === "loading" && payload === null ? (
+        <LoadingText label="正在加载操作员每日明细" />
+      ) : (
+        <>
+          {loadState === "loading" && payload !== null && (
+            <div className="historyLoadingBanner">
+              <LoadingText label="正在刷新操作员每日明细" />
+            </div>
+          )}
+          <div className="historySummary">
+            <div>
+              <span>操作员 ID</span>
+              <strong>{operatorId}</strong>
+            </div>
+            <div>
+              <span>统计天数</span>
+              <strong>{records.length}</strong>
+            </div>
+            <div>
+              <span>累计活跃</span>
+              <strong>{formatDuration(totalActiveMinutes)}</strong>
+            </div>
+            <div>
+              <span>累计事件</span>
+              <strong>{totalEvents}</strong>
+            </div>
+          </div>
+          <div className="historyNotice">
+            来源：CLS 日级基础指标库；按操作员查询最近 31 天日级明细。
+          </div>
+          <HistoryTable records={records} operatorById={operatorById} />
+        </>
+      )}
+    </section>
   );
 }
 
@@ -795,6 +1288,16 @@ function formatAction(action: string) {
   return ACTION_LABELS[action] ?? action;
 }
 
+function formatTabTitle(tab: AppTab) {
+  if (tab === "quality") {
+    return "数据质量";
+  }
+  if (tab === "history") {
+    return "历史数据";
+  }
+  return "招聘活动实时大盘";
+}
+
 function formatTime(value: string) {
   return new Date(value).toLocaleTimeString("zh-CN", {
     hour: "2-digit",
@@ -802,6 +1305,29 @@ function formatTime(value: string) {
     second: "2-digit",
     hour12: false
   });
+}
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+}
+
+function getYesterdayDateInput() {
+  const date = new Date();
+  date.setDate(date.getDate() - 1);
+  return formatDateInput(date);
+}
+
+function formatDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatDuration(minutes: number) {
@@ -815,6 +1341,36 @@ function formatDuration(minutes: number) {
     return `${hours}小时`;
   }
   return `${rest}分`;
+}
+
+function formatElapsedMs(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  if (totalSeconds <= 0) {
+    return "--";
+  }
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0 && minutes > 0) {
+    return `${hours}小时${minutes}分`;
+  }
+  if (hours > 0) {
+    return `${hours}小时`;
+  }
+  if (minutes > 0 && seconds > 0) {
+    return `${minutes}分${seconds}秒`;
+  }
+  if (minutes > 0) {
+    return `${minutes}分`;
+  }
+  return `${seconds}秒`;
+}
+
+function formatRatio(numerator: number, denominator: number) {
+  if (denominator <= 0) {
+    return "--";
+  }
+  return `${formatPercent(numerator / denominator)} (${numerator}/${denominator})`;
 }
 
 function formatPercent(rate: number) {
@@ -849,6 +1405,17 @@ function formatLogQualityPayloadSource(payload: LogQualityPayload) {
     ? `，最新 ${formatTime(payload.quality.latest_window_start)}`
     : "";
   return `10分钟质量：${source.label}，读取 ${source.record_count} 条${latest}`;
+}
+
+function formatHistoryPayloadSource(payload: HistoryPayload) {
+  const source = payload.daily_basic_summary_source;
+  if (!source) {
+    return "日级基础指标：未配置";
+  }
+  const latest = payload.history.latest_recorded_at
+    ? `，最新 ${formatDateTime(payload.history.latest_recorded_at)}`
+    : "";
+  return `日级基础指标：${source.label}，读取 ${source.record_count} 条${latest}`;
 }
 
 function buildOperatorRows(
@@ -921,4 +1488,12 @@ function formatDailySummarySource(payload: DashboardPayload) {
     ? `，分钟汇总兜底 ${derivedCount} 人`
     : "";
   return `日级指标：${source.label}，读取 ${source.record_count} 条${latest}${fallback}`;
+}
+
+function formatDailyBasicSummarySource(payload: DashboardPayload) {
+  const source = payload.daily_basic_summary_source;
+  if (!source) {
+    return "日级基础指标：未配置";
+  }
+  return `日级基础指标：${source.label}，读取 ${source.record_count} 条`;
 }

@@ -7,7 +7,13 @@ from datetime import date, datetime, timezone
 
 from boss_analysis.api import AnalysisQueryService
 from boss_analysis.consumer import normalize_cls_event
-from boss_analysis.domain import DailyActiveDurationRecord, LogQualitySummaryRecord, MinuteSummaryRecord, OperatorProfile
+from boss_analysis.domain import (
+  DailyActiveDurationRecord,
+  DailyBasicStatsRecord,
+  LogQualitySummaryRecord,
+  MinuteSummaryRecord,
+  OperatorProfile,
+)
 from boss_analysis.storage import InMemoryFactStore, InMemoryRawEventRepository
 from boss_analysis.workers import FactProjector
 
@@ -24,6 +30,7 @@ def make_record(
   operator_id="op_001",
   job_id="job_001",
   occurred_at="2026-05-17T09:12:00+08:00",
+  plugin_version="0.1.0",
 ):
   if isinstance(payload, str):
     payload_json = payload
@@ -33,7 +40,7 @@ def make_record(
     "event_id": event_id,
     "event_type": event_type,
     "occurred_at": occurred_at,
-    "plugin_version": "0.1.0",
+    "plugin_version": plugin_version,
     "operator_id": operator_id,
     "operator_account_name": operator_id,
     "boss_account_name": operator_id,
@@ -81,12 +88,112 @@ class AnalysisQueryServiceTests(unittest.TestCase):
     dashboard = service.dashboard()
     analytics = service.operator_analytics("op_missing")
     health = service.health()
+    history = service.history(active_date="2026-05-23")
 
     self.assertEqual(dashboard.active_count, 0)
     self.assertEqual(dashboard.active_operators, ())
     self.assertEqual(analytics.funnel.card_exposed, 0)
     self.assertEqual(analytics.chat.visible_message_count, 0)
     self.assertEqual(health.raw_event_count, 0)
+    self.assertEqual(history.status, "empty")
+    self.assertEqual(history.records, ())
+
+  def test_operator_analytics_reports_latest_plugin_version_from_raw_events(self):
+    raw_repository = InMemoryRawEventRepository()
+    fact_store = InMemoryFactStore()
+    project(make_record(
+      "evt_old_version",
+      "candidate_list.card_exposed",
+      {"candidate": candidate_payload("old_version")},
+      operator_id="op_version",
+      occurred_at="2026-05-17T09:01:00+08:00",
+      plugin_version="0.1.0",
+    ), raw_repository, fact_store)
+    project(make_record(
+      "evt_new_version",
+      "candidate_greeting.clicked",
+      {"candidate": candidate_payload("new_version")},
+      operator_id="op_version",
+      occurred_at="2026-05-17T09:12:00+08:00",
+      plugin_version="0.1.2",
+    ), raw_repository, fact_store)
+    service = AnalysisQueryService(fact_store, raw_repository=raw_repository, clock=fixed_now)
+
+    analytics = service.operator_analytics("op_version")
+
+    self.assertEqual(analytics.plugin_version, "0.1.2")
+    self.assertEqual(analytics.plugin_version_observed_at.isoformat(), "2026-05-17T09:12:00+08:00")
+
+  def test_operator_analytics_prefers_latest_plugin_version_from_minute_summary(self):
+    raw_repository = InMemoryRawEventRepository()
+    fact_store = InMemoryFactStore()
+    project(make_record(
+      "evt_raw_version",
+      "candidate_list.card_exposed",
+      {"candidate": candidate_payload("raw_version")},
+      operator_id="op_summary_version",
+      occurred_at="2026-05-17T09:14:00+08:00",
+      plugin_version="0.1.0",
+    ), raw_repository, fact_store)
+    service = AnalysisQueryService(
+      fact_store,
+      raw_repository=raw_repository,
+      minute_summaries=[
+        MinuteSummaryRecord(
+          metric_name="boss_minute_operator_funnel",
+          minute=datetime(2026, 5, 17, 1, 12, tzinfo=timezone.utc),
+          operator_id="op_summary_version",
+          plugin_version="0.1.1",
+          card_exposed=1,
+          total_events=1,
+        ),
+        MinuteSummaryRecord(
+          metric_name="boss_minute_operator_funnel",
+          minute=datetime(2026, 5, 17, 1, 14, tzinfo=timezone.utc),
+          operator_id="op_summary_version",
+          plugin_version="0.1.2",
+          card_exposed=2,
+          total_events=2,
+        ),
+      ],
+      clock=fixed_now,
+    )
+
+    analytics = service.operator_analytics("op_summary_version")
+
+    self.assertEqual(analytics.plugin_version, "0.1.2")
+    self.assertEqual(analytics.plugin_version_observed_at.isoformat(), "2026-05-17T01:14:00+00:00")
+
+  def test_operator_analytics_reports_latest_plugin_version_from_log_quality(self):
+    service = AnalysisQueryService(
+      InMemoryFactStore(),
+      log_quality_summaries=[
+        LogQualitySummaryRecord(
+          metric_name="boss_10min_log_quality",
+          window_start=datetime(2026, 5, 17, 1, 0, tzinfo=timezone.utc),
+          plugin_version="0.1.1",
+          event_type="candidate_detail.opened",
+          operator_id="op_quality",
+          raw_event_count=8,
+          checked_event_count=8,
+        ),
+        LogQualitySummaryRecord(
+          metric_name="boss_10min_log_quality",
+          window_start=datetime(2026, 5, 17, 1, 10, tzinfo=timezone.utc),
+          plugin_version="0.1.2",
+          event_type="candidate_detail.opened",
+          operator_id="op_quality",
+          raw_event_count=4,
+          checked_event_count=4,
+        ),
+      ],
+      clock=fixed_now,
+    )
+
+    analytics = service.operator_analytics("op_quality")
+
+    self.assertEqual(analytics.plugin_version, "0.1.2")
+    self.assertEqual(analytics.plugin_version_observed_at.isoformat(), "2026-05-17T01:10:00+00:00")
 
   def test_dashboard_reports_active_operators_by_last_fact_time(self):
     raw_repository = InMemoryRawEventRepository()
@@ -303,6 +410,65 @@ class AnalysisQueryServiceTests(unittest.TestCase):
     self.assertEqual(analytics.minute_points[1].card_exposed, 4)
     self.assertEqual(health.summary_record_count, 3)
 
+  def test_history_uses_only_daily_basic_summary_records(self):
+    service = AnalysisQueryService(
+      InMemoryFactStore(),
+      minute_summaries=[
+        MinuteSummaryRecord(
+          metric_name="boss_minute_operator_funnel",
+          minute=datetime(2026, 5, 23, 8, 0, tzinfo=timezone.utc),
+          operator_id="op_history",
+          card_exposed=999,
+          total_events=999,
+        ),
+      ],
+      daily_basic_summaries=[
+        DailyBasicStatsRecord(
+          metric_name="boss_daily_operator_basic_stats",
+          active_date=date(2026, 5, 23),
+          operator_id="op_history",
+          operator_account_name="谢女士",
+          active_minutes=12,
+          card_exposed=30,
+          first_round_candidate_initiated_count=6,
+          first_round_boss_replied_count=4,
+          first_round_boss_reply_elapsed_median_ms=180000,
+          first_round_boss_reply_elapsed_avg_ms=240000,
+          chat_conversation_count=8,
+          boss_ended_conversation_count=5,
+          boss_reply_count=9,
+          boss_reply_elapsed_median_ms=120000,
+          boss_reply_elapsed_avg_ms=200000,
+          total_events=70,
+          recorded_at=datetime(2026, 5, 24, 0, 5, tzinfo=timezone.utc),
+        ),
+        DailyBasicStatsRecord(
+          metric_name="boss_daily_operator_basic_stats",
+          active_date=date(2026, 5, 23),
+          operator_id="op_missing_values",
+          operator_account_name="伍先生",
+          has_values=False,
+          value_status="missing_values",
+        ),
+      ],
+      clock=fixed_now,
+    )
+
+    result = service.history(active_date="2026-05-23")
+
+    self.assertEqual(result.status, "partial")
+    self.assertEqual(result.source_record_count, 2)
+    valued = next(record for record in result.records if record.operator_id == "op_history")
+    self.assertEqual(valued.card_exposed, 30)
+    self.assertEqual(valued.first_round_candidate_initiated_count, 6)
+    self.assertEqual(valued.first_round_boss_replied_count, 4)
+    self.assertEqual(valued.first_round_boss_reply_elapsed_median_ms, 180000)
+    self.assertEqual(valued.chat_conversation_count, 8)
+    self.assertEqual(valued.boss_ended_conversation_count, 5)
+    self.assertEqual(valued.boss_reply_count, 9)
+    self.assertEqual(valued.boss_reply_elapsed_avg_ms, 200000)
+    self.assertEqual(valued.total_events, 70)
+
   def test_operator_analytics_dedupes_overlapping_summary_snapshots(self):
     service = AnalysisQueryService(
       InMemoryFactStore(),
@@ -337,6 +503,43 @@ class AnalysisQueryServiceTests(unittest.TestCase):
     self.assertEqual(analytics.funnel.greeting_succeeded, 7)
     self.assertEqual(len(analytics.minute_points), 1)
     self.assertEqual(analytics.minute_points[0].greeting_clicked, 7)
+
+  def test_minute_summary_uses_latest_job_context_for_same_operator_minute(self):
+    service = AnalysisQueryService(
+      InMemoryFactStore(),
+      minute_summaries=[
+        MinuteSummaryRecord(
+          metric_name="boss_minute_operator_funnel",
+          minute=datetime(2026, 5, 17, 1, 14, tzinfo=timezone.utc),
+          operator_id="op_summary",
+          job_id="job_first",
+          job_name="第一岗位",
+          card_exposed=1,
+          total_events=1,
+          recorded_at=datetime(2026, 5, 17, 1, 16, tzinfo=timezone.utc),
+        ),
+        MinuteSummaryRecord(
+          metric_name="boss_minute_operator_funnel",
+          minute=datetime(2026, 5, 17, 1, 14, tzinfo=timezone.utc),
+          operator_id="op_summary",
+          job_id="job_last",
+          job_name="最后岗位",
+          card_exposed=2,
+          total_events=2,
+          recorded_at=datetime(2026, 5, 17, 1, 17, tzinfo=timezone.utc),
+        ),
+      ],
+      clock=fixed_now,
+    )
+
+    dashboard = service.dashboard(active_within_minutes=5)
+    analytics = service.operator_analytics("op_summary")
+
+    self.assertEqual(dashboard.active_operators[0].job_id, "job_last")
+    self.assertEqual(dashboard.active_operators[0].job_name, "最后岗位")
+    self.assertEqual(analytics.funnel.card_exposed, 2)
+    self.assertEqual(analytics.job_ids, ("job_last",))
+    self.assertEqual(len(analytics.minute_points), 1)
 
   def test_operator_analytics_uses_latest_local_day_for_summary_records(self):
     service = AnalysisQueryService(
@@ -567,6 +770,39 @@ class AnalysisQueryServiceTests(unittest.TestCase):
     self.assertEqual(health.daily_summary_record_count, 2)
     self.assertEqual(health.daily_summary_latest_date.isoformat(), "2026-05-17")
 
+  def test_dashboard_prefers_minute_summary_job_over_daily_activity_tie(self):
+    service = AnalysisQueryService(
+      InMemoryFactStore(),
+      minute_summaries=[
+        MinuteSummaryRecord(
+          metric_name="boss_minute_operator_funnel",
+          minute=datetime(2026, 5, 17, 1, 14, tzinfo=timezone.utc),
+          operator_id="op_daily",
+          job_id="job_recent",
+          card_exposed=1,
+          total_events=1,
+        ),
+      ],
+      daily_active_durations=[
+        DailyActiveDurationRecord(
+          metric_name="boss_daily_operator_active_duration",
+          active_date=date(2026, 5, 17),
+          operator_id="op_daily",
+          active_minutes=7,
+          active_seconds=420,
+          last_active_minute=datetime(2026, 5, 17, 1, 14, tzinfo=timezone.utc),
+        ),
+      ],
+      clock=fixed_now,
+    )
+
+    dashboard = service.dashboard(active_within_minutes=5)
+
+    self.assertEqual(dashboard.active_count, 1)
+    self.assertEqual(dashboard.active_operators[0].last_action, "boss_minute_operator_funnel")
+    self.assertEqual(dashboard.active_operators[0].job_id, "job_recent")
+    self.assertEqual(dashboard.daily_active_durations[0].active_minutes, 7)
+
   def test_daily_active_duration_falls_back_to_minute_summary_rollup(self):
     service = AnalysisQueryService(
       InMemoryFactStore(),
@@ -634,6 +870,58 @@ class AnalysisQueryServiceTests(unittest.TestCase):
     self.assertEqual(dashboard.configured_operators[0].display_name, "Operator Raw")
     self.assertEqual(dashboard.active_operators[0].display_name, "Operator Raw")
     self.assertEqual(dashboard.active_operators[0].account_name, "Account Raw")
+
+  def test_dashboard_uses_job_name_from_minute_summary(self):
+    service = AnalysisQueryService(
+      InMemoryFactStore(),
+      minute_summaries=[
+        MinuteSummaryRecord(
+          metric_name="boss_minute_operator_funnel",
+          minute=datetime(2026, 5, 17, 1, 14, tzinfo=timezone.utc),
+          operator_id="op_summary",
+          job_id="job_raw",
+          job_name="主播运营",
+          total_events=1,
+        ),
+      ],
+      clock=fixed_now,
+    )
+
+    dashboard = service.dashboard(active_within_minutes=5)
+
+    self.assertEqual(dashboard.active_operators[0].job_id, "job_raw")
+    self.assertEqual(dashboard.active_operators[0].job_name, "主播运营")
+
+  def test_dashboard_uses_job_name_from_raw_context(self):
+    raw_repository = InMemoryRawEventRepository()
+    fact_store = InMemoryFactStore()
+    record = make_record(
+      "evt_recent_raw",
+      "candidate_chat.report_required",
+      {},
+      operator_id="op_raw",
+      job_id="job_raw",
+      occurred_at="2026-05-17T09:14:00+08:00",
+    )
+    record["context_json"] = json.dumps({
+      "sessionId": "sess_op_raw",
+      "jobContext": {
+        "jobId": "job_raw",
+        "jobName": "主播运营",
+      },
+    })
+    unknown = normalize_cls_event(record)
+    raw_repository.save_normalized_event(unknown)
+    service = AnalysisQueryService(
+      fact_store,
+      raw_repository=raw_repository,
+      clock=fixed_now,
+    )
+
+    dashboard = service.dashboard(active_within_minutes=5)
+
+    self.assertEqual(dashboard.active_operators[0].job_id, "job_raw")
+    self.assertEqual(dashboard.active_operators[0].job_name, "主播运营")
 
 
 if __name__ == "__main__":

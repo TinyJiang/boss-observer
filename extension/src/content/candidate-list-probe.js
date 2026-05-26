@@ -41,7 +41,6 @@ export class CandidateListProbe {
     this.now = now;
     this.started = false;
     this.pollHandle = null;
-    this.listViewKeys = new Set();
     this.cardExposureKeys = new Set();
     this.observedDocuments = new Map();
   }
@@ -78,16 +77,6 @@ export class CandidateListProbe {
     }
 
     this.attachAvailableDocuments();
-
-    const listKey = buildListKey(this.sessionContext.page);
-    if (!this.listViewKeys.has(listKey)) {
-      this.listViewKeys.add(listKey);
-      this.collector.collect(EVENT_TYPES.CANDIDATE_LIST_VIEWED, compactPayloadObject({
-        source,
-        listUrl: this.sessionContext.page.url,
-        listPageType: this.sessionContext.page.pageType
-      }));
-    }
 
     const cards = findCandidateCards(document);
     cards.forEach((card, index) => {
@@ -302,8 +291,4 @@ function estimateVisibleRatio(element) {
     return 0;
   }
   return Number(((visibleWidth * visibleHeight) / area).toFixed(3));
-}
-
-function buildListKey(page) {
-  return `${page.pageType}:${page.url}`;
 }
