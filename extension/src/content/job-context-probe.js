@@ -91,7 +91,7 @@ export class JobContextProbe {
 
   scan(source) {
     const detected = this.detectJobContext(globalThis.document);
-    if (!detected?.jobId) {
+    if (!detected?.jobId && !detected?.jobName) {
       return;
     }
 
@@ -111,7 +111,7 @@ export class JobContextProbe {
     this.currentKey = nextKey;
 
     this.collector.collect(
-      previous?.jobId ? EVENT_TYPES.JOB_CONTEXT_CHANGED : EVENT_TYPES.JOB_CONTEXT_DETECTED,
+      previous ? EVENT_TYPES.JOB_CONTEXT_CHANGED : EVENT_TYPES.JOB_CONTEXT_DETECTED,
       buildJobContextEventPayload({
         source,
         previous,

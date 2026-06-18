@@ -311,6 +311,110 @@ test("filter probe emits panel opened and applied with opened event correlation"
   assert.equal(probe.currentFilterContext.conditionCount, 2);
 });
 
+test("filter probe infers panel opened from visible apply panel and dedupes same apply click", () => {
+  let now = 1000;
+  const collector = createCollector();
+  const applyButton = createElement({ tagName: "BUTTON", text: "确定" });
+  const educationOption = createElement({
+    text: "本科",
+    attributes: {
+      class: "selected"
+    }
+  });
+  const panel = createElement({
+    text: [
+      "筛选",
+      "年龄",
+      "20-35岁",
+      "学历",
+      "不限",
+      "本科"
+    ].join("\n"),
+    children: [educationOption, applyButton],
+    attributes: {
+      role: "dialog"
+    }
+  });
+  const document = createDocument({
+    body: panel,
+    href: "https://www.zhipin.com/web/frame/recommend/?jobid=job1",
+    panels: [panel]
+  });
+  const probe = new FilterProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    now: () => now
+  });
+
+  probe.handleDocumentClick({ target: applyButton }, document);
+  now = 1500;
+  probe.handleDocumentClick({ target: applyButton }, document);
+
+  assert.deepEqual(
+    collector.events.map((event) => event.type),
+    [
+      EVENT_TYPES.CANDIDATE_FILTER_PANEL_OPENED,
+      EVENT_TYPES.CANDIDATE_FILTER_APPLIED
+    ]
+  );
+  assert.equal(collector.events[0].payload.source, "inferred_from_apply");
+  assert.equal(collector.events[1].payload.openedEventId, "evt_1");
+  assert.deepEqual(collector.events[1].payload.filter.conditions, ["本科"]);
+});
+
+test("filter probe records real repeated apply after dedupe window", () => {
+  let now = 1000;
+  const collector = createCollector();
+  const applyButton = createElement({ tagName: "BUTTON", text: "确定" });
+  const panel = createElement({
+    text: [
+      "筛选",
+      "年龄",
+      "20-35岁",
+      "学历",
+      "不限",
+      "本科"
+    ].join("\n"),
+    children: [
+      createElement({
+        text: "本科",
+        attributes: {
+          class: "selected"
+        }
+      }),
+      applyButton
+    ],
+    attributes: {
+      role: "dialog"
+    }
+  });
+  const document = createDocument({
+    body: panel,
+    href: "https://www.zhipin.com/web/frame/recommend/?jobid=job1",
+    panels: [panel]
+  });
+  const probe = new FilterProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    now: () => now
+  });
+
+  probe.handleDocumentClick({ target: applyButton }, document);
+  now = 2600;
+  probe.handleDocumentClick({ target: applyButton }, document);
+
+  assert.deepEqual(
+    collector.events.map((event) => event.type),
+    [
+      EVENT_TYPES.CANDIDATE_FILTER_PANEL_OPENED,
+      EVENT_TYPES.CANDIDATE_FILTER_APPLIED,
+      EVENT_TYPES.CANDIDATE_FILTER_APPLIED
+    ]
+  );
+  assert.equal(collector.events[1].payload.openedEventId, "evt_1");
+  assert.equal(collector.events[2].payload.openedEventId, "evt_1");
+});
+
 test("filter probe ignores generic apply actions outside a filter panel", () => {
   const collector = createCollector();
   const searchButton = createElement({ tagName: "BUTTON", text: "搜索" });

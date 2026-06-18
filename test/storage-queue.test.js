@@ -33,6 +33,33 @@ test("storage queue reads batches and removes acknowledged records", async () =>
   assert.deepEqual(remaining.map((record) => record.event.type), ["third"]);
 });
 
+test("storage queue removes all records with acknowledged event ids", async () => {
+  const storage = createMemoryStorage();
+  const queue = createTestQueue({ storage, maxSize: 10 });
+
+  const first = await queue.enqueue({ id: "evt_1", type: "candidate_list.card_exposed" });
+  await queue.enqueue({ id: "evt_1", type: "candidate_list.card_exposed" });
+  await queue.enqueue({ id: "evt_2", type: "candidate_detail.opened" });
+
+  await queue.removeUploadedRecords([first.record]);
+
+  const remaining = await queue.readAll();
+  assert.deepEqual(remaining.map((record) => record.event.id), ["evt_2"]);
+});
+
+test("storage queue keeps records without matching event ids when acknowledging a batch", async () => {
+  const storage = createMemoryStorage();
+  const queue = createTestQueue({ storage, maxSize: 10 });
+
+  const first = await queue.enqueue({ type: "legacy" });
+  await queue.enqueue({ id: "evt_2", type: "candidate_detail.opened" });
+
+  await queue.removeUploadedRecords([first.record]);
+
+  const remaining = await queue.readAll();
+  assert.deepEqual(remaining.map((record) => record.event.type), ["candidate_detail.opened"]);
+});
+
 test("storage queue increments retry count without removing failed records", async () => {
   const storage = createMemoryStorage();
   const queue = createTestQueue({ storage, maxSize: 5 });

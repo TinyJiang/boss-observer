@@ -53,6 +53,30 @@ test("candidate detail payload uses detail url identity without storing raw resu
   assert.equal(JSON.stringify(payload).includes("很长的自我描述内容"), false);
 });
 
+test("candidate detail payload reads stable id from dataset aliases", () => {
+  const payload = buildCandidateDetailPayload({
+    source: "poll",
+    page: classifyPage("https://www.zhipin.com/web/chat/recommend"),
+    sourceUrl: "https://www.zhipin.com/web/frame/c-resume/?source=recommend",
+    dataset: {
+      encrypt_geek_id: "encrypt-7"
+    },
+    text: [
+      "吴先生 刚刚活跃",
+      "7-8K",
+      "28岁 7年 高中 离职-随时到岗",
+      "求职期望 杭州 直播运营",
+      "个人优势 摘要",
+      "工作经历 某公司",
+      "教育经历 某学校"
+    ].join("\n"),
+    detectedBy: "c_resume_frame"
+  });
+
+  assert.equal(payload.candidate.stableId, "encrypt-7");
+  assert.equal(payload.candidate.stableIdSource, "dataset.encrypt_geek_id");
+});
+
 test("candidate detail payload includes bounded structured detail profile", () => {
   const payload = buildCandidateDetailPayload({
     sourceUrl: "https://www.zhipin.com/web/frame/c-resume/?source=recommend",

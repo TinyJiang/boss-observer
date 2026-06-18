@@ -10,6 +10,17 @@ from boss_analysis.domain.facts import (
   FactProjectionResult,
 )
 from boss_analysis.domain.ingestion import IngestionResult
+from boss_analysis.domain.daily_analysis import (
+  DailyAnalysisPayload,
+  DailyAnalysisResultNotFound,
+  DataQuality,
+  EvidenceBundle,
+  EvidenceItem,
+  ModelAnalysis,
+  ModelAttribution,
+  VolatilityMetric,
+  load_daily_analysis_result,
+)
 from boss_analysis.domain.metrics import (
   ActiveOperatorSummary,
   ChatSummary,
@@ -48,10 +59,15 @@ __all__ = [
   "CandidateGreetingFact",
   "CandidateIdentityFact",
   "ChatSummary",
+  "DailyAnalysisPayload",
+  "DailyAnalysisResultNotFound",
   "DailyActiveDurationRecord",
   "DailyBasicStatsRecord",
   "DashboardSummary",
+  "DataQuality",
   "ErrorStage",
+  "EvidenceBundle",
+  "EvidenceItem",
   "EventErrorRecord",
   "FactProjectionResult",
   "FunnelSummary",
@@ -63,7 +79,10 @@ __all__ = [
   "LogQualityIssueCounter",
   "LogQualityQueryResult",
   "LogQualityVersionSummary",
+  "load_daily_analysis_result",
   "MinuteSummaryRecord",
+  "ModelAnalysis",
+  "ModelAttribution",
   "NormalizedEvent",
   "OperatorAnalytics",
   "OperatorMinutePoint",
@@ -76,4 +95,5 @@ __all__ = [
   "RawEventSaveResult",
   "ReplayFilter",
   "RuntimeHealth",
+  "VolatilityMetric",
 ]

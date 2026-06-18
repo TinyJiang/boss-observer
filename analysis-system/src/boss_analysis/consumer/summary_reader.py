@@ -224,7 +224,7 @@ def iter_daily_basic_summaries_from_metric_topic(
     query=query,
     start_at=start_at,
     end_at=end_at,
-    step_seconds=60,
+    step_seconds=_metric_range_step_seconds(start_at, end_at),
     client=client,
   )
   yield from iter_daily_basic_summaries_from_metric_series(series_values)
@@ -677,6 +677,17 @@ def _metric_sample(value: Any) -> tuple[int, str] | None:
 
 def _escape_promql_label_value(value: str) -> str:
   return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _metric_range_step_seconds(
+  start_at: datetime,
+  end_at: datetime,
+  *,
+  max_points: int = 10_000,
+) -> int:
+  duration_seconds = max(0, int(end_at.timestamp() - start_at.timestamp()))
+  safe_max_points = max(1, int(max_points))
+  return max(60, (duration_seconds + safe_max_points - 1) // safe_max_points)
 
 
 def _detect_metric_name(raw: Mapping[str, Any]) -> str:

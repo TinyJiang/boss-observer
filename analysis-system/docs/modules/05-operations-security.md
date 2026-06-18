@@ -72,6 +72,29 @@
 - 结构化日志不得打印完整 `payload_json` 或 `context_json`。
 - 错误表中的 preview 需要截断，并避免包含完整联系方式。
 - 导出任务必须区分普通报表和敏感数据导出。
+- 官方结果同步不得打印或落盘 Feishu app secret、tenant token、BOSS cookie、session 或登录态；dry-run 只输出记录数量、缺字段名和未匹配数量。
+- 官方结果同步不得通过飞书 UI 读写表结构或记录，必须走 Feishu OpenAPI。
+
+## 本地操作员管理
+
+本地 dev 前端提供“操作员管理”页，用于维护 `config/operators.local.json`。该文件默认被 git ignore，真实名单、账号姓名和备注不得提交到仓库。
+
+管理页进入前必须输入本地 env 中的密码：
+
+- `BOSS_ANALYSIS_OPERATOR_ADMIN_PASSWORD`: 操作员管理页登录密码。
+- `BOSS_ANALYSIS_OPERATOR_CONFIG_SECRET`: 可选的操作员配置字段加密密钥；未设置时，后端使用 `BOSS_ANALYSIS_OPERATOR_ADMIN_PASSWORD` 作为本地字段加密密钥。
+
+登录成功后，后端只在当前 `dev_server` 进程内保存随机会话 token。后端重启后 token 失效，需要重新输入密码。前端不保存密码，只把 token 放在当前浏览器 session storage 中用于后续管理请求。
+
+管理接口仅用于本地开发：
+
+- `POST /api/operator-admin/login`: 校验密码并返回会话 token。
+- `GET /api/operator-admin/operators`: 读取本地操作员配置。
+- `POST /api/operator-admin/operators`: 新增操作员。
+- `PUT /api/operator-admin/operators/{operator_id}`: 更新操作员。
+- `DELETE /api/operator-admin/operators/{operator_id}`: 删除操作员。
+
+当管理页启用“保存时加密账号和备注”时，后端把 `accountName` 和 `note` 以 `enc:v1:*` 字符串写入本地 JSON；读取时使用同一 env 密钥解密后返回页面展示。该能力是本地轻量保护，不替代生产 KMS、数据库列级加密或正式权限审计。
 
 ## 本地开发验证
 

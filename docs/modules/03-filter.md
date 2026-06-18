@@ -61,6 +61,8 @@
 
 当前实现中，`candidate_filter.panel_opened` 只记录面板打开事实，`filter.conditionCount` 固定为 `0`，不从打开瞬间读取筛选摘要，避免误把候选人列表文本当作筛选条件。
 
+如果用户打开筛选面板的入口点击没有被探针捕获，但后续确认动作发生时能明确看到筛选面板上下文，插件会先补一条 `source: "inferred_from_apply"` 的 `candidate_filter.panel_opened`，再把本次 `candidate_filter.applied` 关联到这条打开事实。
+
 `candidate_filter.applied` 只输出 `filter.conditionCount` 和 `filter.conditions`：
 
 - `conditions` 最多保留 12 条。
@@ -78,6 +80,7 @@
 - 能记录筛选确认。
 - 能在探针内维护最近一次生效的筛选摘要。
 - 能把确认事件与最近一次打开事件通过 `openedEventId` 关联。
+- 能对同一筛选确认的短窗口重复触发做幂等，避免一次 DOM 点击/冒泡产生多条完全相同的 applied；超过短窗口的重复确认仍按真实重复点击记录。
 
 暂未完成：
 

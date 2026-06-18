@@ -57,6 +57,7 @@
 当前第一版候选人标识策略：
 
 - 优先从卡片 dataset 或详情链接中提取 `geekId`、`resumeId`、`lid`、`securityId` 等稳定标识。
+- 稳定标识不只读取卡片根节点；会在候选人卡片、有限层级祖先、后代按钮/链接以及 `href`、`src`、`data-url`、`data-href` 等 URL 属性中查找 `geekId`、`resumeId`、`lid`、`securityId`、`encryptGeekId`。只使用这些 ID/URL hint，不保存完整候选人文本。
 - 如果页面没有暴露稳定标识，则使用卡片文本、详情链接和来源 URL 生成短指纹。
 - 从卡片可见文本中解析 `profile` 核心快照：姓名/称呼、薪资、年龄、经验、学历、求职状态、活跃状态、期望城市、期望岗位和少量短标签。
 - 不把完整卡片文本、完整优势描述、完整工作/教育经历正文写入事件 payload。

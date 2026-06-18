@@ -96,10 +96,13 @@ API 应围绕事实和聚合提供最小稳定接口：
 - 首轮候选人发起会话数、首轮 BOSS 回复会话数、首轮 BOSS 回复间隔中位数和平均值；首轮回复率由 `first_round_boss_replied_count / first_round_candidate_initiated_count` 计算。
 - 可解析聊天会话数、BOSS 结束会话数；BOSS 结束率由 `boss_ended_conversation_count / chat_conversation_count` 计算。
 - 全轮 BOSS 回复次数、全轮 BOSS 回复间隔中位数和平均值；全轮回复按“候选人连续发言轮次 -> 下一轮 BOSS 首条回复”计算。
+- 微信列优先展示 `wechat_unique_candidates`；旧汇总或字段缺失时回退到 `wechat_captured`。日级微信统计应同时计入明确的 `candidate_chat.wechat_captured` 事件，以及聊天快照中符合既有事实投影口径的“微信号:”交换成功标记，但不输出聊天正文或具体账号。
 
 这些字段只使用聊天快照中的方向、时间、指纹和会话键，不返回聊天正文。因为聊天快照当前是 `visible_dom`，前端展示时应把缺失或 0 分母显示为暂无，而不是解释为 0%。
 
 2026-05-26 raw CLS 排障确认，当时历史 `candidate_chat.snapshot_captured` 的消息对象只有 `direction/fingerprint/messageAt/messageIndex`，且 `direction` 全部为 `unknown`；这批历史快照缺少可区分候选人和 BOSS 的结构字段，不能可靠回算本节三个方向相关指标。修复采集侧方向字段后，新写入快照才能进入该统计。
+
+2026-06-02 raw CLS 只读排障确认，2026-06-01 的聊天快照已经包含可映射的 `candidate/recruiter` 方向，任务 6 的聊天回复 SQL 可算出非零结果；同日 raw 中没有 `candidate_chat.wechat_captured` 事件，但聊天快照里存在符合“微信号:”口径的交换标记。因此四列空白的修复点是让日级指标 topic 实际写入任务 6 的对话字段，并额外写入日级微信标记聚合字段，而不是在前端临时兜底。
 
 API 不应暴露：
 

@@ -4,7 +4,9 @@ import {
   compactPayloadObject,
   detectCandidateSignals,
   isCandidateDetailUrl,
-  normalizeText
+  normalizeText,
+  readCandidateIdentityDatasetFromElement,
+  readCandidateIdentityLinksFromElement
 } from "./candidate-card.js";
 import { findCandidateCardAncestor } from "./candidate-list-probe.js";
 import {
@@ -46,17 +48,17 @@ const RESULT_MESSAGE_SELECTOR = [
 ].join(",");
 
 const FAILURE_SIGNAL_RULES = [
-  ["send_failed", ["打招呼失败", "发送失败", "发送未成功", "失败"]],
-  ["quota_limit", ["打招呼人数已达上限", "已达上限", "达到上限", "次数不足", "余额不足"]],
+  ["send_failed", ["打招呼失败", "发送失败", "发送未成功", "未发送成功", "无法打招呼", "失败"]],
+  ["quota_limit", ["打招呼人数已达上限", "已达上限", "达到上限", "次数不足", "余额不足", "招呼次数不足"]],
   ["rate_limited", ["操作频繁", "太频繁", "稍后再试", "系统繁忙"]],
   ["risk_control", ["账号异常", "风险", "验证", "权限不足", "限制"]],
-  ["network_error", ["网络异常", "网络错误", "请求失败"]]
+  ["network_error", ["网络异常", "网络错误", "请求失败", "服务异常"]]
 ];
 
 const SUCCESS_SIGNAL_RULES = [
-  ["greeting_succeeded", ["打招呼成功", "已打招呼"]],
-  ["message_sent", ["发送成功", "已发送"]],
-  ["communication_started", ["沟通已发起", "已发起沟通", "等待对方回复", "继续沟通", "开聊"]]
+  ["greeting_succeeded", ["打招呼成功", "已打招呼", "招呼已发送", "招呼已送达"]],
+  ["message_sent", ["发送成功", "已发送", "已送达"]],
+  ["communication_started", ["沟通已发起", "已发起沟通", "等待对方回复", "继续沟通", "立即沟通", "去沟通", "沟通中", "开聊", "发消息"]]
 ];
 
 const NON_ACTION_GREETING_TEXT_RULES = [
@@ -697,19 +699,15 @@ function uniqueDocuments(documents) {
 }
 
 function readMergedDataset(element) {
-  const merged = {};
-  let current = element;
-  for (let steps = 0; current && steps < MAX_CONTEXT_ANCESTOR_STEPS; steps += 1) {
-    Object.assign(merged, current.dataset || {});
-    current = current.parentElement;
-  }
-  return merged;
+  return readCandidateIdentityDatasetFromElement(element, {
+    maxAncestorSteps: MAX_CONTEXT_ANCESTOR_STEPS
+  });
 }
 
 function readLinks(element) {
-  return Array.from(element?.querySelectorAll?.("a[href]") || [])
-    .map((link) => link.href)
-    .filter(Boolean);
+  return readCandidateIdentityLinksFromElement(element, {
+    maxAncestorSteps: MAX_CONTEXT_ANCESTOR_STEPS
+  });
 }
 
 function readActionText(element) {

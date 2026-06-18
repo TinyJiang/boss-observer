@@ -215,6 +215,28 @@ class ClsSearchTests(unittest.TestCase):
     self.assertEqual(values[0]["event_id"], "evt_real")
     self.assertEqual(values[1]["contents"]["event_type"], "candidate_list.card_exposed")
 
+  def test_iter_log_values_decodes_analysis_records(self):
+    values = list(iter_log_values_from_search_response({
+      "Response": {
+        "AnalysisRecords": [
+          json.dumps({
+            "operator_id": "zhouxinyu",
+            "boss_reply_count": 17,
+          }),
+          {
+            "operator_id": "小图图",
+            "boss_reply_count": "6",
+          },
+        ],
+        "Results": [],
+      }
+    }))
+
+    self.assertEqual(values, [
+      {"operator_id": "zhouxinyu", "boss_reply_count": 17},
+      {"operator_id": "小图图", "boss_reply_count": "6"},
+    ])
+
   def test_search_cls_log_values_calls_searchlog(self):
     response = {
       "Response": {

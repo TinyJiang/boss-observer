@@ -13,6 +13,7 @@ const LIST_PAGE_TYPES = new Set([
 
 const SCAN_INTERVAL_MS = 1000;
 const PANEL_OPEN_CORRELATION_MS = 10 * 60 * 1000;
+const FILTER_APPLIED_DEDUPE_MS = 1000;
 const MAX_ACTION_ANCESTOR_STEPS = 6;
 const MAX_PANEL_ANCESTOR_STEPS = 10;
 const MAX_PANEL_TEXT_LENGTH = 5000;
@@ -217,6 +218,7 @@ export class FilterProbe {
     this.pollHandle = null;
     this.observedDocuments = new Map();
     this.lastPanelOpen = null;
+    this.lastApplied = null;
     this.currentFilterContext = null;
   }
 
@@ -246,6 +248,7 @@ export class FilterProbe {
     });
     this.observedDocuments.clear();
     this.lastPanelOpen = null;
+    this.lastApplied = null;
   }
 
   scan() {
@@ -324,12 +327,43 @@ export class FilterProbe {
   }
 
   recordFilterAppliedTarget(target = {}) {
+    const openedEventId = this.resolveRecentPanelOpenedEventId(target) ||
+      this.ensurePanelOpenedForAppliedTarget(target);
     const payload = buildFilterAppliedPayload({
       ...target,
-      openedEventId: this.resolveRecentPanelOpenedEventId(target)
+      openedEventId
     });
+    const appliedKey = buildFilterAppliedDedupeKey(payload);
+    if (this.shouldSkipDuplicateApplied(appliedKey)) {
+      return null;
+    }
+    this.lastApplied = {
+      key: appliedKey,
+      appliedAtMs: this.now()
+    };
     this.currentFilterContext = payload.filter || null;
     return this.collector.collect(EVENT_TYPES.CANDIDATE_FILTER_APPLIED, payload);
+  }
+
+  ensurePanelOpenedForAppliedTarget(target = {}) {
+    if (!target.hasFilterPanelContext) {
+      return "";
+    }
+
+    const event = this.recordFilterPanelOpenedTarget({
+      ...target,
+      source: "inferred_from_apply"
+    });
+    return event?.id || "";
+  }
+
+  shouldSkipDuplicateApplied(appliedKey = "") {
+    if (!appliedKey || !this.lastApplied?.key) {
+      return false;
+    }
+
+    return this.lastApplied.key === appliedKey &&
+      this.now() - this.lastApplied.appliedAtMs <= FILTER_APPLIED_DEDUPE_MS;
   }
 
   resolveRecentPanelOpenedEventId(target = {}) {
@@ -351,6 +385,16 @@ export class FilterProbe {
 
     return this.lastPanelOpen.openedEventId;
   }
+}
+
+function buildFilterAppliedDedupeKey(payload = {}) {
+  return [
+    payload.listPageType || "",
+    payload.listUrl || "",
+    payload.openedEventId || "",
+    payload.filter?.conditionCount ?? 0,
+    ...(payload.filter?.conditions || [])
+  ].join("|");
 }
 
 export function isCandidateFilterPage(page) {

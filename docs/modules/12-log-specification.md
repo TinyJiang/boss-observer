@@ -231,8 +231,8 @@
 ```
 
 - `job_context.detected`: 首次识别到当前职位上下文时发出，`previous` 为 `null`。
-- `job_context.changed`: 当前职位 ID 或状态参数变化时发出。
-- `jobId`: 当前职位 ID。第一版优先来自 URL 查询参数或 DOM dataset，例如 `jobid`、`jobId`、`encryptJobId`、`positionId`。
+- `job_context.changed`: 当前职位 ID、职位名称或状态参数变化时发出。
+- `jobId`: 当前职位 ID。第一版优先来自 URL 查询参数或 DOM dataset，例如 `jobid`、`jobId`、`encryptJobId`、`positionId`；如果城市路径或特殊入口暂时只暴露职位展示名称，`jobId` 可以省略。
 - `jobIdSource`: 职位 ID 来源，例如 `url.jobid` 或 `dataset.jobId`。
 - `jobName`: 当前职位展示名称，例如 `主播运营`、`直播中控`；识别不到时省略。若页面顶部职位选择器展示为 `兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时`，该整段作为当前职位展示名称保存。插件只清理父容器误拼入的推荐 tab 文本和末尾图标字符，不从职位描述正文、薪资详情正文或完整 JD 中提取。
 - `jobNameSource`: 职位名称来源，当前常见值为 `dom.selected_job_title`、`dom.job_menu`、`page_title`；来源不明确时省略或使用 `unknown`。
@@ -240,7 +240,7 @@
 - `jobStatusSource`: 职位状态来源，识别不到时省略。
 - `sourceUrl`、`confidence`、`updatedAt` 等识别诊断字段不进入正式 payload；岗位分析优先使用根部 `context.jobContext.jobId` 和 `context.jobContext.jobName`。
 
-识别成功后，后续事件的 `context.jobContext` 会携带同样结构。如果同一职位先识别到 `jobId`，之后页面才渲染出可见 `jobName`，插件会更新职位上下文，后续事件会携带补齐后的名称。
+识别成功后，后续事件的 `context.jobContext` 会携带同样结构。如果同一职位先识别到 `jobId`，之后页面才渲染出可见 `jobName`，插件会更新职位上下文，后续事件会携带补齐后的名称；如果先只有 `jobName`，后续读到稳定 `jobId` 时也会再次更新上下文。
 
 ### 7.7 `candidate_filter.panel_opened`
 
@@ -255,7 +255,7 @@
 }
 ```
 
-- `source`: 当前为 `click`。
+- `source`: 常见值为 `click`；如果打开入口漏采但确认动作发生时能明确看到筛选面板，可能为 `inferred_from_apply`。
 - `listUrl` / `listPageType`: 筛选动作所在的候选人列表顶层页面。
 - `filter.conditionCount`: 当前固定为 `0`。
 - `filter.conditions`: 当前不在打开事件中输出。筛选摘要只在确认/应用事件中记录。
@@ -285,13 +285,13 @@
 }
 ```
 
-- `openedEventId`: 10 分钟内同一列表页最近一次 `candidate_filter.panel_opened` 事件 ID；没有可关联打开事件时省略。
+- `openedEventId`: 10 分钟内同一列表页最近一次 `candidate_filter.panel_opened` 事件 ID；如果确认时能明确看到筛选面板但没有最近打开事件，插件会先补一条 `source: "inferred_from_apply"` 的打开事件并关联到它；仍无法关联时省略。
 - `filter.conditionCount`: 当前确认动作可读到的有效短筛选摘要数量；没有可识别选中态时为 `0`。
 - `filter.conditions`: 筛选面板中可识别为已选中的短条件摘要，最多 12 条，单条最长 48 个字符。
 
 `candidate_filter.applied` 只在“确定 / 确认 / 应用 / 完成 / 搜索 / 查看结果”等动作出现在可识别筛选面板上下文里时发出，避免把普通搜索或其他确认动作误记为筛选。摘要优先来自 `aria-selected`、`aria-checked`、`aria-pressed`、`input:checked` 或常见 `selected/active/checked/current` 样式标记的控件；真实 BOSS 面板中只通过 chip 背景色标记已选项时，会按筛选字段行读取有明显选中背景的短选项，并补充可读到的年龄滑块范围。年龄滑块除普通文本和 `aria` / `data` / `value` 属性外，也会读取年龄行内滑块元素的 `::before` / `::after` 文本内容，因为真实页面可能用 CSS 伪元素渲染数值。如果真实页面没有可识别选中态，宁可输出 `conditionCount: 0`，也不把面板所有可见候选项当作已选条件。`关键词`、`关键字`、`搜索关键词`、`姓名`、`手机`、`电话`、`微信`、`联系方式` 等自由输入或敏感字段只记录为“已填写”，不保存原始值；手机号、邮箱会做脱敏兜底。
 
-当前会把每次可识别的筛选确认动作当作事实事件记录。如果用户重复点击确认，或 BOSS DOM 在一次操作中触发多次确认点击，可能出现同一 `openedEventId` 下多条 `candidate_filter.applied`；后端如需把“一次筛选操作”聚合为单条，应按 `openedEventId`、筛选摘要和时间窗口做分析侧去重，不要要求插件端吞掉事实点击。
+当前会把每次可识别的筛选确认动作当作事实事件记录。插件会对 1 秒内同一列表、同一 `openedEventId`、同一筛选摘要的重复触发做短窗口幂等，避免一次 DOM 点击/冒泡产生多条完全相同的 applied；超过短窗口的重复确认仍按真实重复点击记录。后端如需把“一次筛选操作”聚合为单条，应继续按 `openedEventId`、筛选摘要和时间窗口做分析侧去重。
 
 当前第一版会在探针内保留最近一次确认的筛选摘要，但尚未把筛选上下文写入候选人列表、详情或打招呼事件；后续待真机确认字段稳定后再接入跨事件上下文。
 
@@ -328,7 +328,7 @@
 ```
 
 - `candidate.stableId`: 候选人可关联标识。优先来自 dataset 或详情链接；如果页面未暴露稳定 ID，则使用本地短指纹。
-- `candidate.stableIdSource`: 标识来源，例如 `dataset.geekId`、`url.geekId` 或 `text_fingerprint`。
+- `candidate.stableIdSource`: 标识来源，例如 `dataset.geekId`、`dataset.security_id`、`url.geekId`、`url.securityId` 或 `text_fingerprint`。插件会从候选人卡片/详情/打招呼按钮附近的 dataset、有限祖先/后代节点、`href`、`src`、`data-url`、`data-href` 等 URL hint 中查找 `geekId/resumeId/lid/securityId/encryptGeekId`。
 - `candidate.candidateId`: 由候选人稳定身份派生的确定性 ID，不使用本地递增序号；同一候选人跨扩展重载仍应生成同一个值。若页面没有暴露稳定候选人 ID，该值会退化为文本指纹派生 ID，不能当作跨页面永久身份。
 - `candidate.exposureKey`: 由列表类型、列表 URL、候选人 ID 来源和值组成的曝光关联键，用于区分同一候选人在不同列表/页面里的曝光事实。
 - `candidate.exposedEventId`: 后续详情/打招呼事件会从内存注册表继承已回写的卡片曝光事件 ID；卡片曝光事件自身不输出空值。
@@ -473,7 +473,7 @@
 - `clickedEventId`: 对应 `candidate_greeting.clicked` 事件 ID。
 - `elapsedMs`: 点击到观察到结果之间的毫秒数。
 - `greeting.status`: 固定为 `succeeded`。
-- `greeting.detectedBy`: 当前常见值为 `action_state` 或 `page_message`。
+- `greeting.detectedBy`: 当前常见值为 `action_state` 或 `page_message`。`action_state` 包括按钮/动作文本变为“已打招呼 / 继续沟通 / 立即沟通 / 沟通中 / 发消息”等可观察成功态。
 
 该事件只表示插件在页面上观察到成功提示或按钮状态变化，不在插件端判断触达质量、话术质量或后续转化。
 

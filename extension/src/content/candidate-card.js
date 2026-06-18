@@ -3,17 +3,42 @@ import { buildCandidateId } from "./candidate-card-registry.js";
 const CANDIDATE_ID_KEYS = [
   "geekId",
   "geekid",
+  "geek_id",
   "encryptGeekId",
   "encryptGeekid",
+  "encrypt_geek_id",
   "resumeId",
   "resumeid",
+  "resume_id",
   "lid",
   "securityId",
-  "securityid"
+  "securityid",
+  "security_id"
 ];
 
 const DETAIL_URL_PATTERNS = ["/geek/detail", "/resume/detail", "geekId="];
 const DETAIL_FRAME_URL_PATTERNS = ["/web/frame/c-resume"];
+const CANDIDATE_ID_URL_ATTRIBUTE_NAMES = [
+  "href",
+  "src",
+  "action",
+  "data-href",
+  "data-url",
+  "data-link",
+  "data-detail-url",
+  "data-detailurl",
+  "data-resume-url",
+  "data-resumeurl",
+  "data-geek-url",
+  "data-geekurl"
+];
+const DEFAULT_ID_HINT_ANCESTOR_STEPS = 8;
+const DEFAULT_ID_HINT_DESCENDANT_LIMIT = 120;
+const MAX_ID_HINT_VALUE_LENGTH = 500;
+const NORMALIZED_CANDIDATE_ID_KEY_ENTRIES = CANDIDATE_ID_KEYS.map((key) => [
+  key,
+  normalizeCandidateIdentityKey(key)
+]);
 const ACTIVE_STATUS_PATTERNS = [
   "刚刚活跃",
   "在线",
@@ -154,6 +179,40 @@ export function normalizeText(text = "") {
   return String(text).replace(/\s+/g, " ").trim();
 }
 
+export function readCandidateIdentityDatasetFromElement(element, {
+  maxAncestorSteps = DEFAULT_ID_HINT_ANCESTOR_STEPS,
+  maxDescendantElements = DEFAULT_ID_HINT_DESCENDANT_LIMIT
+} = {}) {
+  const merged = {};
+  collectCandidateIdentityHintElements(element, {
+    maxAncestorSteps,
+    maxDescendantElements
+  }).forEach((current) => {
+    appendDatasetHints(merged, current?.dataset || {});
+    appendAttributeDatasetHints(merged, current);
+  });
+  return merged;
+}
+
+export function readCandidateIdentityLinksFromElement(element, {
+  maxAncestorSteps = DEFAULT_ID_HINT_ANCESTOR_STEPS,
+  maxDescendantElements = DEFAULT_ID_HINT_DESCENDANT_LIMIT
+} = {}) {
+  const links = [];
+  const seen = new Set();
+  collectCandidateIdentityHintElements(element, {
+    maxAncestorSteps,
+    maxDescendantElements
+  }).forEach((current) => {
+    appendCandidateIdentityLink(links, seen, current?.href);
+    appendCandidateIdentityLink(links, seen, current?.src);
+    CANDIDATE_ID_URL_ATTRIBUTE_NAMES.forEach((attribute) => {
+      appendCandidateIdentityLink(links, seen, current?.getAttribute?.(attribute));
+    });
+  });
+  return links;
+}
+
 export function extractCandidateProfile(text = "") {
   const lines = normalizeLines(text);
   const normalizedText = normalizeText(text);
@@ -180,14 +239,9 @@ export function normalizeLines(text = "") {
 }
 
 export function resolveCandidateId({ dataset = {}, links = [] } = {}) {
-  for (const key of CANDIDATE_ID_KEYS) {
-    const value = dataset[key];
-    if (value) {
-      return {
-        value: String(value),
-        source: `dataset.${key}`
-      };
-    }
+  const fromDataset = readCandidateIdFromDataset(dataset);
+  if (fromDataset.value) {
+    return fromDataset;
   }
 
   for (const href of links) {
@@ -200,7 +254,30 @@ export function resolveCandidateId({ dataset = {}, links = [] } = {}) {
   return { value: "", source: "" };
 }
 
+function readCandidateIdFromDataset(dataset = {}) {
+  const entries = Object.entries(dataset || {});
+  for (const [canonicalKey, normalizedKey] of NORMALIZED_CANDIDATE_ID_KEY_ENTRIES) {
+    const match = entries.find(([key, value]) =>
+      hasPayloadValue(value) &&
+      normalizeCandidateIdentityKey(key) === normalizedKey
+    );
+    if (match) {
+      return {
+        value: String(match[1]),
+        source: `dataset.${match[0] || canonicalKey}`
+      };
+    }
+  }
+
+  return { value: "", source: "" };
+}
+
 export function readCandidateIdFromUrl(href = "") {
+  const fromQueryText = readCandidateIdFromQueryText(href);
+  if (fromQueryText.value) {
+    return fromQueryText;
+  }
+
   try {
     const parsed = new URL(href, "https://www.zhipin.com");
     for (const key of CANDIDATE_ID_KEYS) {
@@ -222,6 +299,27 @@ export function readCandidateIdFromUrl(href = "") {
     }
   } catch {
     return { value: "", source: "" };
+  }
+
+  return { value: "", source: "" };
+}
+
+function readCandidateIdFromQueryText(value = "") {
+  const raw = String(value || "");
+  if (!raw.includes("=")) {
+    return { value: "", source: "" };
+  }
+
+  const query = raw.includes("?") ? raw.slice(raw.indexOf("?") + 1).split("#")[0] : raw.split("#")[0];
+  const params = new URLSearchParams(query);
+  for (const key of CANDIDATE_ID_KEYS) {
+    const current = params.get(key);
+    if (current) {
+      return {
+        value: current,
+        source: `url.${key}`
+      };
+    }
   }
 
   return { value: "", source: "" };
@@ -463,4 +561,91 @@ function removeActiveStatus(line) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function collectCandidateIdentityHintElements(element, {
+  maxAncestorSteps = DEFAULT_ID_HINT_ANCESTOR_STEPS,
+  maxDescendantElements = DEFAULT_ID_HINT_DESCENDANT_LIMIT
+} = {}) {
+  const elements = [];
+  const seen = new Set();
+  let current = element;
+  for (let steps = 0; current && steps < maxAncestorSteps; steps += 1) {
+    appendUniqueElement(elements, seen, current);
+    current = current.parentElement;
+  }
+
+  try {
+    Array.from(element?.querySelectorAll?.("*") || [])
+      .slice(0, Math.max(0, maxDescendantElements))
+      .forEach((descendant) => appendUniqueElement(elements, seen, descendant));
+  } catch {
+    // Non-DOM test doubles may not implement selector traversal.
+  }
+
+  return elements;
+}
+
+function appendUniqueElement(elements, seen, element) {
+  if (!element || seen.has(element)) {
+    return;
+  }
+  seen.add(element);
+  elements.push(element);
+}
+
+function appendDatasetHints(target, dataset = {}) {
+  Object.entries(dataset || {}).forEach(([key, value]) => {
+    if (!hasPayloadValue(value) || String(value).length > MAX_ID_HINT_VALUE_LENGTH) {
+      return;
+    }
+    appendDatasetHint(target, key, value);
+  });
+}
+
+function appendAttributeDatasetHints(target, element) {
+  const attributes = Array.from(element?.attributes || []);
+  attributes.forEach((attribute) => {
+    const canonicalKey = findCanonicalCandidateIdentityKey(attribute?.name || "");
+    if (!canonicalKey || !hasPayloadValue(attribute?.value)) {
+      return;
+    }
+    appendDatasetHint(target, canonicalKey, attribute.value);
+  });
+}
+
+function appendDatasetHint(target, key, value) {
+  if (!key || hasPayloadValue(target[key])) {
+    return;
+  }
+  target[key] = String(value);
+}
+
+function appendCandidateIdentityLink(links, seen, value) {
+  const link = normalizeText(value);
+  if (!link || link.length > MAX_ID_HINT_VALUE_LENGTH || seen.has(link) || !looksLikeCandidateIdentityUrl(link)) {
+    return;
+  }
+  seen.add(link);
+  links.push(link);
+}
+
+function looksLikeCandidateIdentityUrl(value = "") {
+  return CANDIDATE_ID_KEYS.some((key) => value.includes(`${key}=`)) ||
+    DETAIL_URL_PATTERNS.some((pattern) => value.includes(pattern)) ||
+    DETAIL_FRAME_URL_PATTERNS.some((pattern) => value.includes(pattern)) ||
+    /\/(?:geek|resume)\/detail\//.test(value);
+}
+
+function findCanonicalCandidateIdentityKey(key = "") {
+  let normalized = normalizeCandidateIdentityKey(key);
+  if (normalized.startsWith("data")) {
+    normalized = normalized.slice("data".length);
+  }
+  return NORMALIZED_CANDIDATE_ID_KEY_ENTRIES
+    .find(([, candidateKey]) => normalized === candidateKey)?.[0] || "";
+}
+
+function normalizeCandidateIdentityKey(key = "") {
+  return String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }

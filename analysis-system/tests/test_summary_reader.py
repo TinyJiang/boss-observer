@@ -368,6 +368,44 @@ class SummaryReaderTests(unittest.TestCase):
     self.assertIn('active_date="2026-05-23"', client.calls[0][1]["Query"])
     self.assertIn('operator_id="小图图"', client.calls[0][1]["Query"])
     self.assertEqual(client.calls[0][1]["Start"], 1779465600)
+    self.assertEqual(client.calls[0][1]["Step"], 60)
+
+  def test_iter_daily_basic_summaries_from_metric_topic_expands_step_for_lookback_window(self):
+    class FakeDailyBasicMetricClient:
+      def __init__(self):
+        self.calls = []
+
+      def call(self, action, payload, *, version, region):
+        self.calls.append((action, payload))
+        return {
+          "Response": {
+            "ResultType": "matrix",
+            "Result": json.dumps([]),
+          }
+        }
+
+    client = FakeDailyBasicMetricClient()
+    env = {
+      "CLS_DAILY_BASIC_SUMMARY_TOPIC_ID": "topic-daily-basic",
+      "CLS_DAILY_BASIC_SUMMARY_REGION": "ap-shanghai",
+      "TENCENTCLOUD_SECRET_ID": "secret-id",
+      "TENCENTCLOUD_SECRET_KEY": "secret-key",
+    }
+    with patch.dict(os.environ, env, clear=False):
+      records = list(iter_daily_basic_summaries_from_metric_topic(
+        operator_id="小图图",
+        lookback_days=31,
+        now=datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
+        client=client,
+      ))
+
+    self.assertEqual(records, [])
+    self.assertEqual(client.calls[0][0], "QueryRangeMetric")
+    self.assertGreater(client.calls[0][1]["Step"], 60)
+    point_count = (
+      client.calls[0][1]["End"] - client.calls[0][1]["Start"]
+    ) // client.calls[0][1]["Step"]
+    self.assertLessEqual(point_count, 10_000)
 
   def test_iter_daily_basic_summaries_operator_detail_uses_search_lookback_window(self):
     class FakeDailyBasicClient:

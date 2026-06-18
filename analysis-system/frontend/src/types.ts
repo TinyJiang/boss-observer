@@ -18,6 +18,35 @@ export type OperatorProfile = {
   note: string | null;
 };
 
+export type OperatorAdminLoginPayload = {
+  authenticated: boolean;
+  token?: string;
+  reason?: string;
+  message?: string;
+  config_path?: string;
+  encryption_enabled?: boolean;
+};
+
+export type OperatorAdminPayload = {
+  operators: OperatorProfile[];
+  config_path: string;
+  encryption_enabled: boolean;
+};
+
+export type OperatorAdminMutationPayload = OperatorAdminPayload & {
+  operator?: OperatorProfile;
+  deleted?: boolean;
+};
+
+export type OperatorAdminInput = {
+  operatorId: string;
+  displayName: string;
+  accountName: string;
+  enabled: boolean;
+  role: string;
+  note: string;
+};
+
 export type DailyActiveDuration = {
   metric_name: string;
   active_date: string;
@@ -109,6 +138,99 @@ export type DataSourceInfo = {
   detail: string | null;
   record_count: number;
   loaded_at: string;
+};
+
+export type DailyAnalysisStatus = "ready" | "partial" | "analyzing" | "failed";
+
+export type DailyAnalysisVolatilityMetric = {
+  evidence_id: string;
+  metric_key: string;
+  metric_label: string;
+  baseline_key: string;
+  baseline_label: string;
+  current_value: number;
+  baseline_value: number;
+  delta: number;
+  percent_change: number | null;
+  direction: "up" | "down" | "flat";
+  sample_size: number;
+  note: string | null;
+  evidence_refs: string[];
+};
+
+export type DailyAnalysisEvidenceItem = {
+  evidence_id: string;
+  category: string;
+  title: string;
+  source: string;
+  values: Record<string, unknown>;
+  operator_id: string | null;
+  job_key: string | null;
+  recorded_at: string | null;
+};
+
+export type DailyAnalysisEvidenceBundle = {
+  operator_results: DailyAnalysisEvidenceItem[];
+  job_results: DailyAnalysisEvidenceItem[];
+  behavior_summaries: DailyAnalysisEvidenceItem[];
+  job_actions: DailyAnalysisEvidenceItem[];
+};
+
+export type DailyAnalysisDataQuality = {
+  missing_fields: string[];
+  unmatched_jobs: string[];
+  low_sample_warnings: string[];
+};
+
+export type DailyAnalysisModelAttribution = {
+  rank: number;
+  cause: string;
+  confidence: string;
+  reasoning: string;
+  evidence_refs: string[];
+  data_gaps: string[];
+  recommended_actions: string[];
+};
+
+export type DailyAnalysisActionItem = {
+  rank: number;
+  owner_role: "manager" | "operator" | "system";
+  target_operator_id: string | null;
+  target_job_key: string | null;
+  action: string;
+  execution_steps: string[];
+  due_window: string;
+  success_check: string;
+  confidence: string;
+  evidence_refs: string[];
+  data_gaps: string[];
+  blocked_by: string[];
+};
+
+export type DailyAnalysisModelAnalysis = {
+  summary: string;
+  generated_at: string;
+  analyzer: string;
+  attributions: DailyAnalysisModelAttribution[];
+  action_items?: DailyAnalysisActionItem[];
+  questions_for_next_collection: string[];
+};
+
+export type DailyAnalysisPayload = {
+  status: DailyAnalysisStatus;
+  analysis_date: string;
+  generated_at: string;
+  scope: {
+    operator_id: string | null;
+    display_name: string;
+    boss_name: string;
+  };
+  sync_state: Record<string, unknown>;
+  volatility_metrics: DailyAnalysisVolatilityMetric[];
+  evidence_bundle: DailyAnalysisEvidenceBundle;
+  model_analysis: DailyAnalysisModelAnalysis;
+  data_quality: DailyAnalysisDataQuality;
+  errors: string[];
 };
 
 export type LogQualityIssueCounter = {

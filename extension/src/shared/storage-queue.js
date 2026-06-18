@@ -50,6 +50,25 @@ export class StorageQueue {
     });
   }
 
+  async removeUploadedRecords(records) {
+    if (!records.length) {
+      return;
+    }
+
+    const idSet = new Set(records.map((record) => record?.id).filter(Boolean));
+    const eventIdSet = new Set(records.map((record) => record?.event?.id).filter(Boolean));
+    const queued = await this.readAll();
+    await this.storage.set({
+      [QUEUE_KEY]: queued.filter((item) => {
+        if (idSet.has(item.id)) {
+          return false;
+        }
+        const eventId = item?.event?.id || "";
+        return !eventId || !eventIdSet.has(eventId);
+      })
+    });
+  }
+
   async incrementRetries(ids) {
     if (!ids.length) {
       return;

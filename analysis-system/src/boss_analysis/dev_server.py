@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import os
+import secrets
 import threading
 from dataclasses import asdict, is_dataclass, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +23,7 @@ from boss_analysis.consumer import (
   iter_daily_basic_summaries_from_search,
 )
 from boss_analysis.dev_data import create_dev_dataset
+from boss_analysis.domain.daily_analysis import load_daily_analysis_result
 from boss_analysis.operator_config import OperatorConfigProvider
 
 DEFAULT_HOST = "127.0.0.1"
@@ -39,6 +42,8 @@ class DevApp:
     require_real_data: bool = False,
     refresh_seconds: int = 15,
     operator_config_file: str | None = None,
+    daily_analysis_result_file: str | None = None,
+    daily_analysis_results_dir: str | None = None,
   ) -> None:
     self._data_file = data_file
     self._data_source = data_source
@@ -46,6 +51,15 @@ class DevApp:
     self._require_real_data = require_real_data
     self._refresh_seconds = max(0, refresh_seconds)
     self._operator_config_provider = OperatorConfigProvider(operator_config_file)
+    self._daily_analysis_result_file = (
+      daily_analysis_result_file
+      or os.environ.get("BOSS_ANALYSIS_DAILY_ANALYSIS_RESULT_FILE")
+    )
+    self._daily_analysis_results_dir = (
+      daily_analysis_results_dir
+      or os.environ.get("BOSS_ANALYSIS_DAILY_ANALYSIS_RESULTS_DIR")
+    )
+    self._operator_admin_tokens: set[str] = set()
     self._raw_repository = None
     self._fact_store = None
     self._minute_summaries = ()
@@ -156,6 +170,72 @@ class DevApp:
       "operators": _to_jsonable(self._operator_config_provider.load()),
     }
 
+  def operator_admin_login(self, password: str | None) -> dict[str, Any]:
+    expected_password = _operator_admin_password()
+    if expected_password is None:
+      return {
+        "authenticated": False,
+        "reason": "not_configured",
+        "message": "Operator admin password is not configured.",
+      }
+    if not hmac.compare_digest(password or "", expected_password):
+      return {
+        "authenticated": False,
+        "reason": "invalid_password",
+        "message": "Invalid operator admin password.",
+      }
+    token = secrets.token_urlsafe(32)
+    self._operator_admin_tokens.add(token)
+    return {
+      "authenticated": True,
+      "token": token,
+      "config_path": str(self._operator_config_provider.path),
+      "encryption_enabled": self._operator_config_provider.encryption_enabled(),
+    }
+
+  def operator_admin_payload(self, *, token: str | None) -> dict[str, Any]:
+    self._require_operator_admin_token(token)
+    return {
+      "operators": _to_jsonable(self._operator_config_provider.load()),
+      "config_path": str(self._operator_config_provider.path),
+      "encryption_enabled": self._operator_config_provider.encryption_enabled(),
+    }
+
+  def operator_admin_upsert(
+    self,
+    value: dict[str, Any],
+    *,
+    token: str | None,
+    encrypt_sensitive: bool = False,
+  ) -> dict[str, Any]:
+    self._require_operator_admin_token(token)
+    operator = self._operator_config_provider.upsert(
+      value,
+      encrypt_sensitive=encrypt_sensitive,
+    )
+    self._reload_operator_config()
+    return {
+      "operator": _to_jsonable(operator),
+      "operators": _to_jsonable(self._operator_config_provider.load()),
+      "config_path": str(self._operator_config_provider.path),
+      "encryption_enabled": self._operator_config_provider.encryption_enabled(),
+    }
+
+  def operator_admin_delete(self, operator_id: str, *, token: str | None) -> dict[str, Any]:
+    self._require_operator_admin_token(token)
+    deleted = self._operator_config_provider.delete(operator_id)
+    self._reload_operator_config()
+    return {
+      "deleted": deleted,
+      "operators": _to_jsonable(self._operator_config_provider.load()),
+      "config_path": str(self._operator_config_provider.path),
+      "encryption_enabled": self._operator_config_provider.encryption_enabled(),
+    }
+
+  def _require_operator_admin_token(self, token: str | None) -> None:
+    if not token or token not in self._operator_admin_tokens:
+      raise PermissionError("A valid admin token is required")
+
   def operator_payload(self, operator_id: str) -> dict[str, Any]:
     self._refresh_if_needed()
     self._reload_operator_config()
@@ -216,6 +296,20 @@ class DevApp:
       "daily_basic_summary_source": _to_jsonable(source),
     }
 
+  def daily_analysis_payload(
+    self,
+    *,
+    active_date: str | None = None,
+    operator_id: str | None = None,
+  ) -> dict[str, Any]:
+    analysis_date = _parse_daily_analysis_date(active_date)
+    return load_daily_analysis_result(
+      analysis_date=analysis_date,
+      operator_id=_clean_request_string(operator_id),
+      result_file=self._daily_analysis_result_file,
+      results_dir=self._daily_analysis_results_dir,
+    )
+
 
 def make_handler(app: DevApp):
   class DevRequestHandler(BaseHTTPRequestHandler):
@@ -237,6 +331,11 @@ def make_handler(app: DevApp):
       if path == "/api/operators":
         self._send_json(app.operators_payload())
         return
+      if path == "/api/operator-admin/operators":
+        self._send_api_json(lambda: app.operator_admin_payload(
+          token=_authorization_bearer_token(self.headers.get("Authorization")),
+        ))
+        return
       if path == "/api/log-quality":
         query = parse_qs(parsed.query)
         self._send_json(app.log_quality_payload(
@@ -252,18 +351,100 @@ def make_handler(app: DevApp):
           days=_int_query_value(query, "days"),
         ))
         return
+      if path == "/api/daily-analysis":
+        query = parse_qs(parsed.query)
+        self._send_api_json(lambda: app.daily_analysis_payload(
+          operator_id=_first_query_value(query, "operator_id"),
+          active_date=(
+            _first_query_value(query, "date")
+            or _first_query_value(query, "active_date")
+          ),
+        ))
+        return
       if path.startswith("/api/operator/"):
         operator_id = _decode_path_segment(path.rsplit("/", 1)[-1])
         self._send_json(app.operator_payload(operator_id))
         return
       self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
+    def do_POST(self) -> None:
+      parsed = urlparse(self.path)
+      path = parsed.path
+      if path == "/api/operator-admin/login":
+        body = self._read_json_body()
+        result = app.operator_admin_login(_clean_request_string(body.get("password")))
+        status = HTTPStatus.OK if result.get("authenticated") else HTTPStatus.UNAUTHORIZED
+        self._send_json(result, status=status)
+        return
+      if path == "/api/operator-admin/operators":
+        body = self._read_json_body()
+        self._send_api_json(lambda: app.operator_admin_upsert(
+          _operator_admin_payload_from_body(body),
+          token=_authorization_bearer_token(self.headers.get("Authorization")),
+          encrypt_sensitive=bool(body.get("encryptSensitive")),
+        ))
+        return
+      self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def do_PUT(self) -> None:
+      parsed = urlparse(self.path)
+      path = parsed.path
+      if path.startswith("/api/operator-admin/operators/"):
+        operator_id = _decode_path_segment(path.rsplit("/", 1)[-1])
+        body = self._read_json_body()
+        payload = _operator_admin_payload_from_body(body)
+        payload["operatorId"] = operator_id
+        self._send_api_json(lambda: app.operator_admin_upsert(
+          payload,
+          token=_authorization_bearer_token(self.headers.get("Authorization")),
+          encrypt_sensitive=bool(body.get("encryptSensitive")),
+        ))
+        return
+      self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def do_DELETE(self) -> None:
+      parsed = urlparse(self.path)
+      path = parsed.path
+      if path.startswith("/api/operator-admin/operators/"):
+        operator_id = _decode_path_segment(path.rsplit("/", 1)[-1])
+        self._send_api_json(lambda: app.operator_admin_delete(
+          operator_id,
+          token=_authorization_bearer_token(self.headers.get("Authorization")),
+        ))
+        return
+      self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
     def log_message(self, format, *args) -> None:
       return
 
-    def _send_json(self, payload: dict[str, Any]) -> None:
+    def _send_api_json(self, callback) -> None:
+      try:
+        self._send_json(callback())
+      except PermissionError as error:
+        self._send_json({"error": str(error)}, status=HTTPStatus.UNAUTHORIZED)
+      except FileNotFoundError as error:
+        self._send_json({"error": str(error)}, status=HTTPStatus.NOT_FOUND)
+      except ValueError as error:
+        self._send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+
+    def _read_json_body(self) -> dict[str, Any]:
+      raw_length = self.headers.get("Content-Length") or "0"
+      try:
+        length = max(0, min(int(raw_length), 1_000_000))
+      except ValueError:
+        length = 0
+      if length <= 0:
+        return {}
+      raw = self.rfile.read(length)
+      try:
+        value = json.loads(raw.decode("utf-8"))
+      except json.JSONDecodeError:
+        return {}
+      return value if isinstance(value, dict) else {}
+
+    def _send_json(self, payload: dict[str, Any], *, status: HTTPStatus = HTTPStatus.OK) -> None:
       encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-      self.send_response(HTTPStatus.OK)
+      self.send_response(status)
       self.send_header("Content-Type", "application/json; charset=utf-8")
       self.send_header("Content-Length", str(len(encoded)))
       self.end_headers()
@@ -290,6 +471,8 @@ def run_server(
   require_real_data: bool = False,
   refresh_seconds: int = 15,
   operator_config_file: str | None = None,
+  daily_analysis_result_file: str | None = None,
+  daily_analysis_results_dir: str | None = None,
 ) -> None:
   app = DevApp(
     data_file=data_file,
@@ -298,6 +481,8 @@ def run_server(
     require_real_data=require_real_data,
     refresh_seconds=refresh_seconds,
     operator_config_file=operator_config_file,
+    daily_analysis_result_file=daily_analysis_result_file,
+    daily_analysis_results_dir=daily_analysis_results_dir,
   )
   server = ThreadingHTTPServer((host, port), make_handler(app))
   print(f"Boss analysis dev server listening on http://{host}:{port}", flush=True)
@@ -319,6 +504,8 @@ def main(argv: list[str] | None = None) -> None:
   parser.add_argument("--require-real-data", action="store_true", help="Fail instead of falling back to demo or empty data.")
   parser.add_argument("--refresh-seconds", type=int, default=15, help="Refresh real dev data from its source after this many seconds.")
   parser.add_argument("--operator-config-file", default=None, help="JSON operator config file. Defaults to BOSS_ANALYSIS_OPERATOR_CONFIG_FILE or config/operators.local.json.")
+  parser.add_argument("--daily-analysis-result-file", default=None, help="Read /api/daily-analysis from this offline JSON result file.")
+  parser.add_argument("--daily-analysis-results-dir", default=None, help="Read /api/daily-analysis from offline JSON results in this directory.")
   parser.add_argument("--no-demo", action="store_true", help="Start with no demo data when --data-file is omitted.")
   args = parser.parse_args(argv)
   load_env_files(args.env_file)
@@ -332,6 +519,8 @@ def main(argv: list[str] | None = None) -> None:
       require_real_data=args.require_real_data,
       refresh_seconds=args.refresh_seconds,
       operator_config_file=args.operator_config_file,
+      daily_analysis_result_file=args.daily_analysis_result_file,
+      daily_analysis_results_dir=args.daily_analysis_results_dir,
     )
   except ValueError as error:
     parser.exit(status=2, message=f"error: {error}\n")
@@ -407,8 +596,57 @@ def _int_query_value(query: dict[str, list[str]], key: str) -> int | None:
   return max(1, min(parsed, 366))
 
 
+def _parse_daily_analysis_date(value: str | None) -> date:
+  if value is None:
+    return date.today() - timedelta(days=1)
+  try:
+    return date.fromisoformat(value)
+  except ValueError as error:
+    raise ValueError("active_date must be YYYY-MM-DD") from error
+
+
 def _decode_path_segment(value: str) -> str:
   return unquote(value)
+
+
+def _operator_admin_password() -> str | None:
+  return _clean_request_string(
+    os.environ.get("BOSS_ANALYSIS_OPERATOR_ADMIN_PASSWORD")
+    or os.environ.get("BOSS_ANALYSIS_ADMIN_PASSWORD")
+  )
+
+
+def _authorization_bearer_token(value: str | None) -> str | None:
+  if value is None:
+    return None
+  prefix = "Bearer "
+  if not value.startswith(prefix):
+    return None
+  return _clean_request_string(value[len(prefix):])
+
+
+def _operator_admin_payload_from_body(body: dict[str, Any]) -> dict[str, Any]:
+  raw_operator = body.get("operator")
+  if isinstance(raw_operator, dict):
+    return dict(raw_operator)
+  return {
+    "operatorId": body.get("operatorId") or body.get("operator_id"),
+    "displayName": body.get("displayName") or body.get("display_name"),
+    "accountName": body.get("accountName") or body.get("account_name"),
+    "enabled": body.get("enabled"),
+    "role": body.get("role"),
+    "note": body.get("note"),
+  }
+
+
+def _clean_request_string(value: Any) -> str | None:
+  if value is None:
+    return None
+  if isinstance(value, str):
+    stripped = value.strip()
+    return stripped or None
+  stripped = str(value).strip()
+  return stripped or None
 
 
 def _daily_basic_summary_reader_mode() -> str:
@@ -485,7 +723,6 @@ INDEX_HTML = """<!doctype html>
             <div><span>BOSS-like</span><strong id="f-detail-boss">0</strong></div>
             <div><span>Greeting success</span><strong id="f-greeting">0</strong></div>
             <div><span>Chats</span><strong id="f-chat">0</strong></div>
-            <div><span>Wechat</span><strong id="f-wechat">0</strong></div>
           </div>
           <div class="bars" id="bars"></div>
         </section>
@@ -635,7 +872,7 @@ h2 { font-size: 16px; }
 .operator-time { color: var(--accent); font-weight: 700; font-size: 13px; }
 .funnel {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 18px;
 }
@@ -699,7 +936,6 @@ function renderBars(funnel) {
     ["Greeting clicks", funnel.greeting_clicked],
     ["Greeting success", funnel.greeting_succeeded],
     ["Chat snapshots", funnel.chat_snapshots],
-    ["Wechat captured", funnel.wechat_captured],
   ];
   const max = Math.max(1, ...values.map((item) => item[1]));
   bars.innerHTML = values.map(([label, value]) => `
@@ -720,7 +956,6 @@ async function loadOperator(operatorId) {
   setText("f-detail-boss", bossLikeDetailOpened);
   setText("f-greeting", funnel.greeting_succeeded);
   setText("f-chat", funnel.chat_snapshots + funnel.chat_opened);
-  setText("f-wechat", funnel.wechat_captured);
   renderBars(funnel);
 }
 

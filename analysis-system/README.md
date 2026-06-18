@@ -169,6 +169,116 @@ python3 -m boss_analysis.dev_server \
 `summary` 模式只使用分钟汇总结果生成活跃状态、单人漏斗、聊天指标和单人明细插件版本，不查询原始 raw 日志。若汇总结果中 `operator_id` 是 `<missing>`，前端会把它计入“流水线异常”，用于提示源主题索引类型或 SQL 字段配置问题。
 如果配置 `BOSS_ANALYSIS_LOG_QUALITY_DATA_FILE` 或 `CLS_LOG_QUALITY_TOPIC_ID`，前端数据质量区域会展示 10 分钟日志质量状态、插件版本维度和事件类型问题排行。`CLS_LOG_QUALITY_TOPIC_ID` 只用于本地开发读取定时 SQL 目标 topic；生产同步仍需走批准的非 SearchLog 链路。
 
+## 日常分析离线结果
+
+`/api/daily-analysis` 只读取离线分析结果，不在请求时读取飞书、调用模型或临时生成分析。离线任务负责先生成完整 JSON，API 按日期和可选操作员读取结果文件；结果缺失时返回 404。
+
+离线分析手动入口和官方结果同步保持同一风格：根目录脚本传入统计日期。默认读取已同步到飞书的 `daily_operator_result` 和 `daily_operator_job_result`，并写出 `BOSS_ANALYSIS_DAILY_ANALYSIS_RESULTS_DIR/YYYY-MM-DD.json`：
+
+```bash
+./generate-daily-analysis.sh 2026-06-16
+```
+
+离线分析只覆盖操作员配置文件中存在且启用的人。官方结果里的 `BOSS姓名` / `职位发布人` 必须能匹配配置中的 `operatorId`、`displayName`、`accountName` 或 `aliases`，否则该人员和对应岗位不会进入证据包、`model_input_packet` 或后续模型 action。默认配置路径来自 `BOSS_ANALYSIS_OPERATOR_CONFIG_FILE` 或 `config/operators.local.json`，也可以显式传入：
+
+```bash
+./generate-daily-analysis.sh 2026-06-16 \
+  --operator-config-file config/operators.local.json
+```
+
+先预演、不写结果文件：
+
+```bash
+./generate-daily-analysis.sh 2026-06-16 --dry-run
+```
+
+离线测试或回放可以使用本地官方结果 JSON，不访问飞书：
+
+```bash
+./generate-daily-analysis.sh 2026-06-16 \
+  --source-file /path/to/official-results.json \
+  --operator-config-file config/operators.local.json \
+  --output-dir data/daily-analysis-results
+```
+
+`--source-file` 文件格式与官方结果同步回放一致，包含 BOSS API 原始行的 `operator_rows` 和 `job_rows`。当前离线入口只生成事实证据包和 `model_input_packet`，不在本地生成归因、置信度、复盘优先级或建议动作。大模型分析策略在 `docs/modules/09-daily-analysis-llm-strategy.md`；真实模型输出接入前，结果保持 `model_state=model_output_required`。
+
+如果要把大模型输入素材补全，可以显式提供前 14 天效果数据、操作概览和操作明细文件：
+
+```bash
+./generate-daily-analysis.sh 2026-06-16 \
+  --daily-basic-source-file /path/to/daily-basic-stats.json \
+  --operation-overview-source-file /path/to/operation-overview.json \
+  --operation-details-source-file /path/to/operation-details.json
+```
+
+前 14 天窗口不包含分析当天，例如 `2026-06-16` 的历史窗口为 `2026-06-02` 到 `2026-06-15`。生产生成链路不得为了补齐这些素材调用 CLS Search/SearchLog；应使用已批准的同步结果、文件、数据库或指标 topic 读取路径。
+
+读取单个结果文件：
+
+```bash
+BOSS_ANALYSIS_DAILY_ANALYSIS_RESULT_FILE=/path/to/daily-analysis-2026-06-16.json \
+python3 -m boss_analysis.dev_server --data-source summary --require-real-data
+```
+
+读取结果目录：
+
+```bash
+BOSS_ANALYSIS_DAILY_ANALYSIS_RESULTS_DIR=data/daily-analysis-results \
+python3 -m boss_analysis.dev_server --data-source summary --require-real-data
+```
+
+目录模式文件名约定：
+
+- 全员结果：`YYYY-MM-DD.json`，也支持 `YYYY-MM-DD/all.json` 或 `YYYY-MM-DD__all.json`。
+- 单人结果：`YYYY-MM-DD__{urlencoded_operator_id}.json`，也支持 `YYYY-MM-DD/{urlencoded_operator_id}.json`。
+
+JSON 内容必须是 `/api/daily-analysis` 的完整返回结构，至少包含 `status`、`analysis_date`、`scope`、`sync_state`、`volatility_metrics`、`evidence_bundle`、`model_analysis`、`data_quality` 和 `errors`。`analysis_date` 必须与查询日期一致；查询单人时 `scope.operator_id` 必须与请求的 `operator_id` 一致。不要通过 dev server 或前端请求生成分析；统一使用 `./generate-daily-analysis.sh` 先生成结果。
+
+## BOSS 官方结果同步
+
+官方结果同步是一次性执行入口，不包含定时器、cron 或常驻 worker。
+
+日常手动同步使用根目录脚本，传入统计日期即可完成 BOSS CDP 采集和飞书上传：
+
+```bash
+./sync-official-results.sh 2026-06-15
+```
+
+先预演、不写飞书：
+
+```bash
+./sync-official-results.sh 2026-06-15 --dry-run
+```
+
+底层通用入口默认同步昨天，也可以指定日期：
+
+```bash
+python3 -m boss_analysis.ops.sync_official_results --date 2026-06-15 --dry-run
+```
+
+正式写入时去掉 `--dry-run`。飞书只通过 OpenAPI 读写，BOSS 官方数据通过后台 JSON API 读取。默认 `--source api` 使用外部注入的 BOSS cookie；如需要复用已登录浏览器页面，可以显式使用 CDP 源，它只在 BOSS 页面内执行同源查询，不读取浏览器存储：
+
+```bash
+python3 -m boss_analysis.ops.sync_official_results \
+  --source cdp \
+  --cdp-url http://127.0.0.1:9222 \
+  --date 2026-06-15 \
+  --dry-run
+```
+
+需要由外部环境注入：
+
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `FEISHU_BITABLE_APP_TOKEN` 或 `FEISHU_BITABLE_WIKI_NODE_TOKEN`
+- `BOSS_OFFICIAL_RESULTS_COOKIE`
+- `BOSS_OFFICIAL_RESULTS_CDP_URL`（仅 `--source cdp` 需要；也可用 `--cdp-url` 覆盖）
+
+目标表默认使用已初始化的 `daily_operator_result` 和 `daily_operator_job_result` table id，可通过 `FEISHU_DAILY_OPERATOR_RESULT_TABLE_ID`、`FEISHU_DAILY_OPERATOR_JOB_RESULT_TABLE_ID` 覆盖。dry-run 只输出将新增/更新的记录数量和缺字段名，不输出 token、cookie、手机号或真实记录行。
+
+离线测试或回放可以使用 `--source-file /path/to/official-results.json`，文件中放 BOSS API 原始行的 `operator_rows` 和 `job_rows`。这只用于开发验证，不替代官方后台 API 源。
+
 ## 本地操作员列表
 
 本地 dev 默认读取 `config/operators.local.json`，该文件被 git ignore，可以直接按需改：
@@ -178,8 +288,9 @@ python3 -m boss_analysis.dev_server \
   "operators": [
     {
       "operatorId": "zhouxinyu",
-      "displayName": "zhouxinyu",
+      "displayName": "周心语",
       "accountName": "谢女士",
+      "aliases": ["周心语"],
       "enabled": true,
       "role": "招聘操作员",
       "note": "operatorId 必须与 CLS 日志 operator_id 完全一致"
@@ -189,3 +300,5 @@ python3 -m boss_analysis.dev_server \
 ```
 
 页面每次请求 `/api/dashboard` 都会按文件修改时间热加载操作员配置；修改这个文件后刷新页面即可生效，不需要重启 dev server。`config/operators.example.json` 是可提交模板，真实本地名单放 `config/operators.local.json`。
+
+也可以在前端“操作员管理”页维护该文件。进入页面前需要在本地 `.env` 或 `.env.local` 配置 `BOSS_ANALYSIS_OPERATOR_ADMIN_PASSWORD`；保存时可选择加密 `accountName` 和 `note` 字段。加密密钥优先使用 `BOSS_ANALYSIS_OPERATOR_CONFIG_SECRET`，未配置时使用管理密码作为本地轻量加密密钥。

@@ -19,6 +19,8 @@
 - `05-operations-security.md`: 配置、凭据、部署、监控和敏感数据保护。
 - `06-log-health-probe.md`: 日志数量、质量、新鲜度、汇总一致性和告警规则。
 - `07-cls-scheduled-sql-tasks.md`: CLS 定时 SQL 任务配置清单和可粘贴 SQL。
+- `08-official-results-sync.md`: BOSS 官方结果数据采集、幂等同步到飞书多维表格的执行入口。
+- `09-daily-analysis-llm-strategy.md`: 日常分析的大模型输入、输出、语言和边界策略。
 
 通用规则：
 

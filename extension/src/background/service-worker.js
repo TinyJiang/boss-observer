@@ -342,13 +342,14 @@ async function flushQueue() {
       return;
     }
 
-    const uploadResult = await postBatch(config, batch.map((item) => item.event));
-    await updateChatReportStateFromEvents(batch.map((item) => item.event));
-    await queue.remove(batch.map((item) => item.id));
+    const uploadBatch = dedupeQueuedBatch(batch);
+    const uploadResult = await postBatch(config, uploadBatch.map((item) => item.event));
+    await queue.removeUploadedRecords(uploadBatch);
+    const chatReportUpdateError = await updateChatReportStateSafely(uploadBatch.map((item) => item.event));
     await updateDebugState(async (current) => {
       const queued = await queue.readAll();
       const productionStats = syncPendingEvents(
-        recordUploadedEvents(current.productionStats, batch.map((item) => item.event), {
+        recordUploadedEvents(current.productionStats, uploadBatch.map((item) => item.event), {
           uploadedAt: uploadResult.uploadedAt
         }),
         queued.map((item) => item.event)
@@ -358,7 +359,11 @@ async function flushQueue() {
         updatedAt: nowLocalIsoString(),
         config,
         lastFlushAt: nowLocalIsoString(),
-        lastUploadResult: uploadResult,
+        lastUploadResult: {
+          ...uploadResult,
+          dedupedQueueRecords: batch.length - uploadBatch.length,
+          chatReportUpdateError
+        },
         lastUploadError: null,
         queueSize: queued.length,
         productionStats
@@ -390,6 +395,31 @@ async function flushQueue() {
     console.warn("[BOSS Observer] upload failed", error);
   } finally {
     flushing = false;
+  }
+}
+
+function dedupeQueuedBatch(records = []) {
+  const seenEventIds = new Set();
+  return records.filter((record) => {
+    const eventId = record?.event?.id || "";
+    if (!eventId) {
+      return true;
+    }
+    if (seenEventIds.has(eventId)) {
+      return false;
+    }
+    seenEventIds.add(eventId);
+    return true;
+  });
+}
+
+async function updateChatReportStateSafely(events = []) {
+  try {
+    await updateChatReportStateFromEvents(events);
+    return null;
+  } catch (error) {
+    console.warn("[BOSS Observer] chat report state update failed after upload", error);
+    return formatError(error);
   }
 }
 

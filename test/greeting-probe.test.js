@@ -275,6 +275,33 @@ test("greeting click payload hydrates candidate profile from registry when candi
   assert.equal(payload.candidate.profile.expectedPosition, "主播");
 });
 
+test("greeting click target reads stable id from action attributes", () => {
+  const button = createElement({
+    tagName: "BUTTON",
+    text: "打招呼",
+    attributes: {
+      "data-url": "/web/frame/c-resume?securityId=sec-9"
+    }
+  });
+  const currentDocument = createDocument({
+    body: button,
+    href: "https://www.zhipin.com/web/frame/recommend/?source=0"
+  });
+
+  const target = buildGreetingClickTargetFromElement({
+    actionElement: button,
+    currentDocument,
+    page: classifyPage("https://www.zhipin.com/web/chat/recommend")
+  });
+  const payload = buildGreetingClickPayload({
+    page: classifyPage("https://www.zhipin.com/web/chat/recommend"),
+    ...target
+  });
+
+  assert.equal(payload.candidate.stableId, "sec-9");
+  assert.equal(payload.candidate.stableIdSource, "url.securityId");
+});
+
 test("greeting result text classifies success and failure signals", () => {
   assert.deepEqual(classifyGreetingResultText("打招呼成功，等待对方回复"), {
     status: "succeeded",
@@ -287,6 +314,14 @@ test("greeting result text classifies success and failure signals", () => {
   assert.deepEqual(classifyGreetingResultText("打招呼"), {
     status: "",
     matchedSignals: []
+  });
+  assert.deepEqual(classifyGreetingResultText("继续沟通"), {
+    status: "succeeded",
+    matchedSignals: ["communication_started"]
+  });
+  assert.deepEqual(classifyGreetingResultText("招呼次数不足，请明天再试"), {
+    status: "failed",
+    matchedSignals: ["quota_limit"]
   });
 });
 
@@ -425,6 +460,9 @@ function createElement({
   parentElement = null,
   children = [],
   dataset = {},
+  attributes = {},
+  href = "",
+  src = "",
   rect = { top: 0, right: 0, bottom: 0, left: 0 }
 }) {
   const element = {
@@ -432,14 +470,17 @@ function createElement({
     parentElement,
     children,
     dataset,
+    href,
+    src,
+    attributes: Object.entries(attributes).map(([name, value]) => ({ name, value })),
     get innerText() {
       return text || this.children.map((child) => child.innerText).filter(Boolean).join("\n");
     },
     get textContent() {
       return this.innerText;
     },
-    getAttribute() {
-      return "";
+    getAttribute(name) {
+      return attributes[name] || "";
     },
     getBoundingClientRect() {
       return rect;
@@ -451,10 +492,13 @@ function createElement({
       return this.children.some((child) => child.contains(target));
     },
     querySelectorAll(selector) {
-      if (selector !== "a[href]") {
-        return [];
+      if (selector === "*") {
+        return collectDescendants(this);
       }
-      return collectDescendants(this).filter((candidate) => candidate.href);
+      if (selector === "a[href]") {
+        return collectDescendants(this).filter((candidate) => candidate.href);
+      }
+      return [];
     }
   };
 

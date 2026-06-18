@@ -6,6 +6,8 @@ import {
   buildCandidateSnapshotPayload,
   extractCandidateProfile,
   isCandidateDetailUrl,
+  readCandidateIdentityDatasetFromElement,
+  readCandidateIdentityLinksFromElement,
   readCandidateIdFromUrl,
   shouldTreatAsCandidateCardText
 } from "../extension/src/content/candidate-card.js";
@@ -27,6 +29,43 @@ test("candidate card payload prefers stable ids from detail links", () => {
   assert.equal(Object.hasOwn(payload.exposure, "matchedSignals"), false);
   assert.equal(Object.hasOwn(payload.exposure, "textLength"), false);
   assert.equal(Object.hasOwn(payload, "text"), false);
+});
+
+test("candidate snapshot reads stable ids from dataset aliases", () => {
+  const candidate = buildCandidateSnapshotPayload({
+    text: "张先生 30岁 6年 大专 期望 杭州 销售 打招呼",
+    dataset: {
+      security_id: "sec-1"
+    },
+    sourceUrl: "https://www.zhipin.com/web/chat/recommend"
+  });
+
+  assert.equal(candidate.stableId, "sec-1");
+  assert.equal(candidate.stableIdSource, "dataset.security_id");
+  assert.match(candidate.candidateId, /^bo_candidate_dataset_security_id_sec_1_[a-z0-9]+$/);
+});
+
+test("candidate identity helpers collect descendant ids and URL attributes", () => {
+  const button = createElement({
+    dataset: {
+      encryptGeekId: "encrypt-1"
+    }
+  });
+  const link = createElement({
+    href: "https://www.zhipin.com/web/chat/index?geekId=geek-1"
+  });
+  const card = createElement({
+    children: [button, link],
+    attributes: {
+      "data-url": "/web/frame/c-resume?securityId=sec-2"
+    }
+  });
+
+  assert.deepEqual(readCandidateIdentityDatasetFromElement(card).encryptGeekId, "encrypt-1");
+  assert.deepEqual(readCandidateIdentityLinksFromElement(card), [
+    "/web/frame/c-resume?securityId=sec-2",
+    "https://www.zhipin.com/web/chat/index?geekId=geek-1"
+  ]);
 });
 
 test("candidate card payload falls back to a fingerprint without storing raw text", () => {
@@ -152,9 +191,53 @@ test("candidate id can be parsed from detail path", () => {
   );
 });
 
+test("candidate id can be parsed from raw query text", () => {
+  assert.deepEqual(
+    readCandidateIdFromUrl("securityId=sec-raw&lid=lid-raw"),
+    {
+      value: "lid-raw",
+      source: "url.lid"
+    }
+  );
+});
+
 test("candidate detail url detector supports path and query detail urls", () => {
   assert.equal(isCandidateDetailUrl("https://www.zhipin.com/geek/detail/encrypted-id.html"), true);
   assert.equal(isCandidateDetailUrl("https://www.zhipin.com/web/chat/index?geekId=abc123"), true);
   assert.equal(isCandidateDetailUrl("https://www.zhipin.com/web/frame/c-resume/?source=recommend"), true);
   assert.equal(isCandidateDetailUrl("https://www.zhipin.com/web/chat/recommend"), false);
 });
+
+function createElement({
+  children = [],
+  dataset = {},
+  attributes = {},
+  href = "",
+  src = ""
+} = {}) {
+  const element = {
+    children,
+    dataset,
+    href,
+    src,
+    parentElement: null,
+    attributes: Object.entries(attributes).map(([name, value]) => ({ name, value })),
+    getAttribute(name) {
+      return attributes[name] || "";
+    },
+    querySelectorAll(selector) {
+      if (selector !== "*") {
+        return [];
+      }
+      return collectDescendants(this);
+    }
+  };
+  children.forEach((child) => {
+    child.parentElement = element;
+  });
+  return element;
+}
+
+function collectDescendants(element) {
+  return element.children.flatMap((child) => [child, ...collectDescendants(child)]);
+}

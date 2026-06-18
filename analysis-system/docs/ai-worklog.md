@@ -35,7 +35,437 @@
 - 风险/阻塞：
 - 中断续写入口：
 
+### 任务：Task4 Offline Materials Integration
+
+- 时间：2026-06-18 18:50 CST
+- 执行者：AI
+- 状态：已完成
+- 目标：将三类离线材料（historical effects / operation overview / operation details）接入 `run_daily_analysis_generation`，并通过 CLI 文件参数读取后写入模型输入包及数据质量缺口。
+- 当前理解：仅做材料入包，不进行模型结论生成；保持官方结果、行为摘要、job_actions 兼容；不修改分析逻辑口径。
+- 计划修改文件：
+  - `src/boss_analysis/ops/generate_daily_analysis.py`
+  - `tests/test_generate_daily_analysis_command.py`
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `README.md`
+  - `docs/modules/09-daily-analysis-llm-strategy.md`
+  - 插件、frontend、父项目
+- 验证计划：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_generate_daily_analysis_command -v`
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials tests.test_generate_daily_analysis_command -v`
+  - `git diff --check -- src/boss_analysis/ops/generate_daily_analysis.py tests/test_generate_daily_analysis_command.py docs/ai-worklog.md`
+- 下一步：补全并执行验证，回写完成状态与风险。
+
+#### 阶段记录：完成 Task4 材料入包与 CLI 解析
+
+- 时间：2026-06-18 19:24 CST
+- 状态：已完成
+- 已完成：
+  - 在 `src/boss_analysis/ops/generate_daily_analysis.py` 新增三类材料输入参数，调用 `build_historical_effects_14d`、`build_operation_overview_14d`、`build_operation_details`，并写入 `model_input_packet.facts`。
+  - 更新 `data_quality` 为基于材料 `source_state` 与 `operation_details.data_gaps` 的缺口清单，始终保留 `model_analysis`。
+  - 新增 CLI 参数 `--daily-basic-source-file`、`--operation-overview-source-file`、`--operation-details-source-file`，并在 `main()` 中读取并透传。
+  - 在 `tests/test_generate_daily_analysis_command.py` 新增 `test_generation_includes_historical_effects_operation_overview_and_details` 覆盖三类材料入包与 `data_quality.missing_fields`。
+- 改动文件：
+  - `src/boss_analysis/ops/generate_daily_analysis.py`
+  - `tests/test_generate_daily_analysis_command.py`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_generate_daily_analysis_command -v`（通过）
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials tests.test_generate_daily_analysis_command -v`（通过）
+  - `git diff --check -- src/boss_analysis/ops/generate_daily_analysis.py tests/test_generate_daily_analysis_command.py docs/ai-worklog.md`（通过）
+- 风险/阻塞：
+  - Operation overview / historical effects 的 `source_state` 为 `loaded` 依赖窗口覆盖完整，需在真实离线运行中保持输入数据齐全。
+- 中断续写入口：如需扩展 CLI 输入文件格式，优先加独立单元测试验证读取分支。
+
+### 任务：Task3 Operation Details Sanitizer 质量修复
+
+- 时间：2026-06-18 11:30 CST
+- 执行者：AI
+- 状态：已完成
+- 目标：修复 `build_operation_details` 与 `_sanitize_detail_item` 的质量缺口与字段透传问题，保证 Task4 前数据质量判定一致。
+- 当前理解：当前实现对异常输入形态未统一记 `partial`，`timeline_windows` 对敏感嵌套字段未做白名单收紧，导致复核缺口统计与事实口径偏差。
+- 计划修改文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改 Task4 文件
+  - 不改动分析系统以外文件
+  - 不新增依赖
+- 验证计划：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v`
+  - `git diff --check -- src/boss_analysis/domain/daily_analysis_materials.py tests/test_daily_analysis_materials.py docs/ai-worklog.md`
+- 下一步：执行测试并补齐未覆盖的细化断言。
+
+#### 阶段记录：完成 Task3 质量修复
+
+- 时间：2026-06-18 11:44 CST
+- 状态：已完成
+- 已完成：
+  - 修复 `build_operation_details`：`value=None` 保持 `not_loaded`，非 `Mapping` 输入改为 `source_state="partial"`，并附带 `data_gaps=["operation_details"]`。
+  - 非列表集合与集合内非 Mapping 条目均纳入质量缺口，不重复添加 gap，且当无有效保留条目时确保 `source_state="partial"`。
+  - `_sanitize_detail_item` 增加 `operation_counts` 与 `source_event_ids` 收紧规则，避免嵌套对象/文本透传。
+  - 新增/调整测试覆盖 `non-mapping value`、`all 非 mapping collection items`、`timeline_windows` 嵌套敏感字段脱敏。
+- 改动文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v`（通过，57 tests）
+- 风险/阻塞：
+  - 仍沿用现有 `source_state` 只读规则；空输入映射（无任何 collection）保持空列表与 `loaded`（无已观测 source 项）行为，待后续任务确认是否收紧。
+- 中断续写入口：从 `build_operation_details` 与相关 `test_operation_details_*` 用例继续验证。
+
+### 任务：Task3 Operation Details Sanitizer 二次复核
+
+- 时间：2026-06-18 17:20 CST
+- 执行者：AI
+- 状态：已完成
+- 目标：处理 `timeline_windows` 日期过滤、`source_event_ids` 安全 ID 过滤与空输入空白口径，消除 Task3 剩余质量复核问题。
+- 当前理解：
+  - `timeline_windows` 日期判断必须优先 `window_start`；
+  - `source_event_ids` 必须过滤非法 ID 字符串，避免 URL/中文等敏感文本落盘；
+  - `value={}` 或全部 collection 空/缺失不能再返回 `loaded`。
+- 计划修改文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不改 Task4 文件
+  - 不新增依赖
+  - 不跨项目修改文件
+- 验证计划：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v`
+  - `git diff --check -- src/boss_analysis/domain/daily_analysis_materials.py tests/test_daily_analysis_materials.py docs/ai-worklog.md`
+- 下一步：等待本轮测试通过并确认是否进入 Task4 接入。
+
+#### 阶段记录：完成 Task3 二次复核
+
+- 时间：2026-06-18 17:20 CST
+- 状态：已完成
+- 已完成：
+  - `build_operation_details` 日期匹配改造为 collection 感知：`timeline_windows` 仅使用 `window_start`，其余 collection 使用 `occurred_at`。
+  - 新增 `source_event_id` 白名单校验，允许 `[A-Za-z0-9_.:-]`、1..128 长度，并拒绝 `://`、空白、手机号样式长数字等非 ID 文本。
+  - `value={}`、`value` 为全部空列表时返回 `source_state="not_loaded"` 且补齐 `operation_details` 缺口。
+  - 当有源数据但未保留任何有效条目（人员过滤/日期过滤）仍保持 `partial`。
+- 改动文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v`（通过，60 tests）
+  - `git diff --check -- src/boss_analysis/domain/daily_analysis_materials.py tests/test_daily_analysis_materials.py docs/ai-worklog.md`（通过）
+- 风险/阻塞：
+  - `source_event_id` 白名单会继续拦截非 ASCII、含协议符、超长数字类字符串；如上游有合法异常格式需先行确认。
+- 中断续写入口：如 `timeline_windows` 新增时间字段，补一条 collection-aware 的日期判定回归测试。
+
+#### 阶段记录：完成 Task3 单值 source_event_id 安全口径小修
+
+- 时间：2026-06-18 18:10 CST
+- 状态：已完成
+- 已完成：
+  - 在 `_sanitize_detail_item` 中对白名单字段 `source_event_id` 使用 `_is_valid_source_event_id` 清洗，不合法值直接移除。
+  - 在 `test_operation_details_filters_to_target_date_and_removes_sensitive_fields` 中覆盖 detail 事件，确认：
+    - `source_event_id` 为 `evt_1` 保留；
+    - `https://...`、`13800000000`、`聊天正文` 不出现在 JSON 输出；
+    - 目标日内条目数量保持为 4 条（含无效 `source_event_id` 被清洗后的保留字段）。
+- 改动文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v`（通过，60 tests）
+  - `git diff --check -- src/boss_analysis/domain/daily_analysis_materials.py tests/test_daily_analysis_materials.py docs/ai-worklog.md`（通过）
+- 风险/阻塞：
+  - 无新增阻塞；继续进入 Task4 接入链路验证。
+- 中断续写入口：Task4 继续消费 `build_operation_details` 结果。
+
 ## 当前任务
+
+### 任务：用最新离线方式分析 2026-06-17 数据
+
+- 时间：2026-06-18 14:16 CST
+- 执行者：Codex
+- 状态：已完成
+- 目标：按当前离线日常分析入口生成并检查 2026-06-17 的分析结果，确认官方结果、14 天效果数据、操作概览和操作明细素材是否进入模型输入包。
+- 当前理解：本地入口只生成事实证据包和 `model_input_packet`；归因、复盘优先级和 action 必须来自大模型输出。若本地缺少已批准素材文件或模型输出，应如实保留缺口，不通过 CLS Search/SearchLog 临时补齐。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `data/daily-analysis-results/2026-06-17.json`（如离线生成成功）
+- 不修改范围：
+  - 不修改业务代码、测试、前端、插件、父项目和 strategy
+  - 不使用生产禁止的 CLS Search/SearchLog 作为数据源
+- 验证计划：
+  - 检查本地可用 source-file / 配置
+  - 运行 `./generate-daily-analysis.sh 2026-06-17`
+  - 回读输出 JSON 的 `sync_state`、`data_quality` 和 `model_input_packet.facts`
+- 下一步：查找本地素材文件与运行配置，执行离线生成。
+
+#### 阶段记录：完成 2026-06-17 离线生成与结果复核
+
+- 时间：2026-06-18 14:25 CST
+- 状态：已完成
+- 已完成：
+  - 确认本地只配置了 `BOSS_ANALYSIS_OPERATOR_CONFIG_FILE=config/operators.local.json`，未配置三类素材 source-file 路径。
+  - 运行 `./generate-daily-analysis.sh 2026-06-17`，成功写出 `data/daily-analysis-results/2026-06-17.json`。
+  - 回读输出 JSON，确认过滤后进入模型输入包的官方结果为 9 个操作员、29 条岗位结果；`model_state=model_output_required`。
+  - 确认 `historical_effects_14d`、`operation_overview_14d`、`operation_details` 均为 `source_state=not_loaded`，`data_quality.missing_fields` 包含这三项和 `model_analysis`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `data/daily-analysis-results/2026-06-17.json`
+- 验证结果：
+  - `./generate-daily-analysis.sh 2026-06-17`（通过）
+  - Python 回读 `data/daily-analysis-results/2026-06-17.json`（通过）
+- 风险/阻塞：
+  - 本次未接入前 14 天效果数据、操作概览和操作明细；只能基于官方结果做受限复盘，不能声称已完成波动归因。
+  - 本地离线入口仍未接入真实大模型调用，结果文件保留 pending LLM 状态。
+- 中断续写入口：如需完整材料重跑，先准备 `--daily-basic-source-file`、`--operation-overview-source-file`、`--operation-details-source-file`，再重新执行同一入口。
+
+### 任务：每日同步 BOSS 官方结果至飞书
+
+- 时间：2026-06-18 05:00 CST
+- 执行者：AI 自动化
+- 状态：执行中
+- 目标：按 Asia/Shanghai 当前日期前一天（2026-06-17）运行 `./sync-official-results.sh 2026-06-17`，采集 BOSS 官方结果并上传至飞书，再用 dry-run 验证幂等。
+- 当前理解：本次仅运行既有同步脚本和幂等验证，不修改业务代码、不输出 app secret、tenant token、cookie、session、BOSS 登录态或记录明细。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `$CODEX_HOME/automations/boss/memory.md`
+- 不修改范围：
+  - 不修改分析系统业务代码、测试、配置模板
+  - 不修改父项目、插件、strategy
+- 验证计划：
+  - `./sync-official-results.sh 2026-06-17`
+  - `./sync-official-results.sh 2026-06-17 --dry-run` 并确认 `would_create=0`
+- 下一步：执行同步脚本并记录汇总结果。
+
+#### 阶段记录：完成 2026-06-17 官方结果同步
+
+- 时间：2026-06-18 05:02 CST
+- 状态：已完成
+- 已完成：
+  - 运行 `./sync-official-results.sh 2026-06-17`，采集并上传 2026-06-17 的 BOSS 官方结果。
+  - 运行 `./sync-official-results.sh 2026-06-17 --dry-run` 做同日幂等验证。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `/Users/tiny/.codex/automations/boss/memory.md`
+- 验证结果：
+  - 实际同步：`operator_rows=11`，`job_rows=33`，总采集行数 44；`applied_create=44`，`applied_update=0`。
+  - 幂等 dry-run：`would_create=0`，`would_update=44`，`applied_create=0`，`applied_update=0`。
+- 风险/阻塞：
+  - `unmatched_operator_count=5`，本次未展开记录明细，需如需处理映射时另行排查。
+- 中断续写入口：下次自动化继续按统计日前一天执行同一脚本，并检查 dry-run 的 `would_create`。
+
+### 任务：Task5 CLI Source-File Tests And Documentation
+
+- 时间：2026-06-18 02:52 CST
+- 执行者：AI
+- 状态：已完成
+- 目标：补齐 CLI source-file 集成测试、缺省缺口断言、必要的错误输入可观测性，并同步 README / LLM 策略文档。
+- 当前理解：Task4 已接入三类材料，但还缺针对 `main()` 文件输入路径的覆盖、默认缺口回归和文档沉淀；允许小范围收紧 CLI 输入错误行为，不触碰 material builder。
+- 计划修改文件：
+  - `tests/test_generate_daily_analysis_command.py`
+  - `src/boss_analysis/ops/generate_daily_analysis.py`
+  - `README.md`
+  - `docs/modules/09-daily-analysis-llm-strategy.md`
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - 前端、插件、父项目、strategy
+  - 不新增依赖
+- 验证计划：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials tests.test_generate_daily_analysis_command tests.test_daily_analysis -v`
+  - `python3 -m py_compile src/boss_analysis/domain/daily_analysis_materials.py src/boss_analysis/ops/generate_daily_analysis.py`
+  - `git diff --check -- src/boss_analysis/domain/daily_analysis_materials.py src/boss_analysis/ops/generate_daily_analysis.py tests/test_daily_analysis_materials.py tests/test_generate_daily_analysis_command.py README.md docs/modules/09-daily-analysis-llm-strategy.md docs/ai-worklog.md`
+- 下一步：先扩展 `main()` 集成测试，再根据测试需要收紧 CLI 文件读取错误处理，最后回写文档和验证结果。
+
+#### 阶段记录：完成 Task5 CLI 测试与文档同步
+
+- 时间：2026-06-18 02:55 CST
+- 状态：已完成
+- 已完成：
+  - 扩展 `test_main_reads_source_file_and_writes_result_summary`，通过临时 `daily-basic.json`、`operation-overview.json`、`operation-details.json` 覆盖 `main()` 的三类 source-file 输入，并回读输出 JSON 断言三类材料的 `source_state`。
+  - 在默认未提供三类材料的回归测试中补齐 `historical_effects_14d`、`operation_overview_14d`、`operation_details` 缺口断言。
+  - 收紧 CLI 顶层 JSON 形态校验：`--operation-overview-source-file` 非 list / `{rows:list}`、`--operation-details-source-file` 非 Mapping 时抛 `ValueError`，并新增 `main()` 退出码 2 测试。
+  - 更新 `README.md` 的日常分析离线结果说明，补充三类素材文件示例、14 天窗口边界和生产禁止使用 CLS Search/SearchLog 的约束。
+  - 更新 `docs/modules/09-daily-analysis-llm-strategy.md`，加入 `historical_effects_14d` 与 `operation_overview_14d` 的 fact-only 输入说明。
+- 改动文件：
+  - `tests/test_generate_daily_analysis_command.py`
+  - `src/boss_analysis/ops/generate_daily_analysis.py`
+  - `README.md`
+  - `docs/modules/09-daily-analysis-llm-strategy.md`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials tests.test_generate_daily_analysis_command tests.test_daily_analysis -v`（通过，73 tests）
+  - `python3 -m py_compile src/boss_analysis/domain/daily_analysis_materials.py src/boss_analysis/ops/generate_daily_analysis.py`（通过）
+  - `git diff --check -- src/boss_analysis/domain/daily_analysis_materials.py src/boss_analysis/ops/generate_daily_analysis.py tests/test_daily_analysis_materials.py tests/test_generate_daily_analysis_command.py README.md docs/modules/09-daily-analysis-llm-strategy.md docs/ai-worklog.md`（通过）
+- 风险/阻塞：
+  - CLI 现在会对两类顶层 JSON 形态直接失败关闭；如果历史脚本依赖旧的静默降级行为，需要同步调整调用侧文件格式。
+- 中断续写入口：如后续还要增强 source-file 兼容性，优先从 `tests/test_generate_daily_analysis_command.py` 的 `test_main_rejects_invalid_*` 两个用例和 `src/boss_analysis/ops/generate_daily_analysis.py` 的文件读取 helper 继续。
+
+#### 阶段记录：接手 Task5 复核修复
+
+- 时间：2026-06-18 02:58 CST
+- 状态：实现中
+- 已完成：
+  - 读取 `docs/ai-worklog.md`、`README.md`、`docs/boundary.md`、`docs/overview-design.md`、`docs/modules/09-daily-analysis-llm-strategy.md`、`../docs/modules/12-log-specification.md`，确认本轮只处理 Task5 复核问题。
+  - 检查 `git status --short` 与相关 diff，确认工作区存在大量其他模块改动，本轮仅修改允许文件：`tests/test_generate_daily_analysis_command.py`、`docs/modules/09-daily-analysis-llm-strategy.md`、`docs/ai-worklog.md`；仅当合法空形态测试确有必要时才触碰 `src/boss_analysis/ops/generate_daily_analysis.py`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - 尚未执行；下一步先补 `model_analysis` 缺口断言与 `--operation-overview-source-file` 合法空形态测试，确认红灯。
+- 风险/阻塞：
+  - 当前 Task5 已有“invalid shape 直接失败关闭”实现，需确认顶层 `[]` 与 `{ "rows": [] }` 是否被误伤，同时保持其他非法形态继续失败关闭。
+- 中断续写入口：从 `tests/test_generate_daily_analysis_command.py` 继续，优先检查默认缺口断言与 `main()` source-file 测试。
+
+#### 阶段记录：完成 Task5 复核修复
+
+- 时间：2026-06-18 03:03 CST
+- 状态：已完成
+- 已完成：
+  - 在 `tests/test_generate_daily_analysis_command.py` 为默认输入、三类材料 loaded/partial 场景补齐 `data_quality.missing_fields` 必含 `model_analysis` 的断言，锁定该缺口不会被后续回归删除。
+  - 新增 `main()` 表驱动测试，确认 `--operation-overview-source-file` 同时接受顶层 `[]` 与 `{ "rows": [] }` 两种合法空形态；两种输入都返回 0，且输出中的 `operation_overview_14d.source_state` 为 `not_loaded`，缺口仍落在 `data_quality`。
+  - 更新 `docs/modules/09-daily-analysis-llm-strategy.md` 输入约束，明确生产链路禁止通过 CLS Search/SearchLog 补齐 `historical_effects_14d`、`operation_overview_14d`、`operation_details`，只能使用已批准同步结果、文件、数据库或指标 topic 路径。
+  - 确认本轮无需修改 `src/boss_analysis/ops/generate_daily_analysis.py`；合法空形态兼容已由现有 helper 满足，问题是测试缺口。
+- 改动文件：
+  - `tests/test_generate_daily_analysis_command.py`
+  - `docs/modules/09-daily-analysis-llm-strategy.md`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials tests.test_generate_daily_analysis_command tests.test_daily_analysis -v`（通过，74 tests）
+  - `python3 -m py_compile src/boss_analysis/domain/daily_analysis_materials.py src/boss_analysis/ops/generate_daily_analysis.py`（通过）
+  - `git diff --check -- src/boss_analysis/domain/daily_analysis_materials.py src/boss_analysis/ops/generate_daily_analysis.py tests/test_daily_analysis_materials.py tests/test_generate_daily_analysis_command.py README.md docs/modules/09-daily-analysis-llm-strategy.md docs/ai-worklog.md`（通过）
+- 风险/阻塞：
+  - 本轮只锁住 `operation_overview` 的合法空形态；若后续还要扩大其他 source-file 的空输入兼容范围，应先定义对应 `source_state` 口径再补测试。
+- 中断续写入口：如继续复核 source-file 兼容性，从 `test_main_accepts_empty_operation_overview_source_file_shapes` 和策略文档的生产边界段落继续。
+
+#### 阶段记录：完成最终验证
+
+- 时间：2026-06-18 03:03 CST
+- 状态：已完成
+- 已完成：
+  - 按计划执行最终验证，覆盖日常分析材料、离线生成器、API 读取、dev server、官方结果同步命令和官方结果同步逻辑。
+  - 执行目标 Python 文件编译检查。
+  - 执行前端生产构建。
+  - 执行目标改动文件 diff whitespace 检查。
+- 改动文件：
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials tests.test_generate_daily_analysis_command tests.test_daily_analysis tests.test_dev_server tests.test_sync_official_results_command tests.test_official_results_sync -v`（通过，113 tests）
+  - `python3 -m py_compile src/boss_analysis/domain/daily_analysis_materials.py src/boss_analysis/ops/generate_daily_analysis.py`（通过）
+  - `cd frontend && npm run build`（通过）
+  - `git diff --check -- src/boss_analysis/domain/daily_analysis_materials.py src/boss_analysis/ops/generate_daily_analysis.py tests/test_daily_analysis_materials.py tests/test_generate_daily_analysis_command.py README.md docs/modules/09-daily-analysis-llm-strategy.md docs/ai-worklog.md`（通过）
+- 风险/阻塞：
+  - 无新增阻塞；工作区仍有大量历史未提交改动，未在本轮回滚或整理。
+- 中断续写入口：下一步可接真实大模型调用和模型输出校验；如要放宽 source-file 兼容性，先补测试再改 CLI helper。
+
+### 任务：运营总览 14 天材料构建
+
+- 时间：2026-06-18 10:08 CST
+- 执行者：Codex
+- 状态：已完成
+- 目标：为 `build_operation_overview_14d` 补齐纯事实运营概览构建能力，支持14天窗口过滤、算子匹配、字段归一化与滚动汇总。
+- 当前理解：仅处理配置算子和输入行，不新增策略/建议/归因逻辑，输出结构需包含 `source_state/window/operator_daily_rows/operator_rollups`，并按既有匹配规则复用 `operator_profile_index`。
+- 计划修改文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 不修改范围：
+  - 不修改分析系统以外文件
+  - 不新增依赖
+  - 不改动前端/插件/策略库代码
+- 验证计划：先补充导入与新用例确认红灯，再实现函数并运行 `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v`
+- 下一步：保持 Task 1 历史相关测试通过，确认 `source_state` 与覆盖率口径。
+
+#### 阶段记录：完成 Task 2 代码与测试补全
+
+- 时间：2026-06-18 10:26 CST
+- 状态：已完成
+- 已完成：
+  - 在 `src/boss_analysis/domain/daily_analysis_materials.py` 新增 `OPERATION_OVERVIEW_FIELDS` 与 `build_operation_overview_14d`。
+  - 新增 `datetime/字符串日期容忍解析`、`_to_int`、`_profile_for_operation_row`、`_operation_overview_row`、`_rollup_rows`。
+  - 将 `_rollup_daily_rows` 委托到通用 `_rollup_rows`，并保持历史行为不变。
+  - 在 `tests/test_daily_analysis_materials.py` 新增 `build_operation_overview_14d` 的完整测试集合，覆盖已配置算子筛选、窗口外过滤、14天覆盖、fallback 匹配、歧义匹配、禁用算子排除与字段整数化。
+- 改动文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v` 全量通过（45 个测试）。
+- 风险/阻塞：
+  - 当前 `build_operation_overview_14d` 未接入调用方。
+- 中断续写入口：如需后续，请在上层组装逻辑 `src/boss_analysis/domain/daily_analysis.py` 中接入。
+
+#### 阶段记录：完成 Task 2 质量修复回归
+
+- 时间：2026-06-18 10:51 CST
+- 状态：已完成
+- 已完成：
+  - 为运营总览同日同算子重复行补充去重逻辑，按确定性优先级：`source_event_count`、字段和、稳定字段元组。
+  - 增补运营总览 `active_date` 边界容错测试（None/空字符串/非法字符串），确保源行异常日期被容忍并从窗口过滤，不影响 source_state 与结果空行为。
+- 改动文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v` 全量通过。
+- 风险/阻塞：
+  - 同日去重规则按事实值确定，不改变字段口径与调用方边界。
+- 中断续写入口：待接入上层模块时使用当前返回结构；当前模块行为已完成验证。
+
+#### 阶段记录：完成 Task 2 Z 时间戳与回归加固
+
+- 时间：2026-06-18 11:07 CST
+- 状态：已完成
+- 已完成：
+  - 为运营总览日期解析补充 RFC3339 风格 `Z` 后缀兼容，`2026-06-02T08:00:00Z` 及时区偏移字符串可被正确纳入窗口。
+  - 强化 `_rollup_rows` 的 `display_name` 兜底字段，避免键缺失导致回滚异常。
+  - 增加完全重复行顺序无关回归：同一输入集合在不同排序下，`operator_daily_rows` 与 `operator_rollups` 完全一致。
+- 改动文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v` 全量通过（45 个测试）。
+- 风险/阻塞：
+  - 当前 `_rollup_rows` 回退仅针对 `display_name`，不改变事实口径。
+- 中断续写入口：该阶段任务范围已闭环；进入上层接入时沿用当前返回结果。
+
+#### 阶段记录：完成 Task 2 单次消费与 source_state 去重修复
+
+- 时间：2026-06-18 11:18 CST
+- 状态：已完成
+- 已完成：
+  - 将 `build_operation_overview_14d` 改为单次迭代 rows 处理：边走边过滤匹配并统计 `source_count`，避免事先 `tuple(rows)`；`source_state` 继续基于实际 source 行数。
+  - 补充同日重复行的 `source_state` 去重优先级：`loaded > partial > not_loaded > unknown/blank`，并保持字段数值与展示字段为最终事实选择条件。
+  - 增加非重入可迭代输入回归测试（一次性 row 容器），覆盖生成器/单次消费场景；确认在有效输入下输出仍正确。
+  - 补充 `source_state` 并列场景回归测试（`loaded` 与 `partial` 字段完全一致时优先 `loaded`）。
+  - 继续沿用 `_rollup_rows` 的 `display_name` 回退默认策略；本阶段未修改 `src/boss_analysis/domain/__init__.py`，因其不在 Task 2 允许文件范围内。
+- 改动文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v` 全量通过（45 个测试）。
+- 风险/阻塞：
+  - 仍需上层业务组装调用 `build_operation_overview_14d`；当前模块内行为已就位。
+- 中断续写入口：该阶段任务范围闭环，后续直接进入 Task 3 的集成与接入验证。
+
+#### 阶段记录：完成 Task 2 `source_state` 空白去重复核修复
+
+- 时间：2026-06-18 11:23 CST
+- 状态：已完成
+- 已完成：
+  - 保留 `_operation_overview_row()` 对 `source_state` 的原始清洗值，不再将空白映射为 `"loaded"`，避免空值在同日同人去重时被错误提升。
+- 改动文件：
+  - `src/boss_analysis/domain/daily_analysis_materials.py`
+  - `tests/test_daily_analysis_materials.py`
+  - `docs/ai-worklog.md`
+- 验证结果：
+  - `env PYTHONPATH=src python3 -m unittest tests.test_daily_analysis_materials -v`
+- 风险/阻塞：
+  - 去重仍按现有多因子排序口径：`source_event_count`、`field_sum`、`source_state_rank`、稳定字段。
+- 中断续写入口：继续执行 Task3 集成链路评审。
 
 ### 任务：只读验证远程 CLS 连接
 
@@ -4022,3 +4452,87 @@
   - 任务 6 SQL 不包含 `with` CTE，包含 `histogram(__TIMESTAMP__, interval 1 day)`。
   - `git diff --check -- docs/ai-worklog.md docs/modules/04-aggregation-query-api.md docs/modules/07-cls-scheduled-sql-tasks.md` 通过。
 - 中断续写入口：最终回复需说明真实 raw 结果，并按 SQL 修改输出规则贴出完整任务 6 SQL；如果要让后续新数据产生回复指标，需要修复采集侧 `messages[].direction`，历史 `unknown` 数据不能可靠回算。
+
+### 任务：招聘人级官方曝光归因指标设计
+
+- 时间：2026-06-18 14:46 CST
+- 执行者：Codex
+- 状态：文档设计中
+- 目标：根据用户确认的口径，沉淀“BOSS 官方后台每天给出的岗位在候选人侧曝光数”作为核心归因指标，并明确主粒度为招聘人级、岗位级只做拆解。
+- 当前理解：
+  - 用户要分析的是 BOSS 官方后台曝光，不是插件采集的 `candidate_list.card_exposed`。
+  - 官方曝光含义是岗位在候选人侧被展示的次数，属于平台供给/分发侧指标。
+  - 因岗位之间可能有关联，且平台可能存在账号维度控制，第一版主指标应按招聘人每天聚合，岗位维度只用于贡献拆解和证据。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/superpowers/specs/2026-06-18-recruiter-official-exposure-attribution-design.md`
+- 不修改范围：
+  - 不修改运行代码、测试、生产 SQL、CLS 任务、飞书表结构或 Chrome 插件。
+  - 不读取或修改 `analysis-system` 之外文件。
+  - 不把本地规则写成确定性归因、绩效判断或候选人质量评分。
+- 验证计划：
+  - 文档自查：确认没有 TODO/TBD、没有把官方曝光和插件卡片曝光混用、没有生产 SearchLog 路径。
+  - `git diff --check -- docs/ai-worklog.md docs/superpowers/specs/2026-06-18-recruiter-official-exposure-attribution-design.md`
+- 当前状态：准备新增设计文档。
+
+#### 阶段记录：官方曝光归因指标设计已沉淀
+
+- 时间：2026-06-18 14:52 CST
+- 状态：已完成
+- 已完成：
+  - 新增 `docs/superpowers/specs/2026-06-18-recruiter-official-exposure-attribution-design.md`，明确主指标为招聘人级官方岗位曝光 `official_recruiter_job_exposure_count`，岗位级 `official_job_exposure_count` 只做拆解和证据。
+  - 区分 BOSS 官方候选人侧曝光与插件 `candidate_list.card_exposed`，避免后续训练标签混用。
+  - 定义招聘人日级训练样本、岗位日级拆解结构、前置特征边界、解释逻辑、建模建议和非目标。
+  - 明确本地系统第一版只生成事实、基线、波动和证据包，不输出确定性归因、绩效判断或候选人质量评分。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/superpowers/specs/2026-06-18-recruiter-official-exposure-attribution-design.md`
+- 当前验证结果：
+  - 文档自查通过：未发现 TODO/TBD；官方曝光与插件卡片曝光已明确区分；生产 SearchLog 只出现在禁止条款。
+  - `git diff --check -- docs/ai-worklog.md docs/superpowers/specs/2026-06-18-recruiter-official-exposure-attribution-design.md` 通过。
+- 风险/阻塞：
+  - BOSS 官方接口中曝光字段的真实源字段名尚未确认；本轮不修改飞书表结构、同步代码或生产任务。
+  - 当前工作区已有大量无关未提交改动，本轮未提交 commit，避免混入其它任务变更。
+- 中断续写入口：下一步如果进入实现，应先确认官方岗位曝光字段名和粒度，再设计同步字段映射、训练样本构建计划和测试。
+
+### 任务：招聘人级官方曝光实现计划
+
+- 时间：2026-06-18 15:02 CST
+- 执行者：Codex
+- 状态：计划编写中
+- 目标：基于已确认的招聘人级官方曝光设计，产出可执行实现计划，覆盖官方曝光字段接入、日常分析输入材料、训练样本构建、测试和文档边界。
+- 当前理解：
+  - 用户已同意继续推进，但在实现前需要先形成 task-by-task 计划。
+  - 第一实现阶段不应直接训练复杂模型，而应先把官方曝光事实和可验证的训练样本/证据包链路打通。
+  - 计划需要沿用现有官方结果同步、日常分析材料和操作员白名单边界。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `docs/superpowers/plans/2026-06-18-recruiter-official-exposure-attribution.md`
+- 不修改范围：
+  - 不修改运行代码、测试、生产 SQL、CLS 任务、飞书表结构或 Chrome 插件。
+  - 不读取或修改 `analysis-system` 之外文件。
+  - 不把本地规则写成确定性归因或绩效判断。
+- 验证计划：
+  - 对照设计文档做计划自查，确认实现任务覆盖主指标、岗位拆解、数据源、训练样本、输出边界和非目标。
+  - `git diff --check -- docs/ai-worklog.md docs/superpowers/plans/2026-06-18-recruiter-official-exposure-attribution.md`
+- 当前状态：准备阅读相关代码和测试后写计划。
+
+#### 阶段记录：实现计划已完成
+
+- 时间：2026-06-18 15:14 CST
+- 状态：已完成
+- 已完成：
+  - 阅读官方结果同步、日常分析生成、日常分析材料构建和相关测试，确认实现应复用 `OfficialResultsBatch`、`model_input_packet`、`data_quality.missing_fields` 和现有 source-file 输入模式。
+  - 新增 `docs/superpowers/plans/2026-06-18-recruiter-official-exposure-attribution.md`，计划分为官方曝光纯函数构建、日常分析输入包接入、14 天历史与训练特征、文档和最终验证四个任务。
+  - 计划明确第一阶段只接入 fact-only 材料和训练样本，不修改飞书表结构、官方同步字段映射、生产 SQL、CLS 任务或插件。
+  - 自查并修正计划里的模板化时间和省略写法，避免执行者读到占位符。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/superpowers/plans/2026-06-18-recruiter-official-exposure-attribution.md`
+- 当前验证结果：
+  - `rg -n "TODO|TBD|implement later|fill in|appropriate|Similar to|YYYY|\\.\\.\\." docs/superpowers/plans/2026-06-18-recruiter-official-exposure-attribution.md` 只命中 Python 类型注解中的 `...`，未发现计划占位符。
+  - `git diff --check -- docs/ai-worklog.md docs/superpowers/plans/2026-06-18-recruiter-official-exposure-attribution.md` 通过。
+- 风险/阻塞：
+  - 计划尚未执行；业务代码、测试和文档策略文件还未按计划修改。
+  - 当前工作区已有大量无关未提交改动，本轮未提交 commit。
+- 中断续写入口：按计划文件从 Task 1 开始执行，执行前继续先查看 `docs/ai-worklog.md` 和相关 diff。

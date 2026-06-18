@@ -34,6 +34,29 @@
 
 这些汇总仍然来自原始日志事实，不允许写入候选人质量、员工绩效或话术评价等分析结论。
 
+### 官方结果同步入口
+
+`boss_analysis.ops.sync_official_results` 是一个明确授权的独立一次性同步入口，用于把 BOSS 官方后台按天结果数据写入飞书多维表格。它不替代 CLS 事实日志链路，也不向插件下发采集策略。
+
+边界约束：
+
+- 只通过 BOSS 后台 JSON API 读取官方结果，不依赖插件 DOM、debug 页、Chrome storage 或 content script helper。
+- 只通过 Feishu OpenAPI 读写目标多维表格，不操作飞书 UI。
+- 不实现定时器、cron、常驻 worker 或后台调度。
+- 不在本地代码中做波动归因、贡献度或置信度排序。
+- cookie、session、tenant token、app secret 等凭据只能来自环境变量或外部凭据注入，不写入代码、日志或测试快照。
+
+### 日常分析离线入口
+
+`boss_analysis.ops.generate_daily_analysis` 是日常分析离线结果的唯一手动生成入口。它只能读取已同步的官方结果和已批准的事实汇总，生成证据包与大模型输入包。
+
+边界约束：
+
+- 本地只做事实清洗、字段映射、证据 ID 生成、数据质量标记和模型输入包整理。
+- `summary`、`rank`、`cause`、`confidence`、`reasoning`、`recommended_actions` 必须来自大模型输出。
+- 没有大模型输出时，结果必须保持 `model_state=model_output_required`，不能用本地规则兜底为 ready 分析。
+- 大模型策略文档是 `docs/modules/09-daily-analysis-llm-strategy.md`。
+
 ## 禁止耦合
 
 分析系统不得依赖：

@@ -2,6 +2,8 @@ import {
   buildCandidateCardPayload,
   compactCandidateSnapshotPayload,
   compactPayloadObject,
+  readCandidateIdentityDatasetFromElement,
+  readCandidateIdentityLinksFromElement,
   shouldTreatAsCandidateCardText
 } from "./candidate-card.js";
 import {
@@ -251,19 +253,15 @@ function collectAccessibleDocuments(rootDocument) {
 }
 
 function readMergedDataset(element) {
-  const merged = {};
-  let current = element;
-  for (let steps = 0; current && steps < MAX_ANCESTOR_STEPS; steps += 1) {
-    Object.assign(merged, current.dataset || {});
-    current = current.parentElement;
-  }
-  return merged;
+  return readCandidateIdentityDatasetFromElement(element, {
+    maxAncestorSteps: MAX_ANCESTOR_STEPS
+  });
 }
 
 function readLinks(element) {
-  return Array.from(element.querySelectorAll("a[href]"))
-    .map((link) => link.href)
-    .filter(Boolean);
+  return readCandidateIdentityLinksFromElement(element, {
+    maxAncestorSteps: MAX_ANCESTOR_STEPS
+  });
 }
 
 function normalizeElementText(element) {

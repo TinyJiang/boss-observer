@@ -896,6 +896,652 @@ h3 {
   border-radius: 8px;
 }
 
+.adminLoginPanel {
+  max-width: 520px;
+  min-height: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.adminPasswordField,
+.adminForm label {
+  display: grid;
+  gap: 6px;
+}
+
+.adminPasswordField span,
+.adminForm label span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.adminPasswordField input,
+.adminForm input,
+.adminForm textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.adminForm textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.adminToolbar {
+  min-height: 0;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.adminToolbar p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.adminToolbarActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.adminEncryptState {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.adminEncryptState.enabled {
+  border-color: #bbf7d0;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.adminGrid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(360px, 1.05fr);
+  gap: 14px;
+}
+
+.adminListPanel,
+.adminFormPanel {
+  min-height: 0;
+}
+
+.adminOperatorRows {
+  display: grid;
+  gap: 8px;
+}
+
+.adminOperatorRow {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: start;
+  background: #fff;
+}
+
+.adminOperatorRow strong,
+.adminOperatorRow span,
+.adminOperatorRow small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.adminOperatorRow span {
+  color: var(--ink);
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+.adminOperatorRow small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 3px;
+}
+
+.adminRowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dangerButton {
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff;
+  color: #b91c1c;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.adminForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.adminWideField,
+.adminCheckRow,
+.adminFormActions {
+  grid-column: 1 / -1;
+}
+
+.adminCheckRow {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.adminCheckRow input {
+  width: 16px;
+  height: 16px;
+}
+
+.adminFormActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dailyAnalysisFilters {
+  min-height: 0;
+  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(220px, 320px) auto 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
+.dailyAnalysisFilters label {
+  display: grid;
+  gap: 6px;
+}
+
+.dailyAnalysisFilters span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dailyAnalysisFilters input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.dailyOverviewStrip,
+.dailyCoachingHero,
+.dailyReviewOperatorList,
+.dailyPersonalDetailPanel {
+  min-height: 0;
+  margin-bottom: 14px;
+}
+
+.dailyAnalysisReviewShell {
+  min-height: 0;
+  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 0;
+  column-gap: 0;
+  align-items: start;
+  transition: grid-template-columns 180ms ease, column-gap 180ms ease;
+}
+
+.dailyAnalysisReviewShell.drawerOpen {
+  grid-template-columns: minmax(320px, 1fr) minmax(340px, 440px);
+  column-gap: 14px;
+}
+
+.dailyAnalysisReviewShell .dailyReviewOperatorList,
+.dailyPersonalDrawer .dailyPersonalDetailPanel {
+  margin-bottom: 0;
+}
+
+.dailyOverviewItems {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.dailyOverviewItems div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fbfcfe;
+}
+
+.dailyOverviewItems span,
+.dailyOverviewItems small,
+.dailyCoachingMeta,
+.dailyReviewOperatorRank span,
+.dailyReviewOperatorBody span,
+.dailyReviewOperatorBody i {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.dailyOverviewItems span,
+.dailyOverviewItems strong,
+.dailyOverviewItems small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.dailyOverviewItems strong {
+  font-size: 15px;
+  line-height: 1.3;
+  margin-top: 4px;
+}
+
+.dailyOverviewItems small {
+  margin-top: 3px;
+}
+
+.dailyCollectionAlert {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px;
+  align-items: start;
+  background: #f8fafc;
+}
+
+.dailyCollectionAlert.ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.dailyCollectionAlert.warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.dailyCollectionAlert.error {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.dailyCollectionAlert strong,
+.dailyCollectionAlert span {
+  display: block;
+}
+
+.dailyCollectionAlert strong {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.dailyCollectionAlert span,
+.dailyCollectionAlert li {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.dailyCollectionAlert ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.dailyCoachingHero p {
+  margin: 0;
+  max-width: 760px;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.dailyCoachingMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.dailyCoachingMeta span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #fbfcfe;
+}
+
+.dailyReviewOperatorRows {
+  display: grid;
+  gap: 8px;
+}
+
+.dailyReviewOperatorRow {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.dailyReviewOperatorRow.selected {
+  border-color: #5eead4;
+  box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.12);
+}
+
+.dailyReviewOperatorRank {
+  min-height: 70px;
+  border: 1px solid #ccfbf1;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  background: #f0fdfa;
+  color: #0f766e;
+}
+
+.dailyReviewOperatorRank strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.dailyReviewOperatorRank span {
+  font-weight: 700;
+}
+
+.dailyReviewOperatorBody {
+  min-width: 0;
+}
+
+.dailyReviewOperatorBody header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: start;
+  margin-bottom: 10px;
+}
+
+.dailyReviewOperatorBody strong,
+.dailyReviewOperatorBody span,
+.dailyReviewOperatorBody i,
+.dailyReviewOperatorBody dd {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.dailyReviewOperatorBody header > div {
+  min-width: 0;
+}
+
+.dailyReviewOperatorBody header strong {
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.dailyReviewOperatorBody i {
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.dailyReviewOperatorBody dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dailyReviewOperatorBody dl > div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fbfcfe;
+}
+
+.dailyReviewOperatorBody dt {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.dailyReviewOperatorBody dd {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.dailyAnalysisReviewShell.drawerOpen .dailyReviewOperatorBody dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dailyPersonalDrawer {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(18px);
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.dailyPersonalDrawer.open {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.dailyPersonalDrawerHead {
+  min-width: 0;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  background: #fff;
+}
+
+.dailyPersonalDrawer:not(.open) .dailyPersonalDrawerHead {
+  visibility: hidden;
+}
+
+.dailyPersonalDrawerHead strong {
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.dailyPersonalDetailPanel .panelHead {
+  align-items: start;
+}
+
+.dailyPersonalDetailPanel .panelHead p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.dailyPersonalSection {
+  min-width: 0;
+  margin-top: 14px;
+}
+
+.dailyPersonalCoreGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.dailyPersonalCoreGrid div,
+.dailyPersonalList article,
+.dailyPersonalAdviceRows article {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.dailyPersonalCoreGrid div {
+  padding: 10px;
+}
+
+.dailyPersonalCoreGrid span,
+.dailyPersonalCoreGrid strong,
+.dailyPersonalCoreGrid small,
+.dailyPersonalList strong,
+.dailyPersonalList span,
+.dailyPersonalList p,
+.dailyPersonalAdviceRows p {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.dailyPersonalCoreGrid span,
+.dailyPersonalCoreGrid small,
+.dailyPersonalList span,
+.dailyPersonalList p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.dailyPersonalCoreGrid strong {
+  margin-top: 4px;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.dailyPersonalCoreGrid small {
+  margin-top: 4px;
+}
+
+.dailyPersonalColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.dailyPersonalList {
+  display: grid;
+  gap: 8px;
+}
+
+.dailyPersonalList article {
+  padding: 10px;
+  background: #fff;
+}
+
+.dailyPersonalList strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.dailyPersonalList span {
+  margin-top: 4px;
+}
+
+.dailyPersonalList p {
+  margin: 6px 0 0;
+}
+
+.dailyPersonalAdviceRows {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dailyPersonalDrawer .dailyPersonalAdviceRows {
+  grid-template-columns: 1fr;
+}
+
+.dailyPersonalAdviceRows article {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 10px;
+  background: #fff;
+}
+
+.dailyPersonalAdviceRows span {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #e7f5f2;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dailyPersonalAdviceRows p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.dailyStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dailyStatusBadge.ready {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.dailyStatusBadge.partial,
+.dailyStatusBadge.analyzing {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.dailyStatusBadge.failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -905,6 +1551,26 @@ h3 {
 @keyframes pulse {
   50% {
     opacity: 0.45;
+  }
+}
+
+@media (max-width: 1100px) {
+  .dailyAnalysisReviewShell,
+  .dailyAnalysisReviewShell.drawerOpen {
+    grid-template-columns: 1fr;
+    row-gap: 12px;
+  }
+
+  .dailyAnalysisReviewShell.drawerOpen .dailyReviewOperatorBody dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dailyPersonalDrawer {
+    transform: translateY(10px);
+  }
+
+  .dailyPersonalDrawer.open {
+    transform: translateY(0);
   }
 }
 
@@ -920,8 +1586,19 @@ h3 {
 
   .metricsGrid,
   .contentGrid,
+  .adminGrid,
+  .adminForm,
   .qualityFilters,
   .historyFilters,
+  .dailyAnalysisFilters,
+  .dailyAnalysisReviewShell.drawerOpen .dailyReviewOperatorBody dl,
+  .dailyOverviewItems,
+  .dailyCollectionAlert,
+  .dailyReviewOperatorRow,
+  .dailyReviewOperatorBody dl,
+  .dailyPersonalCoreGrid,
+  .dailyPersonalColumns,
+  .dailyPersonalAdviceRows,
   .qualityGrid,
   .qualitySummary,
   .historySummary,
@@ -935,6 +1612,16 @@ h3 {
 
   .topbar {
     align-items: start;
+    flex-direction: column;
+  }
+
+  .adminToolbar,
+  .adminOperatorRow {
+    grid-template-columns: 1fr;
+  }
+
+  .adminToolbar {
+    align-items: flex-start;
     flex-direction: column;
   }
 }

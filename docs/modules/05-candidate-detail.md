@@ -87,6 +87,7 @@
 
 - 复用候选人列表卡片中的候选人身份和 `profile` 解析逻辑。
 - 优先从详情 URL、dataset 或详情链接中提取 `geekId`、`resumeId`、`lid`、`securityId` 等稳定标识。
+- 详情页和 c-resume iframe 会同时读取当前详情 URL、详情容器、有限层级祖先、后代按钮/链接和 URL 属性中的身份 hint；如果真实稳定 ID 可见，优先使用稳定 ID，不退化为文本指纹。
 - 如果页面没有暴露稳定标识，则使用详情文本、详情 URL 和来源 URL 生成短指纹。
 - `profile.displayName` 支持从详情头部的“姓名 + 活跃状态 + 年龄/薪资”文本中解析。
 - 当详情头部不可读时，`profile.displayName` 也可以从左侧列表卡片匹配结果里继承。

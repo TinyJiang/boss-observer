@@ -16,6 +16,7 @@ const JOB_STATUS_KEYS = [
 ];
 
 export function buildJobContextSnapshot({ urls = [], datasets = [], jobNames = [] } = {}) {
+  const jobNameOnlyContext = buildJobNameOnlyContext(jobNames);
   const datasetContext = datasets
     .map((dataset) => extractJobContextFromDataset(dataset))
     .find((context) => context.jobId);
@@ -27,7 +28,7 @@ export function buildJobContextSnapshot({ urls = [], datasets = [], jobNames = [
     .map((url) => extractJobContextFromUrl(url))
     .find((context) => context.jobId) || null;
 
-  return urlContext ? withJobName(urlContext, jobNames) : null;
+  return urlContext ? withJobName(urlContext, jobNames) : jobNameOnlyContext;
 }
 
 export function extractJobContextFromUrl(href = "") {
@@ -70,15 +71,19 @@ export function extractJobContextFromDataset(dataset = {}) {
 }
 
 export function buildJobContextKey(jobContext) {
-  if (!jobContext?.jobId) {
+  if (!jobContext?.jobId && !jobContext?.jobName) {
     return "";
   }
 
-  const parts = [
-    jobContext.jobIdSource || "unknown",
-    jobContext.jobId,
-    jobContext.jobStatus || ""
-  ];
+  const parts = [];
+
+  if (jobContext.jobId) {
+    parts.push(
+      jobContext.jobIdSource || "unknown",
+      jobContext.jobId,
+      jobContext.jobStatus || ""
+    );
+  }
 
   if (jobContext.jobName) {
     parts.push(jobContext.jobNameSource || "unknown", jobContext.jobName);
@@ -119,6 +124,13 @@ export function extractJobNameFromPageTitle(pageTitle = "") {
 
 export function extractJobNameFromVisibleText(text = "", source = "dom.selected_job_title") {
   const normalized = normalizeWhitespace(text).replace(/[]/gu, "");
+  const labeledMatch = normalized.match(
+    /^(?:当前|沟通|招聘)?(?:职位|岗位)(?:名称)?[:：\-\s]+(.{2,80})$/u
+  );
+  if (labeledMatch) {
+    return buildJobNameCandidate(labeledMatch[1], source);
+  }
+
   const salaryMatch = normalized.match(
     /^(.{2,100}?\s+[_＿]\s+[^\s_＿]{1,20}\s+\d+(?:\.\d+)?\s*(?:[-~–—]\s*\d+(?:\.\d+)?)?\s*(?:[kK]|千|万|元)(?:\/(?:时|天|月|年|小时))?(?:\s*·\s*\d+薪)?)/u
   );
@@ -193,6 +205,18 @@ function withJobName(jobContext, jobNames) {
 
   return {
     ...jobContext,
+    jobName: candidate.value,
+    jobNameSource: candidate.source
+  };
+}
+
+function buildJobNameOnlyContext(jobNames) {
+  const candidate = findJobNameCandidate(jobNames);
+  if (!candidate) {
+    return null;
+  }
+
+  return {
     jobName: candidate.value,
     jobNameSource: candidate.source
   };

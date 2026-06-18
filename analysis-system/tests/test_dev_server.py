@@ -11,7 +11,7 @@ from unittest.mock import patch
 from boss_analysis.api import AnalysisQueryService
 from boss_analysis.dev_data import DevDataSourceInfo, create_dev_state
 from boss_analysis.domain import DailyBasicStatsRecord, LogQualitySummaryRecord
-from boss_analysis.dev_server import DevApp, INDEX_HTML, _decode_path_segment, load_env_files, make_handler
+from boss_analysis.dev_server import APP_JS, DevApp, INDEX_HTML, _decode_path_segment, load_env_files, make_handler
 
 
 def plugin_event(event_id):
@@ -79,6 +79,58 @@ class DevServerTests(unittest.TestCase):
     self.assertIn("daily_basic_summary_source", encoded)
     self.assertNotIn("redacted-in-facts", encoded)
 
+  def test_dev_app_daily_analysis_payload_is_json_safe(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      path = Path(tmpdir) / "daily-analysis-result.json"
+      path.write_text(json.dumps({
+        "status": "ready",
+        "analysis_date": "2026-06-15",
+        "generated_at": "2026-06-16T02:00:00+00:00",
+        "scope": {"operator_id": "op_demo", "display_name": "演示操作员"},
+        "sync_state": {"analysis_source": "offline_daily_analysis_result"},
+        "volatility_metrics": [],
+        "evidence_bundle": {
+          "operator_results": [],
+          "job_results": [],
+          "behavior_summaries": [],
+          "job_actions": [],
+        },
+        "model_analysis": {
+          "summary": "离线分析完成",
+          "generated_at": "2026-06-16T02:00:00+00:00",
+          "analyzer": "offline_codex_analysis",
+          "attributions": [{"confidence": "medium"}],
+          "questions_for_next_collection": [],
+        },
+        "data_quality": {
+          "missing_fields": [],
+          "unmatched_jobs": [],
+          "low_sample_warnings": [],
+        },
+        "errors": [],
+      }), encoding="utf-8")
+      app = DevApp(
+        data_source="empty",
+        use_demo_fallback=False,
+        daily_analysis_result_file=str(path),
+      )
+
+      payload = app.daily_analysis_payload(
+        active_date="2026-06-15",
+        operator_id="op_demo",
+      )
+    encoded = json.dumps(payload, ensure_ascii=False)
+
+    self.assertEqual(payload["analysis_date"], "2026-06-15")
+    self.assertEqual(payload["scope"]["operator_id"], "op_demo")
+    self.assertIn("volatility_metrics", payload)
+    self.assertIn("evidence_bundle", payload)
+    self.assertIn("model_analysis", payload)
+    self.assertIn("offline_daily_analysis_result", encoded)
+    self.assertNotIn("demo_official_result_rows", encoded)
+    self.assertNotIn('"contribution"', encoded)
+    self.assertIn('"confidence"', encoded)
+
   def test_http_handler_and_payloads_are_available_without_binding_socket(self):
     app = DevApp()
     handler_class = make_handler(app)
@@ -98,6 +150,88 @@ class DevServerTests(unittest.TestCase):
   def test_index_is_dashboard_not_landing_page(self):
     self.assertIn("Active operators", INDEX_HTML)
     self.assertIn("Operator detail", INDEX_HTML)
+
+  def test_legacy_ui_does_not_display_wechat_count(self):
+    self.assertNotIn("Wechat", INDEX_HTML)
+    self.assertNotIn("f-wechat", INDEX_HTML)
+    self.assertNotIn("Wechat captured", APP_JS)
+    self.assertNotIn("f-wechat", APP_JS)
+
+  def test_react_ui_does_not_display_wechat_count(self):
+    app_source = Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.tsx"
+    source = app_source.read_text(encoding="utf-8")
+
+    self.assertNotIn('"微信获取"', source)
+    self.assertNotIn('label: "微信"', source)
+    self.assertNotIn('FunnelCell label="微信"', source)
+    self.assertNotIn("<th>微信</th>", source)
+
+  def test_react_ui_hides_daily_analysis_from_main_nav_but_keeps_private_route(self):
+    app_source = Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.tsx"
+    source = app_source.read_text(encoding="utf-8")
+
+    self.assertIn('DAILY_ANALYSIS_PATH = "/daily-analysis"', source)
+    self.assertIn("isDailyAnalysisRoute", source)
+    self.assertIn(".endsWith(DAILY_ANALYSIS_PATH)", source)
+    self.assertIn("DailyAnalysisTab", source)
+    self.assertIn("日常分析", source)
+    self.assertNotIn('onClick={() => setActiveTab("dailyAnalysis")}', source)
+    self.assertNotIn('activeTab === "dailyAnalysis" ? "active" : ""', source)
+
+  def test_react_daily_analysis_uses_coaching_board_structure(self):
+    app_source = Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.tsx"
+    source = app_source.read_text(encoding="utf-8")
+
+    self.assertIn("DailyOverviewStrip", source)
+    self.assertIn("DailyCollectionAlert", source)
+    self.assertIn("DailyCoachingSummary", source)
+    self.assertIn("DailyReviewOperatorList", source)
+    self.assertIn("DailyPersonalDetailDrawer", source)
+    self.assertIn("DailyPersonalDetailPanel", source)
+    self.assertIn("dailyAnalysisReviewShell", source)
+    self.assertIn("dailyPersonalDrawer", source)
+    self.assertIn("整体概览", source)
+    self.assertIn("采集状态", source)
+    self.assertIn("今日团队判断", source)
+    self.assertIn("今日复盘对象", source)
+    self.assertIn("详情抽屉", source)
+    self.assertIn("关闭详情", source)
+    self.assertIn("个人详情分析", source)
+    self.assertIn("核心数据", source)
+    self.assertIn("波动归因", source)
+    self.assertIn("问题排查", source)
+    self.assertIn("辅导建议", source)
+    self.assertIn("数据波动", source)
+    self.assertIn("优化建议", source)
+    self.assertIn("严重程度", source)
+    self.assertNotIn("DailyProofSections", source)
+    self.assertNotIn("DailyVolatilityPanel", source)
+    self.assertNotIn("DailyModelPanel", source)
+    self.assertNotIn("DailyEvidencePanel", source)
+    self.assertNotIn("<h2>数据证明</h2>", source)
+    self.assertNotIn("<h2>漏斗证明</h2>", source)
+    self.assertNotIn("<h2>辅导分析</h2>", source)
+    self.assertNotIn("<h2>证据包</h2>", source)
+    self.assertNotIn("DailyCoachingFocusList", source)
+    self.assertNotIn("DailyTacticalActions", source)
+    self.assertNotIn("<h2>今日辅导重点</h2>", source)
+    self.assertNotIn("<h2>今日战术建议</h2>", source)
+    self.assertNotIn("<h2>建议复盘对象</h2>", source)
+    self.assertNotIn("<h2>模型归因分析</h2>", source)
+    self.assertNotIn("<h2>波动概览</h2>", source)
+
+  def test_daily_personal_drawer_advice_rows_are_horizontal(self):
+    styles_path = Path(__file__).resolve().parents[1] / "frontend" / "src" / "styles.css"
+    styles = styles_path.read_text(encoding="utf-8")
+
+    self.assertRegex(
+      styles,
+      r"\.dailyPersonalDrawer\s+\.dailyPersonalAdviceRows\s*\{[^}]*grid-template-columns:\s*1fr;"
+    )
+    self.assertRegex(
+      styles,
+      r"\.dailyPersonalAdviceRows\s+article\s*\{[^}]*grid-template-columns:\s*28px\s+minmax\(0,\s*1fr\);"
+    )
 
   def test_require_real_data_rejects_demo_fallback(self):
     with self.assertRaisesRegex(ValueError, "Real data is required"):
@@ -194,6 +328,95 @@ class DevServerTests(unittest.TestCase):
     self.assertEqual(first["operators"][0]["display_name"], "Operator One")
     self.assertEqual(second["operators"][0]["display_name"], "Operator One+")
     self.assertEqual(second["operators"][1]["operator_id"], "op_002")
+
+  def test_operator_admin_login_requires_env_password(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      path = Path(tmpdir) / "operators.json"
+      with patch.dict(os.environ, {
+        "BOSS_ANALYSIS_OPERATOR_ADMIN_PASSWORD": "local-pass",
+      }, clear=False):
+        app = DevApp(
+          data_source="empty",
+          use_demo_fallback=False,
+          operator_config_file=str(path),
+        )
+
+        failed = app.operator_admin_login("wrong")
+        succeeded = app.operator_admin_login("local-pass")
+
+    self.assertFalse(failed["authenticated"])
+    self.assertNotIn("token", failed)
+    self.assertTrue(succeeded["authenticated"])
+    self.assertTrue(succeeded["token"])
+
+  def test_operator_admin_crud_requires_valid_token_and_writes_config(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      path = Path(tmpdir) / "operators.json"
+      with patch.dict(os.environ, {
+        "BOSS_ANALYSIS_OPERATOR_ADMIN_PASSWORD": "local-pass",
+      }, clear=False):
+        app = DevApp(
+          data_source="empty",
+          use_demo_fallback=False,
+          operator_config_file=str(path),
+        )
+        token = app.operator_admin_login("local-pass")["token"]
+
+        with self.assertRaisesRegex(PermissionError, "valid admin token"):
+          app.operator_admin_upsert({"operatorId": "op_denied"}, token="bad-token")
+
+        created = app.operator_admin_upsert({
+          "operatorId": "op_001",
+          "displayName": "Operator One",
+          "accountName": "谢女士",
+          "enabled": True,
+        }, token=token)
+        updated = app.operator_admin_upsert({
+          "operatorId": "op_001",
+          "displayName": "Operator One+",
+          "accountName": "谢女士",
+          "enabled": False,
+          "role": "招聘操作员",
+        }, token=token)
+        listed = app.operator_admin_payload(token=token)
+        deleted = app.operator_admin_delete("op_001", token=token)
+        raw_after_delete = json.loads(path.read_text(encoding="utf-8"))
+
+    self.assertEqual(created["operator"]["display_name"], "Operator One")
+    self.assertEqual(updated["operator"]["display_name"], "Operator One+")
+    self.assertFalse(updated["operator"]["enabled"])
+    self.assertEqual(listed["operators"][0]["operator_id"], "op_001")
+    self.assertTrue(deleted["deleted"])
+    self.assertEqual(raw_after_delete["operators"], [])
+
+  def test_operator_admin_encrypts_sensitive_fields_when_enabled(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      path = Path(tmpdir) / "operators.json"
+      with patch.dict(os.environ, {
+        "BOSS_ANALYSIS_OPERATOR_ADMIN_PASSWORD": "local-pass",
+        "BOSS_ANALYSIS_OPERATOR_CONFIG_SECRET": "local-encryption-secret",
+      }, clear=False):
+        app = DevApp(
+          data_source="empty",
+          use_demo_fallback=False,
+          operator_config_file=str(path),
+        )
+        token = app.operator_admin_login("local-pass")["token"]
+
+        saved = app.operator_admin_upsert({
+          "operatorId": "op_001",
+          "displayName": "Operator One",
+          "accountName": "谢女士",
+          "note": "本地备注",
+        }, token=token, encrypt_sensitive=True)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        listed = app.operator_admin_payload(token=token)
+
+    self.assertTrue(saved["encryption_enabled"])
+    self.assertEqual(listed["operators"][0]["account_name"], "谢女士")
+    self.assertEqual(listed["operators"][0]["note"], "本地备注")
+    self.assertTrue(raw["operators"][0]["accountName"].startswith("enc:v1:"))
+    self.assertTrue(raw["operators"][0]["note"].startswith("enc:v1:"))
 
   def test_dev_app_log_quality_payload_filters_query_conditions(self):
     app = DevApp(data_source="empty", use_demo_fallback=False)
@@ -315,6 +538,30 @@ class DevServerTests(unittest.TestCase):
     self.assertEqual(payload["history"]["status"], "ok")
     self.assertEqual(payload["history"]["record_count"], 1)
     self.assertEqual(payload["history"]["records"][0]["active_minutes"], 50)
+
+  def test_dev_app_history_payload_includes_chat_reply_defaults(self):
+    app = DevApp(data_source="empty", use_demo_fallback=False)
+    app._daily_basic_summaries = (
+      DailyBasicStatsRecord(
+        metric_name="boss_daily_operator_basic_stats",
+        active_date=datetime(2026, 5, 23, tzinfo=timezone.utc).date(),
+        operator_id="op_real",
+        active_minutes=50,
+      ),
+    )
+    app.query_service = app._build_query_service()
+
+    payload = app.history_payload(
+      operator_id="op_real",
+      active_date="2026-05-23",
+    )
+
+    record = payload["history"]["records"][0]
+    self.assertEqual(record["first_round_candidate_initiated_count"], 0)
+    self.assertEqual(record["first_round_boss_replied_count"], 0)
+    self.assertEqual(record["chat_conversation_count"], 0)
+    self.assertEqual(record["boss_ended_conversation_count"], 0)
+    self.assertEqual(record["boss_reply_count"], 0)
 
   def test_dev_app_history_payload_refreshes_daily_basic_log_topic_for_filters(self):
     app = DevApp(data_source="empty", use_demo_fallback=False)

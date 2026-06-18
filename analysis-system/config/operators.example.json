@@ -4,6 +4,9 @@
       "operatorId": "zhouxinyu",
       "displayName": "周心语",
       "accountName": "谢女士",
+      "aliases": [
+        "周心语"
+      ],
       "enabled": true,
       "role": "招聘操作员"
     },

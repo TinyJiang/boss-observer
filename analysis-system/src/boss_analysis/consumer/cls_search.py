@@ -338,6 +338,17 @@ def iter_log_values_from_search_response(response: Mapping[str, Any]) -> Iterabl
     return
   _raise_cls_error(body, "SearchLog")
 
+  analysis_records = body.get("AnalysisRecords") or []
+  if isinstance(analysis_records, list):
+    for item in analysis_records:
+      if isinstance(item, Mapping):
+        yield dict(item)
+        continue
+      if isinstance(item, str) and item.strip():
+        decoded = _decode_json_object(item)
+        if decoded is not None:
+          yield decoded
+
   results = body.get("Results") or []
   if not isinstance(results, list):
     return

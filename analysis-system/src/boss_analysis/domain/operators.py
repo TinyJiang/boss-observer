@@ -15,3 +15,4 @@ class OperatorProfile:
   enabled: bool = True
   role: str | None = None
   note: str | None = None
+  aliases: tuple[str, ...] = ()

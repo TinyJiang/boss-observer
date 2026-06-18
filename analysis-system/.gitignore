@@ -10,6 +10,8 @@ __pycache__/
 .ruff_cache/
 .npm-cache/
 .dev/
+.superpowers/
+data/daily-analysis-results/
 dist/
 build/
 *.egg-info/

@@ -5161,3 +5161,174 @@
   - 不使用 CDP/DevTools/远程调试方式读取 BOSS 页面
 - 验证计划：为每个行为变化补充 `node:test` 单测；运行相关测试，若跨模块改动较多则运行 `npm test`；运行 `git diff --check`；最终记录修复点、验证命令和残余风险。
 - 当前状态：已阅读最新工作日志、`git status --short`、相关文件 diff、概要设计和 package 脚本；准备继续阅读相关模块文档和源码后小步修复。
+
+#### 阶段记录：完成采集端问题定位
+
+- 时间：2026-05-26 21:08 CST
+- 状态：实现中
+- 已完成：阅读候选人卡片、列表、详情、打招呼、职位上下文、筛选、本地队列和上传链路源码及相关测试；确认本轮已有工作区改动主要来自上一轮职位名/列表事件调整，后续不回滚。
+- 定位结论：
+  - 候选人 ID：`resolveCandidateId()` 只吃显式 dataset key 和 `a[href]`；列表、详情、打招呼只收很窄的祖先 dataset/链接，容易漏掉按钮、后代节点、iframe/src、data-url/data-href、snake_case 属性里的 `geekId/resumeId/lid/securityId/encryptGeekId`。
+  - beihai 职位名：当前 `JobContextProbe` 必须先有 `jobId` 才会保存上下文；若 city/beihai 路径只暴露可见职位名或职位菜单名、暂时没有 URL/dataset jobId，则后续候选人事件不会带 `jobName`。
+  - 重复 event_id：`flushQueue()` 在 CLS HTTP 成功后先更新聊天水位再删队列，若成功后的本地副作用失败，会导致同一队列项重试；队列也没有按已确认 event id 清理重复记录的能力。
+  - 筛选关联：`applied` 只关联已点击记录到的最近 `panel_opened`，如果打开动作漏采但确认时能看到筛选面板，就会缺 `openedEventId`；同一 DOM 点击短时间重复触发也没有幂等窗口。
+  - 打招呼结果：成功/失败信号覆盖偏窄，未识别按钮变为“继续沟通/立即沟通/沟通中”等成功态，也缺少未确认点击的 debug 诊断信号。
+- 改动文件：仅 `docs/ai-worklog.md`。
+- 当前验证结果：尚未改代码，未运行测试。
+- 中断续写入口：从 `candidate-card.js` 增加候选人身份 DOM hint 收集开始，再依次接入列表/详情/打招呼；随后处理 jobName-only、队列 ACK、筛选关联和打招呼结果识别。
+
+#### 阶段记录：采集端修复实现完成并通过相关测试
+
+- 时间：2026-05-26 21:23 CST
+- 状态：待全量验证
+- 已完成：
+  - 候选人身份：新增候选人 ID DOM hint 读取，列表、详情、打招呼共用同一套 `geekId/resumeId/lid/securityId/encryptGeekId` 解析；来源覆盖 dataset alias、有限祖先/后代节点、`href/src/data-url/data-href` 等 URL 属性，仍保留 `text_fingerprint` 兜底。
+  - 职位上下文：支持只有 `jobName/jobNameSource`、暂时没有 `jobId` 的上下文，覆盖 city/beihai 这类可能只暴露可见职位标题的路径；后续读到稳定 `jobId` 时仍会更新上下文。
+  - 队列上传：CLS/HTTP 上传成功后先按队列记录和 `event.id` 删除已确认记录，再更新聊天水位/debug 状态；同一批中重复 `event.id` 上传前会去重，确认成功时会清理队列里同 ID 重复记录。
+  - 筛选：确认动作能看到筛选面板但缺少最近打开事件时，先补 `source: "inferred_from_apply"` 的 panel_opened 并关联；同一列表、同一 openedEventId、同一筛选摘要 1 秒内重复触发会幂等，真实间隔重复点击仍记录。
+  - 打招呼：成功态识别补充“招呼已发送/送达、继续沟通、立即沟通、去沟通、沟通中、发消息”等按钮/提示文案，失败态补充“无法打招呼、招呼次数不足、服务异常”等提示；超时仍不误写 failed。
+  - 同步更新根项目相关模块文档和日志契约文档；未修改 `analysis-system/` 或 `strategy/`。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/02-job-context.md`
+  - `docs/modules/03-filter.md`
+  - `docs/modules/04-candidate-list.md`
+  - `docs/modules/05-candidate-detail.md`
+  - `docs/modules/06-greeting.md`
+  - `docs/modules/08-local-queue-upload.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/candidate-card.js`
+  - `extension/src/content/candidate-list-probe.js`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `extension/src/content/greeting-probe.js`
+  - `extension/src/content/job-context.js`
+  - `extension/src/content/job-context-probe.js`
+  - `extension/src/content/filter-probe.js`
+  - `extension/src/shared/storage-queue.js`
+  - `test/candidate-card.test.js`
+  - `test/candidate-list-probe.test.js`
+  - `test/candidate-detail-probe.test.js`
+  - `test/greeting-probe.test.js`
+  - `test/job-context.test.js`
+  - `test/filter-probe.test.js`
+  - `test/storage-queue.test.js`
+- 当前验证结果：
+  - `node --check` 已通过：`candidate-card.js`、`candidate-list-probe.js`、`candidate-detail-probe.js`、`greeting-probe.js`、`job-context.js`、`job-context-probe.js`、`filter-probe.js`、`service-worker.js`、`storage-queue.js`。
+  - `node --test test/candidate-card.test.js test/candidate-list-probe.test.js test/candidate-detail-probe.test.js test/greeting-probe.test.js` 通过，75 tests。
+  - `node --test test/job-context.test.js test/filter-probe.test.js test/storage-queue.test.js test/upload-policy.test.js test/cls-log-format.test.js` 通过，39 tests。
+- 中断续写入口：继续运行全量 `npm test` 和 `git diff --check`；如失败，优先检查新增 helper 对既有 fake DOM 测试夹具的影响。
+
+#### 完成记录：非聊天方向 raw 日志质量修复完成
+
+- 时间：2026-05-26 21:27 CST
+- 状态：已完成
+- 已完成：完成候选人稳定 ID、beihai/jobName-only 职位上下文、队列 ACK 去重、筛选关联/短窗口幂等、打招呼结果覆盖的采集端修复；同步根项目模块文档和日志契约；全程未修改 `analysis-system/` 或 `strategy/`，未使用 CDP/DevTools/远程调试读取 BOSS 页面。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `docs/modules/02-job-context.md`
+  - `docs/modules/03-filter.md`
+  - `docs/modules/04-candidate-list.md`
+  - `docs/modules/05-candidate-detail.md`
+  - `docs/modules/06-greeting.md`
+  - `docs/modules/08-local-queue-upload.md`
+  - `docs/modules/12-log-specification.md`
+  - `extension/src/background/service-worker.js`
+  - `extension/src/content/candidate-card.js`
+  - `extension/src/content/candidate-list-probe.js`
+  - `extension/src/content/candidate-detail-probe.js`
+  - `extension/src/content/greeting-probe.js`
+  - `extension/src/content/job-context.js`
+  - `extension/src/content/job-context-probe.js`
+  - `extension/src/content/filter-probe.js`
+  - `extension/src/shared/storage-queue.js`
+  - `test/candidate-card.test.js`
+  - `test/candidate-list-probe.test.js`
+  - `test/candidate-detail-probe.test.js`
+  - `test/greeting-probe.test.js`
+  - `test/job-context.test.js`
+  - `test/filter-probe.test.js`
+  - `test/storage-queue.test.js`
+- 验证结果：
+  - `node --check extension/src/content/candidate-card.js`
+  - `node --check extension/src/content/candidate-list-probe.js`
+  - `node --check extension/src/content/candidate-detail-probe.js`
+  - `node --check extension/src/content/greeting-probe.js`
+  - `node --check extension/src/content/job-context.js`
+  - `node --check extension/src/content/job-context-probe.js`
+  - `node --check extension/src/content/filter-probe.js`
+  - `node --check extension/src/background/service-worker.js`
+  - `node --check extension/src/shared/storage-queue.js`
+  - `node --test test/candidate-card.test.js test/candidate-list-probe.test.js test/candidate-detail-probe.test.js test/greeting-probe.test.js` 通过，75 tests。
+  - `node --test test/job-context.test.js test/filter-probe.test.js test/storage-queue.test.js test/upload-policy.test.js test/cls-log-format.test.js` 通过，39 tests。
+  - `npm test` 通过，223 tests。
+  - `git diff --check` 通过。
+- 残余风险：
+  - 候选人真实稳定 ID 是否能覆盖主要 BOSS DOM 变体仍需重载插件后用新 raw CLS 抽样验证；如果 BOSS 把 ID 放在非 URL 的加密脚本状态里，本轮不会解析。
+  - CLS 匿名上传如果服务端已写入但浏览器 fetch 仍报失败，仍可能产生 at-least-once 重试；后端必须继续按 `event_id` 幂等。
+  - 打招呼成功/失败文案仍依赖可见按钮/提示，未观察到结果时仍不会误记为 failed。
+- 中断续写入口：重载插件后抓 2026-05-26 21:27 之后的新 raw 样本，优先看 candidate `stableIdSource` 是否从 `text_fingerprint` 转为 `dataset.*`/`url.*`，beihai 路径 `context.jobContext.jobName` 是否非空，filter applied 是否有 `openedEventId`，以及 greeting clicked 后结果覆盖率是否提升。
+
+### 任务：打最新 Chrome 插件包
+
+- 时间：2026-05-27 18:30 CST
+- 执行者：Codex
+- 任务目标：按用户要求基于当前工作区生成最新可安装的 BOSS Observer Chrome 插件 zip 包。
+- 当前理解：上一轮采集端修复已完成并通过全量测试；当前工作区仍有未提交插件代码/文档改动和独立 `strategy/` 改动。本次只负责验证并重新运行现有打包脚本，包内容应来自 `extension/` 目录，版本号继续使用 `extension/manifest.json`。
+- 计划修改文件：`docs/ai-worklog.md`；`dist/` 下新增一个当前版本的时间戳 zip 打包产物。
+- 不修改范围：不修改插件源码、不修改 `analysis-system/`、不修改 `strategy/`、不清理旧打包产物、不操作真实 BOSS 页面、不新增事件或采集逻辑。
+- 验证计划：运行 `npm test`、`git diff --check`、`npm run build`；用 `unzip -t` 检查 zip 完整性，并抽查 zip 内容包含运行时文件、不包含根目录 `docs/`、`test/`、`node_modules/`。
+- 当前状态：已阅读最新工作日志、`git status --short`、概要设计、`package.json` 和打包脚本；准备执行验证与构建。
+
+### 任务：升级版本到 0.1.13 并打包
+
+- 时间：2026-05-27 18:31 CST
+- 执行者：Codex
+- 任务目标：按用户最新要求将插件版本升级到 `0.1.13`，并生成当前版本的 Chrome 插件 zip 包。
+- 当前理解：上一条“打最新包”任务在验证命令刚启动时被用户中断，尚未完成打包；本任务取代该目标。构建脚本以 `extension/manifest.json` 版本作为 zip 包名来源，同时 `package.json` 应保持同步，避免打包时出现版本不一致警告。
+- 计划修改文件：
+  - `docs/ai-worklog.md`
+  - `package.json`
+  - `extension/manifest.json`
+  - `dist/` 下新增 `0.1.13` 打包产物
+- 不修改范围：不修改插件采集逻辑、不修改 `analysis-system/`、不修改 `strategy/`、不清理旧打包产物、不操作真实 BOSS 页面。
+- 验证计划：运行 `npm test`、`git diff --check`、`npm run build`；用 `unzip -t` 检查 zip 完整性，确认 zip 内 `manifest.json` 版本为 `0.1.13`，并抽查包内容不包含根目录 `docs/`、`test/`、`node_modules/`。
+- 当前状态：已确认当前版本为 `0.1.2`，无残留测试/打包进程；准备同步版本号。
+
+#### 阶段记录：版本号已同步并通过打包前验证
+
+- 时间：2026-05-27 18:31 CST
+- 状态：待打包
+- 已完成：同步将 `package.json` 和 `extension/manifest.json` 版本号从 `0.1.2` 升级到 `0.1.13`；确认没有残留 `npm test`、`node --test`、`build-extension` 或 `zip` 进程。
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `package.json`
+  - `extension/manifest.json`
+- 当前验证结果：
+  - `npm test` 通过，223 tests。
+  - `git diff --check` 通过。
+  - `node --check scripts/build-extension.js` 通过。
+- 中断续写入口：继续运行 `npm run build`，再用 `unzip -t` 和 `unzip -p/-l` 校验 `0.1.13` zip 包。
+
+#### 完成记录：0.1.13 打包完成
+
+- 时间：2026-05-27 18:33 CST
+- 状态：已完成
+- 已完成：同步将 `package.json` 和 `extension/manifest.json` 版本升级为 `0.1.13`；运行现有打包脚本生成 Chrome 插件 zip 包。
+- 生成产物：
+  - `dist/boss-observer-0.1.13.zip`
+- 改动文件：
+  - `docs/ai-worklog.md`
+  - `package.json`
+  - `extension/manifest.json`
+  - `dist/boss-observer-0.1.13.zip`
+- 验证结果：
+  - `npm test` 通过，223 tests。
+  - `git diff --check` 通过。
+  - `node --check scripts/build-extension.js` 通过。
+  - `npm run build` 成功，生成 `dist/boss-observer-0.1.13.zip`。
+  - `unzip -t dist/boss-observer-0.1.13.zip` 通过，`No errors detected`。
+  - `unzip -p dist/boss-observer-0.1.13.zip manifest.json` 确认 `"version": "0.1.13"`。
+  - `unzip -l dist/boss-observer-0.1.13.zip` 已检查包内容，包含 `manifest.json`、`debug/`、`debug-raw/`、`src/background/`、`src/content/`、`src/shared/`，不包含根目录 `docs/`、`test/`、`node_modules/`。
+- 风险/阻塞：本次产物是 Chrome 扩展 zip，不是签名 `.crx`；需要在 Chrome 扩展管理页安装/重新加载 `0.1.13` 包后才会生效。工作区仍保留本轮之前已有的 `strategy/` 未提交改动，本任务未修改 `analysis-system/` 或 `strategy/`。
+- 中断续写入口：如需发布或提交，下一步检查 `git status --short`，确认是否连同当前插件改动和新 zip 一起提交；注意不要混入独立 `strategy/` 改动。

@@ -67,6 +67,39 @@ test("candidate list probe records card clicks as recent card interactions", () 
   assert.equal(recent?.cardId, association?.cardId);
 });
 
+test("candidate list probe reads stable id from descendant action dataset", () => {
+  const button = createElement({
+    tagName: "BUTTON",
+    text: "打招呼",
+    dataset: {
+      securityId: "sec-1"
+    }
+  });
+  const card = createElement({
+    text: [
+      "吴先生 刚刚活跃",
+      "7-8K",
+      "28岁 7年 高中 离职-随时到岗",
+      "期望 杭州 直播运营",
+      "打招呼"
+    ].join("\n"),
+    children: [button]
+  });
+  const document = createCandidateListDocument({ card, button }).document;
+  globalThis.document = document;
+  const collector = createCollector();
+  const probe = new CandidateListProbe({
+    collector,
+    sessionContext: createSessionContext("https://www.zhipin.com/web/chat/recommend"),
+    now: () => 1000
+  });
+
+  probe.scan("poll");
+
+  assert.equal(collector.events[0].payload.candidate.stableId, "sec-1");
+  assert.equal(collector.events[0].payload.candidate.stableIdSource, "dataset.securityId");
+});
+
 function createCollector() {
   return {
     events: [],
@@ -88,12 +121,12 @@ function createSessionContext(url) {
   };
 }
 
-function createCandidateListDocument() {
-  const button = createElement({
+function createCandidateListDocument(options = {}) {
+  const button = options.button || createElement({
     tagName: "BUTTON",
     text: "打招呼"
   });
-  const card = createElement({
+  const card = options.card || createElement({
     text: [
       "吴先生 刚刚活跃",
       "7-8K",
@@ -169,10 +202,13 @@ function createElement({
       };
     },
     querySelectorAll(selector) {
-      if (selector !== "a[href]") {
-        return [];
+      if (selector === "*") {
+        return collectDescendants(this);
       }
-      return collectDescendants(this).filter((candidate) => candidate.href);
+      if (selector === "a[href]") {
+        return collectDescendants(this).filter((candidate) => candidate.href);
+      }
+      return [];
     }
   };
 

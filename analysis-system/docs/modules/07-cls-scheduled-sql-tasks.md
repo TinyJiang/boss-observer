@@ -12,6 +12,7 @@
 | 4 | `boss_10min_log_quality` | 原始事实日志主题，例如 `boss` | `boss_health_10min_prod` | 10 分钟 | `@m-12m,@m-2m` | 10 分钟日志质量报告 |
 | 5 | `boss_daily_operator_basic_stats` | 原始事实日志主题，例如 `boss` | `boss_summary_daily_basic_prod` | 按需，建议 5 分钟或日终 | `@d,@m-1m` 或 `@d-1d,@d` | 操作员日级基础统计 |
 | 6 | `boss_daily_operator_chat_reply_stats` | 原始事实日志主题，例如 `boss` | `boss_summary_daily_basic_prod` | 跟随任务 5 | `@d,@m-1m` 或 `@d-1d,@d` | 操作员日级聊天回复分析 |
+| 7 | `boss_daily_operator_wechat_marker_stats` | 原始事实日志主题，例如 `boss` | `boss_summary_daily_basic_prod` | 跟随任务 5，建议延后于任务 5 写入 | `@d,@m-1m` 或 `@d-1d,@d` | 操作员日级微信交换标记统计 |
 
 说明：
 
@@ -145,7 +146,7 @@ CLS_DAILY_SUMMARY_WINDOW_MINUTES=today
 
 用途：
 
-- 承载 `boss_daily_operator_basic_stats` 输出。
+- 承载 `boss_daily_operator_basic_stats`、`boss_daily_operator_chat_reply_stats` 和 `boss_daily_operator_wechat_marker_stats` 输出。
 - 供 analysis-system《历史数据》页面和 `/api/history` 读取 raw CLS 直接计算的操作员日级基础统计；该页面不从分钟汇总累加 fallback。
 - 当前本地实现按 CLS 指标 topic 读取，使用 `QueryRangeMetric` 一次性查询 `metric_name="boss_daily_operator_basic_stats"` 的指标样本，并按 `active_date + operator_id` 组装历史记录。若后续把任务改写到普通日志 topic，可设置 `CLS_DAILY_BASIC_SUMMARY_SOURCE=log` 切换到 `SearchLog` 读取。
 
@@ -173,6 +174,8 @@ CLS_DAILY_BASIC_SUMMARY_WINDOW_MINUTES=today
 | `boss_reply_count` | long | 全部候选人发言轮次后 BOSS 下一轮回复的次数 |
 | `boss_reply_elapsed_median_ms` | long | 全轮 BOSS 回复间隔中位数，单位毫秒 |
 | `boss_reply_elapsed_avg_ms` | long | 全轮 BOSS 回复间隔平均值，单位毫秒 |
+| `wechat_captured` | long | 微信采集事件数或快照微信交换标记命中数 |
+| `wechat_unique_candidates` | long | 去重后的微信交换候选人数，历史页优先展示该字段 |
 
 ### 10 分钟健康 Topic：`boss_health_10min_prod`
 
@@ -714,9 +717,10 @@ limit 10000
 - 目标主题：`boss_summary_daily_basic_prod`，与任务 5 相同。
 - 调度周期：跟随任务 5。
 - SQL 时间窗口：当天快照用 `@d,@m-1m`；补昨天整天用 `@d-1d,@d`。
-- 输出时间戳：CLS 默认。
+- 输出时间戳：当天快照可用 CLS 默认；历史补数写入 metric topic 时，控制台 Time Stamp 需选择“查询时间窗口右侧时间”或等价的自定义时间戳，避免样本落在过早时间点后未能写入/读取。
 - 输出 `metric_name` 固定为 `boss_daily_operator_basic_stats`，用于让 analysis-system 的日级基础统计 reader 把这些字段拼到同一条历史记录中。
 - 该 SQL 长度低于 CLS `12000` 字符限制，且不使用 `with` CTE；不要再拼回任务 5。
+- 2026-06-02 只读验证确认，2026-06-01 raw 快照已包含 `candidate/recruiter` 方向，该 SQL 可产出非零结果；如果历史页三列仍为空，优先检查此任务是否已创建、启用并写入 `boss_summary_daily_basic_prod`。
 
 SQL：
 
@@ -839,6 +843,130 @@ from (
 group by d, op
 limit 10000
 ```
+
+## 任务 7：`boss_daily_operator_wechat_marker_stats`
+
+配置：
+
+- 源主题：原始事实日志主题，例如 `boss`。
+- 目标主题：`boss_summary_daily_basic_prod`，与任务 5 相同。
+- 调度周期：跟随任务 5，建议延后于任务 5 写入，避免旧任务 5 的 `wechat_captured` 样本覆盖本任务更完整的微信口径。
+- SQL 时间窗口：当天快照用 `@d,@m-1m`；补昨天整天用 `@d-1d,@d`。
+- 输出时间戳：当天快照可用 CLS 默认；历史补数写入 metric topic 时，控制台 Time Stamp 需选择“查询时间窗口右侧时间”或等价的自定义时间戳，避免样本落在过早时间点后未能写入/读取。
+- 输出 `metric_name` 固定为 `boss_daily_operator_basic_stats`，只写入 `wechat_captured` 和 `wechat_unique_candidates` 两个字段。
+- 该 SQL 使用与 `FactProjector` 测试一致的严格标记：类似“微信号:”的明确交换成功上下文；不输出聊天正文或具体账号。
+- 2026-06-02 只读验证确认，2026-06-01 raw 中没有 `candidate_chat.wechat_captured` 事件，但 `zhouxinyu` 的聊天快照按该口径可算出 `wechat_captured = 3`、`wechat_unique_candidates = 2`。
+
+SQL：
+
+```sql
+* |
+select
+  'boss_daily_operator_basic_stats' metric_name,
+  substr(cast(d as varchar), 1, 10) active_date,
+  op operator_id,
+  count(*) wechat_captured,
+  count(distinct ck) wechat_unique_candidates
+from (
+  select
+    histogram(__TIMESTAMP__, interval 1 day) d,
+    case when operator_id is null or operator_id = '' then '<missing>' else cast(operator_id as varchar) end op,
+    coalesce(
+      nullif(try(json_extract_scalar(payload_json, '$.candidate.candidateId')), ''),
+      nullif(try(json_extract_scalar(payload_json, '$.candidate.stableId')), ''),
+      nullif(try(json_extract_scalar(payload_json, '$.candidate.exposureKey')), '')
+    ) ck
+  where event_type in ('candidate_chat.wechat_captured', 'candidate_chat.snapshot_captured')
+    and (
+      event_type = 'candidate_chat.wechat_captured'
+      or regexp_like(
+        cast(coalesce(payload_json, '') as varchar),
+        '([^[:space:]，。,:：]{1,30}的)?微信号[[:space:]]*[:：]'
+      )
+    )
+)
+where d is not null
+  and lower(op) not in ('', '<missing>', 'missing', '__missing__', 'null', 'none')
+group by d, op
+limit 10000
+```
+
+### 任务 6/7 部署辅助工具
+
+analysis-system 提供 dry-run 默认的本地工具，用于生成、比对并在具备权限时创建或修改任务 6/7：
+
+```bash
+PYTHONPATH=src python3 -m boss_analysis.ops.daily_history_tasks
+```
+
+行为：
+
+- 默认读取 `.env` / `.env.local` 中的腾讯云凭据、`CLS_DAILY_BASIC_SUMMARY_TOPIC_ID` 和地域配置。
+- 如果没有显式传 `--src-topic-id`，会按 `--src-topic-name boss` 只读解析原始事实 topic id。
+- 默认会调用 `DescribeScheduledSqlInfo` 判断任务是 `create`、`modify` 还是 `unchanged`；当前凭据没有该权限时，会退回到只打印 create payload。
+- 输出 JSON 的每个 plan item 都带 `warnings` 数组。任务 6/7 当前写入 CLS metric topic，且使用日级窗口；如果云端任务创建成功但目标 topic 没有产生 metric samples，应优先按 warning 检查 metric topic 长窗口写入限制，必要时改为写日志 topic 或收窄调度窗口后再验证。
+- 不带 `--apply` 时不会修改云端；具备 `cls:DescribeScheduledSqlInfo`、`cls:CreateScheduledSql`、`cls:ModifyScheduledSql` 权限后，再加 `--apply` 执行真实创建/修改。
+- 需要只生成 payload、跳过任务列表权限检查时，可运行：
+
+```bash
+PYTHONPATH=src python3 -m boss_analysis.ops.daily_history_tasks --skip-existing-check
+```
+
+如果目标是跟随当前云端 `boss_daily_operator_basic_stats2` 的历史页节奏，只补“昨天整天”的日级记录，可显式使用 1440 分钟调度和昨天窗口：
+
+```bash
+PYTHONPATH=src python3 -m boss_analysis.ops.daily_history_tasks \
+  --process-period-minutes 1440 \
+  --process-window @d-1d,@d \
+  --skip-existing-check
+```
+
+当前凭据缺少 `cls:DescribeScheduledSqlInfo` 时，不能通过 API 自动判断是否已有同名任务；只有在控制台确认 `boss_daily_operator_chat_reply_stats` 和 `boss_daily_operator_wechat_marker_stats` 不存在后，才可把上面的命令追加 `--apply` 直接创建。
+
+申请云端执行权限或交给有权限的人执行前，可以打印无副作用的权限与执行包。该命令只输出 JSON，不创建或修改云端资源：
+
+```bash
+PYTHONPATH=src python3 -m boss_analysis.ops.daily_history_tasks \
+  --process-period-minutes 1440 \
+  --process-window @d-1d,@d \
+  --backfill-active-date 2026-06-01 \
+  --print-iam-policy
+```
+
+输出包含源/目标 topic、所需 CAM actions、宽松资源策略模板、执行命令、验收命令和 metric topic 日级窗口风险。当前恢复 2026-06-01 历史页四列至少需要 `cls:DescribeTopics`、`cls:DescribeScheduledSqlInfo`、`cls:CreateScheduledSql`、`cls:ModifyScheduledSql`；本地一次性验收还需要 `cls:SearchLog` 和 `cls:QueryRangeMetric`。
+
+执行前和执行后都可以跑只读 preflight。该命令会尝试读取现有定时 SQL 任务、生成部署 plan，并用任务 6/7 SQL 对指定日期做 raw 期望值与目标 metric topic 实际值对比；不会创建或修改云端资源。输出 `status = ok` 才表示指定日期已经可以被历史页读到正确指标：
+
+```bash
+PYTHONPATH=src python3 -m boss_analysis.ops.daily_history_tasks \
+  --process-period-minutes 1440 \
+  --process-window @d-1d,@d \
+  --preflight-active-date 2026-06-01
+```
+
+当前凭据缺少 `cls:DescribeScheduledSqlInfo` 时，preflight 会输出 `status = permission_missing`，并在 `deployment_plan_assumption` 中标明“现有任务状态未知，只展示假定 create plan”；此时仍不能证明任务 6/7 已部署。
+
+要把指定历史日期补写进日级指标 topic，可先生成一次性回填任务 payload。该模式使用 `ProcessType=2`、`ProcessTimeWindow=@d-1d,@d`，调度时间落在目标日期次日 00:05 左右；仍然不带 `--apply` 时只打印 payload。通过控制台创建/编辑补数任务时，Time Stamp 不要保留默认“查询时间窗口左侧时间”，应改为“查询时间窗口右侧时间”；腾讯云文档说明 metric 默认时间戳为查询窗口左侧，也支持选择 SQL 中的自定义时间戳字段：
+
+```bash
+PYTHONPATH=src python3 -m boss_analysis.ops.daily_history_tasks --backfill-active-date 2026-06-01
+```
+
+确认资源和风险后，再加 `--apply` 创建回填任务：
+
+```bash
+PYTHONPATH=src python3 -m boss_analysis.ops.daily_history_tasks --backfill-active-date 2026-06-01 --apply
+```
+
+创建后重新查询 `CLS_DAILY_BASIC_SUMMARY_TOPIC_ID`，应能看到任务 6 写入的 `first_round_*` / `boss_*` metric series，以及任务 7 写入的 `wechat_unique_candidates`。analysis-system 的 reader 和本工具验收都会按 active_date 覆盖目标日 00:00 到最多目标日后 3 天的 metric 样本，以兼容右侧时间戳写入。
+
+部署后可用同一工具做只读验收。它会用任务 6/7 SQL 在 raw topic 上计算指定日期的期望值，再读取日级指标 topic 的实际样本逐字段比较；任务未写入或数值不一致时退出码为 1：
+
+```bash
+PYTHONPATH=src python3 -m boss_analysis.ops.daily_history_tasks --verify-active-date 2026-06-01
+```
+
+验收通过时，输出 JSON 的 `status` 应为 `ok`；未通过时，`comparisons` 会列出缺失或不一致的 `operator_id + field`。
 
 以下是合并版旧稿，超过 CLS `param query must less than 12000` 限制，仅保留作口径参考，不要直接创建任务：
 

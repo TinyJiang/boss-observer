@@ -4,6 +4,8 @@ import {
   extractCandidateProfile,
   isCandidateDetailUrl,
   normalizeText,
+  readCandidateIdentityDatasetFromElement,
+  readCandidateIdentityLinksFromElement,
   resolveDetailUrl,
   shouldTreatAsCandidateCardText
 } from "./candidate-card.js";
@@ -1506,19 +1508,15 @@ function findFirstDetailAnchorIndex(normalizedText) {
 }
 
 function readMergedDataset(element) {
-  const merged = {};
-  let current = element;
-  for (let steps = 0; current && steps < MAX_DATASET_ANCESTOR_STEPS; steps += 1) {
-    Object.assign(merged, current.dataset || {});
-    current = current.parentElement;
-  }
-  return merged;
+  return readCandidateIdentityDatasetFromElement(element, {
+    maxAncestorSteps: MAX_DATASET_ANCESTOR_STEPS
+  });
 }
 
 function readLinks(element) {
-  return Array.from(element?.querySelectorAll?.("a[href]") || [])
-    .map((link) => link.href)
-    .filter(Boolean);
+  return readCandidateIdentityLinksFromElement(element, {
+    maxAncestorSteps: MAX_DATASET_ANCESTOR_STEPS
+  });
 }
 
 function readElementText(element) {

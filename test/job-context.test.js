@@ -82,6 +82,16 @@ test("job name can be extracted from real BOSS visible selected job text", () =>
   assert.equal(candidate.source, "dom.selected_job_title");
 });
 
+test("job name can be extracted from labeled visible job text", () => {
+  const candidate = extractJobNameFromVisibleText(
+    "当前职位：兼职·【8000+】居家黑板主播（时薪40+可兼职）",
+    "dom.selected_job_title"
+  );
+
+  assert.equal(candidate.value, "兼职·【8000+】居家黑板主播（时薪40+可兼职）");
+  assert.equal(candidate.source, "dom.selected_job_title");
+});
+
 test("job name extraction removes recommendation tab text from parent containers", () => {
   const visibleLabel = "兼职·【8000+】居家黑板主播（时薪40+可兼职） _ 杭州 35-40元/时";
   const candidate = extractJobNameFromVisibleText(
@@ -123,6 +133,42 @@ test("job name extraction supports visible label without salary", () => {
 
   assert.equal(candidate.value, visibleLabel);
   assert.equal(candidate.source, "dom.selected_job_title");
+});
+
+test("job context snapshot can carry job name without stable job id", () => {
+  const context = buildJobContextSnapshot({
+    urls: ["https://www.zhipin.com/beihai/"],
+    jobNames: [{ value: "兼职·【8000+】居家黑板主播（时薪40+可兼职）", source: "dom.selected_job_title" }]
+  });
+
+  assert.equal(context.jobId, undefined);
+  assert.equal(context.jobName, "兼职·【8000+】居家黑板主播（时薪40+可兼职）");
+  assert.equal(context.jobNameSource, "dom.selected_job_title");
+  assert.equal(buildJobContextKey(context), "dom.selected_job_title:兼职·【8000+】居家黑板主播（时薪40+可兼职）");
+});
+
+test("job context probe emits job name only context for city path pages", () => {
+  const sessionContext = createSessionContext();
+  const collector = createCollector(sessionContext);
+  const probe = new JobContextProbe({
+    collector,
+    sessionContext,
+    detectJobContext: () => ({
+      jobName: "兼职·【8000+】居家黑板主播（时薪40+可兼职）",
+      jobNameSource: "dom.selected_job_title"
+    }),
+    now: () => "2026-05-12T23:27:00.000+08:00"
+  });
+
+  probe.scan("poll");
+
+  assert.deepEqual(
+    collector.events.map((event) => event.type),
+    [EVENT_TYPES.JOB_CONTEXT_DETECTED]
+  );
+  assert.equal(collector.events[0].payload.current.jobId, undefined);
+  assert.equal(collector.events[0].payload.current.jobName, "兼职·【8000+】居家黑板主播（时薪40+可兼职）");
+  assert.equal(collector.events[0].context.jobContext.jobName, "兼职·【8000+】居家黑板主播（时薪40+可兼职）");
 });
 
 test("job context probe emits detected once and changed on job switch", () => {
